@@ -1,0 +1,59 @@
+# Build output
+/build/
+/bin/
+/obj/
+/out/
+/x64/
+/x86/
+
+# Visual Studio
+/.vs/
+*.VC.db
+*.VC.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# MSBuild / compiler intermediates
+*.aps
+*.exp
+*.idb
+*.ilk
+*.iobj
+*.ipdb
+*.lastbuildstate
+*.log
+*.obj
+*.pch
+*.pdb
+*.tlog
+*.tmp
+*.rsp
+
+# Debugger / profiling
+*.psess
+*.vsp
+*.vspx
+*.vspscc
+*.opendb
+
+# Test and coverage output
+TestResults/
+*.coverage
+*.coveragexml
+
+# VS Code
+/.vscode/
+
+# Windows noise
+Thumbs.db
+Desktop.ini
+
+# Backup / temp files
+*.bak
+*.cache
+*.old
+*.orig
+*.temp
+*.tmp
