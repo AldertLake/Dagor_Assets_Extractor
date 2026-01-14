@@ -1,13 +1,5 @@
-# Build output
-/build/
-/bin/
-/obj/
-/out/
-/x64/
-/x86/
-
 # Visual Studio
-/.vs/
+.vs/
 *.VC.db
 *.VC.VC.opendb
 *.suo
@@ -15,47 +7,62 @@
 *.userosscache
 *.sln.docstates
 
-# MSBuild / compiler intermediates
-*.aps
-*.exp
-*.idb
-*.ilk
-*.iobj
-*.ipdb
-*.lastbuildstate
-*.log
+# Build outputs
+Debug/
+Release/
+x64/
+x86/
+Win32/
+ARM64/
+bin/
+obj/
+out/
+build/
+
+# C/C++ generated files
 *.obj
+*.o
 *.pch
 *.pdb
+*.ipdb
+*.iobj
+*.ilk
+*.idb
+*.exp
+*.lib
+*.dll
+*.exe
+*.app
+*.log
 *.tlog
+*.lastbuildstate
+
+# Visual Studio generated folders
+ipch/
+.vscode/
+
+# CMake, if used
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# ImGui / library demo build junk, if generated locally
+imgui.ini
+
+# Temporary files
 *.tmp
-*.rsp
-
-# Debugger / profiling
-*.psess
-*.vsp
-*.vspx
-*.vspscc
-*.opendb
-
-# Test and coverage output
-TestResults/
-*.coverage
-*.coveragexml
-
-# VS Code
-/.vscode/
-
-# Windows noise
-Thumbs.db
-Desktop.ini
-
-# Backup / temp files
-*.bak
-*.cache
-*.old
-*.orig
 *.temp
-*.tmp
+*.bak
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# i use them for notes
 PROJECT_PLAN.md
 PROGRESS.md
