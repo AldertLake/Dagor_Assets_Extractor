@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cwctype>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +20,7 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -60,6 +63,7 @@ namespace
         fs::path path;
         AssetType type = AssetType::Unknown;
         uintmax_t sizeBytes = 0;
+        int64_t lastWriteTicks = 0;
     };
 
     struct ValidationResult
@@ -114,6 +118,8 @@ namespace
         std::atomic<uint64_t> recordsFound = 0;
         std::mutex mutex;
         std::string status = "Idle";
+        std::string cacheStatus = "Not loaded";
+        bool cacheLoaded = false;
         std::vector<ResourceRecord> records;
         std::thread worker;
     };
@@ -123,6 +129,7 @@ namespace
         HWND hwnd = nullptr;
         AppSettings settings;
         fs::path settingsPath;
+        fs::path indexCachePath;
         ValidationResult validation;
         ScanState scan;
         std::mutex logMutex;
@@ -241,6 +248,16 @@ namespace
         return value;
     }
 
+    std::wstring NormalizePathForCompare(const fs::path& path)
+    {
+        return ToLowerWide(path.lexically_normal().wstring());
+    }
+
+    bool SamePathForCache(const fs::path& left, const fs::path& right)
+    {
+        return NormalizePathForCompare(left) == NormalizePathForCompare(right);
+    }
+
     bool EndsWith(std::wstring_view value, std::wstring_view suffix)
     {
         if (suffix.size() > value.size())
@@ -320,6 +337,55 @@ namespace
         }
     }
 
+    const char* AssetTypeCacheName(AssetType type)
+    {
+        switch (type)
+        {
+        case AssetType::Vromfs:
+            return "vromfs";
+        case AssetType::Grp:
+            return "grp";
+        case AssetType::Dxp:
+            return "dxp";
+        case AssetType::Descriptor:
+            return "descriptor";
+        case AssetType::Blk:
+            return "blk";
+        default:
+            return "unknown";
+        }
+    }
+
+    std::optional<AssetType> ParseAssetType(std::string_view value)
+    {
+        const std::string normalized = ToLowerAscii(std::string(value));
+        if (normalized == "vromfs")
+        {
+            return AssetType::Vromfs;
+        }
+        if (normalized == "grp")
+        {
+            return AssetType::Grp;
+        }
+        if (normalized == "dxp")
+        {
+            return AssetType::Dxp;
+        }
+        if (normalized == "descriptor")
+        {
+            return AssetType::Descriptor;
+        }
+        if (normalized == "blk")
+        {
+            return AssetType::Blk;
+        }
+        if (normalized == "unknown")
+        {
+            return AssetType::Unknown;
+        }
+        return std::nullopt;
+    }
+
     ImVec4 LevelColor(LogLevel level)
     {
         switch (level)
@@ -377,6 +443,16 @@ namespace
         }
 
         return fs::current_path() / L"settings.ini";
+    }
+
+    fs::path GetIndexCachePath()
+    {
+        if (const auto appData = GetKnownFolderPath(FOLDERID_RoamingAppData))
+        {
+            return *appData / L"DagorAssetsExtractor" / L"index-cache.txt";
+        }
+
+        return fs::current_path() / L"index-cache.txt";
     }
 
     fs::path GetDefaultExportRoot()
@@ -525,6 +601,37 @@ namespace
         }
 
         return std::nullopt;
+    }
+
+    int64_t FileTimeToTicks(fs::file_time_type fileTime)
+    {
+        return static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(fileTime.time_since_epoch()).count());
+    }
+
+    bool TryReadFileMetadata(const fs::path& path, uintmax_t& sizeBytes, int64_t& lastWriteTicks)
+    {
+        std::error_code ec;
+        if (!fs::is_regular_file(path, ec) || ec)
+        {
+            return false;
+        }
+
+        const uintmax_t size = fs::file_size(path, ec);
+        if (ec)
+        {
+            return false;
+        }
+
+        const fs::file_time_type writeTime = fs::last_write_time(path, ec);
+        if (ec)
+        {
+            return false;
+        }
+
+        sizeBytes = size;
+        lastWriteTicks = FileTimeToTicks(writeTime);
+        return true;
     }
 
     bool ContainsKnownContainer(const fs::path& root)
@@ -686,6 +793,179 @@ namespace
         return scan.records;
     }
 
+    std::string GetCacheStatus(ScanState& scan)
+    {
+        std::lock_guard<std::mutex> lock(scan.mutex);
+        return scan.cacheStatus;
+    }
+
+    void SetCacheStatus(ScanState& scan, std::string status, bool loaded)
+    {
+        std::lock_guard<std::mutex> lock(scan.mutex);
+        scan.cacheStatus = std::move(status);
+        scan.cacheLoaded = loaded;
+    }
+
+    struct IndexCacheLoadResult
+    {
+        bool fileFound = false;
+        bool rootMatched = false;
+        size_t recordsLoaded = 0;
+        size_t recordsSkipped = 0;
+        std::string message;
+        std::vector<ResourceRecord> records;
+    };
+
+    bool SaveIndexCacheRecords(
+        const fs::path& cachePath,
+        const fs::path& gameRoot,
+        const std::vector<ResourceRecord>& records,
+        std::string& error)
+    {
+        std::error_code ec;
+        fs::create_directories(cachePath.parent_path(), ec);
+        if (ec)
+        {
+            error = "Could not create index cache folder: " + ec.message();
+            return false;
+        }
+
+        std::ofstream file(cachePath, std::ios::trunc);
+        if (!file)
+        {
+            error = "Could not open index cache for writing.";
+            return false;
+        }
+
+        file << "DagorAssetsExtractorIndexCache 1\n";
+        file << "root " << std::quoted(PathToUtf8(gameRoot)) << '\n';
+        for (const ResourceRecord& record : records)
+        {
+            file << "record "
+                 << std::quoted(PathToUtf8(record.path)) << ' '
+                 << AssetTypeCacheName(record.type) << ' '
+                 << record.sizeBytes << ' '
+                 << record.lastWriteTicks << '\n';
+        }
+
+        if (!file)
+        {
+            error = "Failed while writing index cache.";
+            return false;
+        }
+
+        return true;
+    }
+
+    IndexCacheLoadResult LoadIndexCacheRecords(const fs::path& cachePath, const fs::path& gameRoot)
+    {
+        IndexCacheLoadResult result;
+
+        std::ifstream file(cachePath);
+        if (!file)
+        {
+            result.message = "No index cache file found.";
+            return result;
+        }
+
+        result.fileFound = true;
+
+        std::string magic;
+        int version = 0;
+        if (!(file >> magic >> version) || magic != "DagorAssetsExtractorIndexCache" || version != 1)
+        {
+            result.message = "Index cache has an unsupported format.";
+            return result;
+        }
+
+        fs::path cachedRoot;
+        std::vector<ResourceRecord> parsedRecords;
+
+        std::string tag;
+        while (file >> tag)
+        {
+            if (tag == "root")
+            {
+                std::string rootUtf8;
+                if (file >> std::quoted(rootUtf8))
+                {
+                    cachedRoot = Utf8ToPath(rootUtf8);
+                }
+                continue;
+            }
+
+            if (tag == "record")
+            {
+                std::string pathUtf8;
+                std::string typeName;
+                uintmax_t cachedSize = 0;
+                int64_t cachedTicks = 0;
+                if (!(file >> std::quoted(pathUtf8) >> typeName >> cachedSize >> cachedTicks))
+                {
+                    result.message = "Index cache is truncated or malformed.";
+                    return result;
+                }
+
+                const std::optional<AssetType> type = ParseAssetType(typeName);
+                if (!type)
+                {
+                    ++result.recordsSkipped;
+                    continue;
+                }
+
+                ResourceRecord record;
+                record.path = Utf8ToPath(pathUtf8);
+                record.type = *type;
+                record.sizeBytes = cachedSize;
+                record.lastWriteTicks = cachedTicks;
+                parsedRecords.push_back(std::move(record));
+                continue;
+            }
+
+            std::string ignoredLine;
+            std::getline(file, ignoredLine);
+        }
+
+        if (cachedRoot.empty())
+        {
+            result.message = "Index cache is missing its game root.";
+            return result;
+        }
+
+        result.rootMatched = SamePathForCache(cachedRoot, gameRoot);
+        if (!result.rootMatched)
+        {
+            result.message = "Index cache belongs to another game folder.";
+            return result;
+        }
+
+        for (const ResourceRecord& parsed : parsedRecords)
+        {
+            uintmax_t currentSize = 0;
+            int64_t currentTicks = 0;
+            if (!TryReadFileMetadata(parsed.path, currentSize, currentTicks) ||
+                currentSize != parsed.sizeBytes ||
+                currentTicks != parsed.lastWriteTicks)
+            {
+                ++result.recordsSkipped;
+                continue;
+            }
+
+            result.records.push_back(parsed);
+            ++result.recordsLoaded;
+        }
+
+        std::ostringstream message;
+        message << "Loaded " << result.recordsLoaded << " cached records";
+        if (result.recordsSkipped > 0)
+        {
+            message << " (" << result.recordsSkipped << " stale or invalid skipped)";
+        }
+        message << '.';
+        result.message = message.str();
+        return result;
+    }
+
     void StopScan(AppState& app)
     {
         if (app.scan.running.load())
@@ -707,6 +987,68 @@ namespace
         }
     }
 
+    void ClearResourceIndex(AppState& app, std::string status)
+    {
+        {
+            std::lock_guard<std::mutex> lock(app.scan.mutex);
+            app.scan.records.clear();
+            app.scan.status = std::move(status);
+            app.scan.cacheStatus = app.settings.indexCacheEnabled ? "Not loaded" : "Disabled";
+            app.scan.cacheLoaded = false;
+        }
+
+        app.selectedPath.clear();
+        app.scan.filesVisited.store(0);
+        app.scan.recordsFound.store(0);
+        app.scan.completed.store(false);
+        app.scan.failed.store(false);
+    }
+
+    void LoadIndexCacheIntoApp(AppState& app)
+    {
+        if (!app.settings.indexCacheEnabled)
+        {
+            SetCacheStatus(app.scan, "Disabled", false);
+            return;
+        }
+
+        if (!app.validation.IsValid())
+        {
+            SetCacheStatus(app.scan, "No valid game folder", false);
+            return;
+        }
+
+        const IndexCacheLoadResult result = LoadIndexCacheRecords(app.indexCachePath, app.settings.gameRoot);
+        if (!result.fileFound)
+        {
+            SetCacheStatus(app.scan, result.message, false);
+            return;
+        }
+
+        if (!result.rootMatched)
+        {
+            SetCacheStatus(app.scan, result.message, false);
+            AddLog(app, LogLevel::Warning, result.message);
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(app.scan.mutex);
+            app.scan.records = result.records;
+            app.scan.status = result.records.empty() ? "Idle" : "Loaded from cache";
+            app.scan.cacheStatus = result.message;
+            app.scan.cacheLoaded = !result.records.empty();
+        }
+
+        app.selectedPath.clear();
+        app.scan.filesVisited.store(0);
+        app.scan.recordsFound.store(static_cast<uint64_t>(result.recordsLoaded));
+        app.scan.completed.store(!result.records.empty());
+        app.scan.failed.store(false);
+
+        AddLog(app, LogLevel::Info, result.message);
+    }
+
     void StartScan(AppState& app)
     {
         JoinFinishedScan(app);
@@ -726,6 +1068,8 @@ namespace
             std::lock_guard<std::mutex> lock(app.scan.mutex);
             app.scan.records.clear();
             app.scan.status = "Preparing scan";
+            app.scan.cacheStatus = app.settings.indexCacheEnabled ? "Refreshing" : "Disabled";
+            app.scan.cacheLoaded = false;
         }
 
         app.selectedPath.clear();
@@ -737,9 +1081,11 @@ namespace
         app.scan.running.store(true);
 
         const fs::path root = app.settings.gameRoot;
+        const fs::path cachePath = app.indexCachePath;
+        const bool writeIndexCache = app.settings.indexCacheEnabled;
         AddLog(app, LogLevel::Info, "Started resource discovery for " + PathToUtf8(root));
 
-        app.scan.worker = std::thread([&app, root]() {
+        app.scan.worker = std::thread([&app, root, cachePath, writeIndexCache]() {
             std::error_code ec;
             try
             {
@@ -771,19 +1117,25 @@ namespace
                     {
                         if (const std::optional<AssetType> type = ClassifyPath(entry.path()))
                         {
-                            ResourceRecord record;
-                            record.path = entry.path();
-                            record.type = *type;
-                            record.sizeBytes = entry.file_size(entryEc);
-
+                            uintmax_t sizeBytes = 0;
+                            int64_t lastWriteTicks = 0;
+                            if (TryReadFileMetadata(entry.path(), sizeBytes, lastWriteTicks))
                             {
-                                std::lock_guard<std::mutex> lock(app.scan.mutex);
-                                app.scan.records.push_back(std::move(record));
-                                std::ostringstream status;
-                                status << "Scanning - " << app.scan.records.size() << " records found";
-                                app.scan.status = status.str();
+                                ResourceRecord record;
+                                record.path = entry.path();
+                                record.type = *type;
+                                record.sizeBytes = sizeBytes;
+                                record.lastWriteTicks = lastWriteTicks;
+
+                                {
+                                    std::lock_guard<std::mutex> lock(app.scan.mutex);
+                                    app.scan.records.push_back(std::move(record));
+                                    std::ostringstream status;
+                                    status << "Scanning - " << app.scan.records.size() << " records found";
+                                    app.scan.status = status.str();
+                                }
+                                app.scan.recordsFound.fetch_add(1);
                             }
-                            app.scan.recordsFound.fetch_add(1);
                         }
                     }
 
@@ -806,6 +1158,24 @@ namespace
                     SetScanStatus(app.scan, "Completed");
                     AddLog(app, LogLevel::Info, message.str());
                     app.scan.completed.store(true);
+
+                    if (writeIndexCache)
+                    {
+                        std::string cacheError;
+                        const std::vector<ResourceRecord> records = SnapshotRecords(app.scan);
+                        if (SaveIndexCacheRecords(cachePath, root, records, cacheError))
+                        {
+                            std::ostringstream cacheMessage;
+                            cacheMessage << "Index cache saved with " << records.size() << " records.";
+                            SetCacheStatus(app.scan, cacheMessage.str(), true);
+                            AddLog(app, LogLevel::Info, cacheMessage.str());
+                        }
+                        else
+                        {
+                            SetCacheStatus(app.scan, "Cache save failed", false);
+                            AddLog(app, LogLevel::Warning, cacheError);
+                        }
+                    }
                 }
             }
             catch (const std::exception& exception)
@@ -825,10 +1195,19 @@ namespace
         CopyToBuffer(app.exportRootBuffer, PathToUtf8(app.settings.exportRoot));
     }
 
+    void SetGameRoot(AppState& app, const fs::path& gameRoot)
+    {
+        StopScan(app);
+        app.settings.gameRoot = gameRoot;
+        app.validation = ValidateGameRoot(app.settings.gameRoot);
+        SyncSettingsBuffers(app);
+        ClearResourceIndex(app, "Idle");
+        LoadIndexCacheIntoApp(app);
+    }
+
     void ApplyGameRootBuffer(AppState& app)
     {
-        app.settings.gameRoot = Utf8ToPath(app.gameRootBuffer.data());
-        app.validation = ValidateGameRoot(app.settings.gameRoot);
+        SetGameRoot(app, Utf8ToPath(app.gameRootBuffer.data()));
     }
 
     void SaveSettingsWithLog(AppState& app)
@@ -868,9 +1247,7 @@ namespace
             {
                 if (const auto selected = BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
                 {
-                    app.settings.gameRoot = *selected;
-                    app.validation = ValidateGameRoot(app.settings.gameRoot);
-                    SyncSettingsBuffers(app);
+                    SetGameRoot(app, *selected);
                     SaveSettingsWithLog(app);
                 }
             }
@@ -896,6 +1273,14 @@ namespace
 
         if (ImGui::BeginMenu("Tools"))
         {
+            const bool canLoadCache = app.validation.IsValid() && app.settings.indexCacheEnabled && !app.scan.running.load();
+            ImGui::BeginDisabled(!canLoadCache);
+            if (ImGui::MenuItem("Load Cached Index"))
+            {
+                LoadIndexCacheIntoApp(app);
+            }
+            ImGui::EndDisabled();
+
             const bool canScan = app.validation.IsValid() && !app.scan.running.load();
             ImGui::BeginDisabled(!canScan);
             if (ImGui::MenuItem("Rebuild Resource Index"))
@@ -999,9 +1384,7 @@ namespace
         {
             if (const auto selected = BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
             {
-                app.settings.gameRoot = *selected;
-                app.validation = ValidateGameRoot(app.settings.gameRoot);
-                SyncSettingsBuffers(app);
+                SetGameRoot(app, *selected);
                 SaveSettingsWithLog(app);
             }
         }
@@ -1051,6 +1434,8 @@ namespace
         ImGui::BulletText("DXP: %u", counts[2]);
         ImGui::BulletText("Descriptors: %u", counts[3]);
         ImGui::BulletText("BLK: %u", counts[4]);
+        ImGui::Spacing();
+        ImGui::TextWrapped("Cache: %s", GetCacheStatus(app.scan).c_str());
     }
 
     void DrawContentBrowser(AppState& app, const std::vector<ResourceRecord>& records)
@@ -1174,6 +1559,7 @@ namespace
         ImGui::Text("Visited: %llu", static_cast<unsigned long long>(app.scan.filesVisited.load()));
         ImGui::SameLine();
         ImGui::Text("Found: %llu", static_cast<unsigned long long>(app.scan.recordsFound.load()));
+        ImGui::Text("Cache: %s", GetCacheStatus(app.scan).c_str());
 
         ImGui::Separator();
 
@@ -1225,9 +1611,7 @@ namespace
         {
             if (const auto selected = BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
             {
-                app.settings.gameRoot = *selected;
-                app.validation = ValidateGameRoot(app.settings.gameRoot);
-                SyncSettingsBuffers(app);
+                SetGameRoot(app, *selected);
             }
         }
 
@@ -1255,18 +1639,28 @@ namespace
         ImGui::Checkbox("Export textures with models", &app.settings.exportTexturesWithModels);
         ImGui::Checkbox("Preserve original DDS when possible", &app.settings.preserveOriginalDDS);
         ImGui::Checkbox("Use Oodle DLL from game folder if present", &app.settings.useOodleFromGameFolder);
-        ImGui::Checkbox("Enable index cache", &app.settings.indexCacheEnabled);
+        if (ImGui::Checkbox("Enable index cache", &app.settings.indexCacheEnabled))
+        {
+            if (app.settings.indexCacheEnabled)
+            {
+                LoadIndexCacheIntoApp(app);
+            }
+            else
+            {
+                SetCacheStatus(app.scan, "Disabled", false);
+            }
+        }
 
         ImGui::Separator();
         if (ImGui::Button("Save Settings"))
         {
-            app.settings.gameRoot = Utf8ToPath(app.gameRootBuffer.data());
             app.settings.exportRoot = Utf8ToPath(app.exportRootBuffer.data());
-            app.validation = ValidateGameRoot(app.settings.gameRoot);
+            SetGameRoot(app, Utf8ToPath(app.gameRootBuffer.data()));
             SaveSettingsWithLog(app);
         }
         ImGui::SameLine();
         ImGui::Text("Settings file: %s", PathToUtf8(app.settingsPath).c_str());
+        ImGui::Text("Index cache: %s", PathToUtf8(app.indexCachePath).c_str());
 
         ImGui::End();
     }
@@ -1310,9 +1704,7 @@ namespace
             {
                 if (const auto selected = BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
                 {
-                    app.settings.gameRoot = *selected;
-                    app.validation = ValidateGameRoot(app.settings.gameRoot);
-                    SyncSettingsBuffers(app);
+                    SetGameRoot(app, *selected);
                 }
             }
 
@@ -1610,6 +2002,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     AppState app;
     app.hwnd = hwnd;
     app.settingsPath = GetSettingsPath();
+    app.indexCachePath = GetIndexCachePath();
     LoadSettings(app.settings, app.settingsPath);
     app.validation = ValidateGameRoot(app.settings.gameRoot);
     SyncSettingsBuffers(app);
@@ -1617,13 +2010,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 
     AddLog(app, LogLevel::Info, "Application started.");
     AddLog(app, LogLevel::Info, "Settings path: " + PathToUtf8(app.settingsPath));
+    AddLog(app, LogLevel::Info, "Index cache path: " + PathToUtf8(app.indexCachePath));
     if (app.validation.IsValid())
     {
         AddLog(app, LogLevel::Info, "Loaded saved game folder: " + PathToUtf8(app.settings.gameRoot));
+        LoadIndexCacheIntoApp(app);
     }
     else
     {
         AddLog(app, LogLevel::Warning, "No valid War Thunder folder is configured.");
+        SetCacheStatus(app.scan, "No valid game folder", false);
     }
 
     bool running = true;
