@@ -1,4 +1,5 @@
 #include "AssetIndex/AssetIndex.h"
+#include "../Platform/Platform.h"
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -127,16 +128,6 @@ namespace DagorAssetsExtractor::AssetIndex
     bool ValidationResult::IsValid() const
     {
         return exists && hasContent && (hasAces || hasBaseRes || hasKnownContainer);
-    }
-
-    std::string PathToUtf8(const fs::path& path)
-    {
-        return WideToUtf8(path.wstring());
-    }
-
-    fs::path Utf8ToPath(std::string_view value)
-    {
-        return fs::path(Utf8ToWide(value));
     }
 
     std::string ToLowerAscii(std::string value)
@@ -456,11 +447,11 @@ namespace DagorAssetsExtractor::AssetIndex
         }
 
         file << "DagorAssetsExtractorIndexCache 1\n";
-        file << "root " << std::quoted(PathToUtf8(gameRoot)) << '\n';
+        file << "root " << std::quoted(Platform::PathToUtf8(gameRoot)) << '\n';
         for (const ResourceRecord& record : records)
         {
             file << "record "
-                 << std::quoted(PathToUtf8(record.path)) << ' '
+                 << std::quoted(Platform::PathToUtf8(record.path)) << ' '
                  << AssetTypeCacheName(record.type) << ' '
                  << record.sizeBytes << ' '
                  << record.lastWriteTicks << '\n';
@@ -507,7 +498,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 std::string rootUtf8;
                 if (file >> std::quoted(rootUtf8))
                 {
-                    cachedRoot = Utf8ToPath(rootUtf8);
+                    cachedRoot = Platform::Utf8ToPath(rootUtf8);
                 }
                 continue;
             }
@@ -532,7 +523,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
 
                 ResourceRecord record;
-                record.path = Utf8ToPath(pathUtf8);
+                record.path = Platform::Utf8ToPath(pathUtf8);
                 record.type = *type;
                 record.sizeBytes = cachedSize;
                 record.lastWriteTicks = cachedTicks;

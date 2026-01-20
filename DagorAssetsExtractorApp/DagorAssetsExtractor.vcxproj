@@ -85,6 +85,8 @@
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\AssetIndex\AssetIndex.cpp" />
+    <ClCompile Include="src\DagorIO\BinaryReader.cpp" />
+    <ClCompile Include="src\Platform\Platform.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_demo.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_draw.cpp" />
@@ -95,6 +97,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\AssetIndex\AssetIndex.h" />
+    <ClInclude Include="src\DagorIO\BinaryReader.h" />
+    <ClInclude Include="src\Platform\Platform.h" />
     <ClInclude Include="..\third_party\imgui\imgui.h" />
     <ClInclude Include="..\third_party\imgui\imgui_internal.h" />
     <ClInclude Include="..\third_party\imgui\imconfig.h" />

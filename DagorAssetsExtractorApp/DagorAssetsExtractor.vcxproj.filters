@@ -55,6 +55,12 @@
     <ClInclude Include="src\AssetIndex\AssetIndex.h">
       <Filter>Header Files\AssetIndex</Filter>
     </ClInclude>
+    <ClInclude Include="src\DagorIO\BinaryReader.h">
+      <Filter>Header Files\DagorIO</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Platform\Platform.h">
+      <Filter>Header Files\Platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\third_party\imgui\imgui.h">
       <Filter>Third Party\ImGui</Filter>
     </ClInclude>

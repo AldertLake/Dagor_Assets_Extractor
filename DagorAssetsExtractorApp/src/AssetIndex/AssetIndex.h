@@ -66,8 +66,6 @@ namespace DagorAssetsExtractor::AssetIndex
         std::string error;
     };
 
-    std::string PathToUtf8(const std::filesystem::path& path);
-    std::filesystem::path Utf8ToPath(std::string_view value);
     std::string ToLowerAscii(std::string value);
 
     const char* AssetTypeName(AssetType type);

@@ -1,4 +1,5 @@
 #include "AssetIndex/AssetIndex.h"
+#include "DagorIO/BinaryReader.h"
 
 #include <array>
 #include <filesystem>
@@ -35,6 +36,33 @@ namespace
         }
         return count;
     }
+
+    bool TestBinaryReader()
+    {
+        bool ok = true;
+        const uint8_t data[] = {
+            0x12, 0x34, 0x56, 0x78, // UInt32: 0x78563412 (little endian)
+            0xAB, 0xCD,             // UInt16: 0xCDAB
+            0xEF,                   // UInt8:  0xEF
+            'H', 'e', 'l', 'l', 'o', '\0',
+            'W', 'o', 'r', 'l', 'd'
+        };
+        
+        DagorIO::MemoryReader reader(data, sizeof(data));
+        ok &= Expect(reader.ReadUInt32() == 0x78563412, "BinaryReader should read little-endian UInt32");
+        ok &= Expect(reader.ReadUInt16() == 0xCDAB, "BinaryReader should read little-endian UInt16");
+        ok &= Expect(reader.ReadUInt8() == 0xEF, "BinaryReader should read UInt8");
+        ok &= Expect(reader.ReadNullTerminatedString() == "Hello", "BinaryReader should read null-terminated string");
+        ok &= Expect(reader.ReadString(5) == "World", "BinaryReader should read fixed-length string");
+        ok &= Expect(reader.IsEOF(), "BinaryReader should be at EOF");
+        
+        reader.Seek(4);
+        ok &= Expect(reader.GetPosition() == 4, "BinaryReader should seek to position");
+        reader.Skip(2);
+        ok &= Expect(reader.GetPosition() == 6, "BinaryReader should skip");
+        
+        return ok;
+    }
 }
 
 int main(int argc, char** argv)
@@ -43,6 +71,8 @@ int main(int argc, char** argv)
     const fs::path fixtureRoot = repoRoot / "tests" / "fixtures" / "synthetic_wt";
 
     bool ok = true;
+
+    ok &= Expect(TestBinaryReader(), "BinaryReader tests should pass");
 
     const AssetIndex::ValidationResult validation = AssetIndex::ValidateGameRoot(fixtureRoot);
     ok &= Expect(validation.IsValid(), "synthetic fixture should validate as a plausible install");

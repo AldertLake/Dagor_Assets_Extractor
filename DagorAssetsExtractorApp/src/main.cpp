@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "AssetIndex/AssetIndex.h"
+#include "Platform/Platform.h"
+
 #include "imgui.h"
 #include "backends/imgui_impl_dx11.h"
 #include "backends/imgui_impl_win32.h"
@@ -40,7 +42,8 @@
 namespace
 {
     namespace fs = std::filesystem;
-    namespace AssetIndex = DagorAssetsExtractor::AssetIndex;
+    namespace AssetIndex = ::DagorAssetsExtractor::AssetIndex;
+    namespace Platform = ::DagorAssetsExtractor::Platform;
 
     using AssetIndex::AssetType;
     using AssetIndex::DiscoverOptions;
@@ -48,11 +51,9 @@ namespace
     using AssetIndex::DiscoverResult;
     using AssetIndex::IndexCacheLoadResult;
     using AssetIndex::LoadIndexCacheRecords;
-    using AssetIndex::PathToUtf8;
     using AssetIndex::ResourceRecord;
     using AssetIndex::SaveIndexCacheRecords;
     using AssetIndex::ToLowerAscii;
-    using AssetIndex::Utf8ToPath;
     using AssetIndex::ValidateGameRoot;
     using AssetIndex::ValidationResult;
     using AssetIndex::AssetTypeName;
@@ -226,49 +227,6 @@ namespace
         }
     }
 
-    std::optional<fs::path> GetKnownFolderPath(REFKNOWNFOLDERID folderId)
-    {
-        PWSTR rawPath = nullptr;
-        if (FAILED(SHGetKnownFolderPath(folderId, KF_FLAG_DEFAULT, nullptr, &rawPath)))
-        {
-            return std::nullopt;
-        }
-
-        fs::path result(rawPath);
-        CoTaskMemFree(rawPath);
-        return result;
-    }
-
-    fs::path GetSettingsPath()
-    {
-        if (const auto appData = GetKnownFolderPath(FOLDERID_RoamingAppData))
-        {
-            return *appData / L"DagorAssetsExtractor" / L"settings.ini";
-        }
-
-        return fs::current_path() / L"settings.ini";
-    }
-
-    fs::path GetIndexCachePath()
-    {
-        if (const auto appData = GetKnownFolderPath(FOLDERID_RoamingAppData))
-        {
-            return *appData / L"DagorAssetsExtractor" / L"index-cache.txt";
-        }
-
-        return fs::current_path() / L"index-cache.txt";
-    }
-
-    fs::path GetDefaultExportRoot()
-    {
-        if (const auto documents = GetKnownFolderPath(FOLDERID_Documents))
-        {
-            return *documents / L"DagorAssetsExtractorExports";
-        }
-
-        return fs::current_path() / L"exports";
-    }
-
     bool ParseBool(std::string_view value, bool fallback)
     {
         const std::string normalized = ToLowerAscii(Trim(std::string(value)));
@@ -285,7 +243,7 @@ namespace
 
     void LoadSettings(AppSettings& settings, const fs::path& path)
     {
-        settings.exportRoot = GetDefaultExportRoot();
+        settings.exportRoot = Platform::GetDefaultExportRoot();
 
         std::ifstream file(path);
         if (!file)
@@ -313,11 +271,11 @@ namespace
 
             if (key == "gameRoot")
             {
-                settings.gameRoot = Utf8ToPath(value);
+                settings.gameRoot = Platform::Utf8ToPath(value);
             }
             else if (key == "exportRoot")
             {
-                settings.exportRoot = Utf8ToPath(value);
+                settings.exportRoot = Platform::Utf8ToPath(value);
             }
             else if (key == "textureExportFormat")
             {
@@ -367,8 +325,8 @@ namespace
             return false;
         }
 
-        file << "gameRoot=" << PathToUtf8(settings.gameRoot) << '\n';
-        file << "exportRoot=" << PathToUtf8(settings.exportRoot) << '\n';
+        file << "gameRoot=" << Platform::PathToUtf8(settings.gameRoot) << '\n';
+        file << "exportRoot=" << Platform::PathToUtf8(settings.exportRoot) << '\n';
         file << "textureExportFormat=" << settings.textureExportFormat << '\n';
         file << "modelExportFormat=" << settings.modelExportFormat << '\n';
         file << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
@@ -377,53 +335,6 @@ namespace
         file << "indexCacheEnabled=" << (settings.indexCacheEnabled ? "true" : "false") << '\n';
         file << "lastOpenedPackFilters=" << settings.lastOpenedPackFilters << '\n';
         return true;
-    }
-
-    std::optional<fs::path> BrowseForFolder(HWND owner, const wchar_t* title, const fs::path& initialPath)
-    {
-        IFileOpenDialog* dialog = nullptr;
-        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
-        {
-            return std::nullopt;
-        }
-
-        DWORD options = 0;
-        if (SUCCEEDED(dialog->GetOptions(&options)))
-        {
-            dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-        }
-
-        dialog->SetTitle(title);
-
-        std::error_code ec;
-        if (!initialPath.empty() && fs::exists(initialPath, ec))
-        {
-            IShellItem* item = nullptr;
-            if (SUCCEEDED(SHCreateItemFromParsingName(initialPath.wstring().c_str(), nullptr, IID_PPV_ARGS(&item))))
-            {
-                dialog->SetFolder(item);
-                item->Release();
-            }
-        }
-
-        std::optional<fs::path> selected;
-        if (SUCCEEDED(dialog->Show(owner)))
-        {
-            IShellItem* result = nullptr;
-            if (SUCCEEDED(dialog->GetResult(&result)))
-            {
-                PWSTR rawPath = nullptr;
-                if (SUCCEEDED(result->GetDisplayName(SIGDN_FILESYSPATH, &rawPath)))
-                {
-                    selected = fs::path(rawPath);
-                    CoTaskMemFree(rawPath);
-                }
-                result->Release();
-            }
-        }
-
-        dialog->Release();
-        return selected;
     }
 
     void SetScanStatus(ScanState& scan, std::string status)
@@ -574,7 +485,7 @@ namespace
         const fs::path root = app.settings.gameRoot;
         const fs::path cachePath = app.indexCachePath;
         const bool writeIndexCache = app.settings.indexCacheEnabled;
-        AddLog(app, LogLevel::Info, "Started resource discovery for " + PathToUtf8(root));
+        AddLog(app, LogLevel::Info, "Started resource discovery for " + Platform::PathToUtf8(root));
 
         app.scan.worker = std::thread([&app, root, cachePath, writeIndexCache]() {
             try
@@ -653,8 +564,8 @@ namespace
 
     void SyncSettingsBuffers(AppState& app)
     {
-        CopyToBuffer(app.gameRootBuffer, PathToUtf8(app.settings.gameRoot));
-        CopyToBuffer(app.exportRootBuffer, PathToUtf8(app.settings.exportRoot));
+        CopyToBuffer(app.gameRootBuffer, Platform::PathToUtf8(app.settings.gameRoot));
+        CopyToBuffer(app.exportRootBuffer, Platform::PathToUtf8(app.settings.exportRoot));
     }
 
     void SetGameRoot(AppState& app, const fs::path& gameRoot)
@@ -669,7 +580,7 @@ namespace
 
     void ApplyGameRootBuffer(AppState& app)
     {
-        SetGameRoot(app, Utf8ToPath(app.gameRootBuffer.data()));
+        SetGameRoot(app, Platform::Utf8ToPath(app.gameRootBuffer.data()));
     }
 
     void SaveSettingsWithLog(AppState& app)
@@ -677,7 +588,7 @@ namespace
         std::string error;
         if (SaveSettings(app.settings, app.settingsPath, error))
         {
-            AddLog(app, LogLevel::Info, "Settings saved to " + PathToUtf8(app.settingsPath));
+            AddLog(app, LogLevel::Info, "Settings saved to " + Platform::PathToUtf8(app.settingsPath));
         }
         else
         {
@@ -707,7 +618,7 @@ namespace
         {
             if (ImGui::MenuItem("Choose Game Folder"))
             {
-                if (const auto selected = BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
+                if (const auto selected = Platform::BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
                 {
                     SetGameRoot(app, *selected);
                     SaveSettingsWithLog(app);
@@ -825,7 +736,7 @@ namespace
             return true;
         }
 
-        const std::string haystack = ToLowerAscii(PathToUtf8(record.path));
+        const std::string haystack = ToLowerAscii(Platform::PathToUtf8(record.path));
         return haystack.find(search) != std::string::npos;
     }
 
@@ -839,12 +750,12 @@ namespace
         }
         else
         {
-            ImGui::TextWrapped("%s", PathToUtf8(app.settings.gameRoot).c_str());
+            ImGui::TextWrapped("%s", Platform::PathToUtf8(app.settings.gameRoot).c_str());
         }
 
         if (ImGui::Button("Choose Folder", ImVec2(-1.0f, 0.0f)))
         {
-            if (const auto selected = BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
+            if (const auto selected = Platform::BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
             {
                 SetGameRoot(app, *selected);
                 SaveSettingsWithLog(app);
@@ -942,7 +853,7 @@ namespace
                 ImGui::TextUnformatted(AssetTypeName(record.type));
 
                 ImGui::TableSetColumnIndex(1);
-                const std::string name = PathToUtf8(record.path.filename());
+                const std::string name = Platform::PathToUtf8(record.path.filename());
                 ImGuiSelectableFlags selectableFlags = ImGuiSelectableFlags_SpanAllColumns;
                 if (ImGui::Selectable(name.c_str(), selected, selectableFlags))
                 {
@@ -950,7 +861,7 @@ namespace
                 }
 
                 ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(PathToUtf8(record.path.parent_path()).c_str());
+                ImGui::TextUnformatted(Platform::PathToUtf8(record.path.parent_path()).c_str());
 
                 ImGui::TableSetColumnIndex(3);
                 ImGui::TextUnformatted(FormatBytes(record.sizeBytes).c_str());
@@ -1000,11 +911,11 @@ namespace
         }
 
         ImGui::Text("Type: %s", AssetTypeName(selected->type));
-        ImGui::Text("Name: %s", PathToUtf8(selected->path.filename()).c_str());
+        ImGui::Text("Name: %s", Platform::PathToUtf8(selected->path.filename()).c_str());
         ImGui::Text("Size: %s", FormatBytes(selected->sizeBytes).c_str());
         ImGui::Separator();
         ImGui::TextUnformatted("Full Path");
-        ImGui::TextWrapped("%s", PathToUtf8(selected->path).c_str());
+        ImGui::TextWrapped("%s", Platform::PathToUtf8(selected->path).c_str());
         ImGui::Separator();
         ImGui::TextUnformatted("Current Support");
         ImGui::BulletText("Discovery and metadata only.");
@@ -1071,7 +982,7 @@ namespace
         ImGui::SameLine();
         if (ImGui::Button("Browse##GameRoot"))
         {
-            if (const auto selected = BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
+            if (const auto selected = Platform::BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
             {
                 SetGameRoot(app, *selected);
             }
@@ -1091,7 +1002,7 @@ namespace
         ImGui::SameLine();
         if (ImGui::Button("Browse##ExportRoot"))
         {
-            if (const auto selected = BrowseForFolder(app.hwnd, L"Choose Export Folder", app.settings.exportRoot))
+            if (const auto selected = Platform::BrowseForFolder(app.hwnd, L"Choose Export Folder", app.settings.exportRoot))
             {
                 app.settings.exportRoot = *selected;
                 SyncSettingsBuffers(app);
@@ -1116,13 +1027,13 @@ namespace
         ImGui::Separator();
         if (ImGui::Button("Save Settings"))
         {
-            app.settings.exportRoot = Utf8ToPath(app.exportRootBuffer.data());
-            SetGameRoot(app, Utf8ToPath(app.gameRootBuffer.data()));
+            app.settings.exportRoot = Platform::Utf8ToPath(app.exportRootBuffer.data());
+            SetGameRoot(app, Platform::Utf8ToPath(app.gameRootBuffer.data()));
             SaveSettingsWithLog(app);
         }
         ImGui::SameLine();
-        ImGui::Text("Settings file: %s", PathToUtf8(app.settingsPath).c_str());
-        ImGui::Text("Index cache: %s", PathToUtf8(app.indexCachePath).c_str());
+        ImGui::Text("Settings file: %s", Platform::PathToUtf8(app.settingsPath).c_str());
+        ImGui::Text("Index cache: %s", Platform::PathToUtf8(app.indexCachePath).c_str());
 
         ImGui::End();
     }
@@ -1164,7 +1075,7 @@ namespace
             ImGui::SameLine();
             if (ImGui::Button("Browse"))
             {
-                if (const auto selected = BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
+                if (const auto selected = Platform::BrowseForFolder(app.hwnd, L"Choose War Thunder Folder", app.settings.gameRoot))
                 {
                     SetGameRoot(app, *selected);
                 }
@@ -1463,19 +1374,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 
     AppState app;
     app.hwnd = hwnd;
-    app.settingsPath = GetSettingsPath();
-    app.indexCachePath = GetIndexCachePath();
+    app.settingsPath = Platform::GetSettingsPath();
+    app.indexCachePath = Platform::GetIndexCachePath();
     LoadSettings(app.settings, app.settingsPath);
     app.validation = ValidateGameRoot(app.settings.gameRoot);
     SyncSettingsBuffers(app);
     app.firstRunPromptOpen = !app.validation.IsValid();
 
     AddLog(app, LogLevel::Info, "Application started.");
-    AddLog(app, LogLevel::Info, "Settings path: " + PathToUtf8(app.settingsPath));
-    AddLog(app, LogLevel::Info, "Index cache path: " + PathToUtf8(app.indexCachePath));
+    AddLog(app, LogLevel::Info, "Settings path: " + Platform::PathToUtf8(app.settingsPath));
+    AddLog(app, LogLevel::Info, "Index cache path: " + Platform::PathToUtf8(app.indexCachePath));
     if (app.validation.IsValid())
     {
-        AddLog(app, LogLevel::Info, "Loaded saved game folder: " + PathToUtf8(app.settings.gameRoot));
+        AddLog(app, LogLevel::Info, "Loaded saved game folder: " + Platform::PathToUtf8(app.settings.gameRoot));
         LoadIndexCacheIntoApp(app);
     }
     else
