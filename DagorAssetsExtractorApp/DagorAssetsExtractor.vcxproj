@@ -84,9 +84,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\App\AppState.cpp" />
     <ClCompile Include="src\AssetIndex\AssetIndex.cpp" />
     <ClCompile Include="src\DagorIO\BinaryReader.cpp" />
     <ClCompile Include="src\Platform\Platform.cpp" />
+    <ClCompile Include="src\UI\UI.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_demo.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_draw.cpp" />
