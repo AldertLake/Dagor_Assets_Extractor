@@ -1,3 +1,52 @@
+# Visual Studio / Visual C++
+.vs/
+*.vcxproj.user
+*.suo
+*.user
+*.userosscache
+*.sdf
+*.opensdf
+*.VC.db
+
+# Build outputs
+/build/
+/Debug/
+/Release/
+/intermediate/
+*/Debug/
+*/Release/
+
+# Compiled object files, libraries, and executables
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.exe
+*.so
+*.dylib
+*.pdb
+*.ilk
+*.idb
+
+# Other generated files
+*.ipch
+*.log
+*.cache
+*.zip
+*.7z
+
+# CMake
+/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# JetBrains
+.idea/
+
+# Node / npm
+node_modules/
 # Visual Studio
 .vs/
 *.VC.db
@@ -64,5 +113,5 @@ desktop.ini
 
 
 # i use them for notes
-PROJECT_PLAN.md
-PROGRESS.md
+#PROJECT_PLAN.md
+#PROGRESS.md
