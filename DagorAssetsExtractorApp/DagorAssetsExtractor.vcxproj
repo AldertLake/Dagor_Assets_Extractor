@@ -84,6 +84,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\AssetIndex\AssetIndex.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_demo.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_draw.cpp" />
@@ -93,6 +94,7 @@
     <ClCompile Include="..\third_party\imgui\backends\imgui_impl_win32.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\AssetIndex\AssetIndex.h" />
     <ClInclude Include="..\third_party\imgui\imgui.h" />
     <ClInclude Include="..\third_party\imgui\imgui_internal.h" />
     <ClInclude Include="..\third_party\imgui\imconfig.h" />

@@ -9,6 +9,12 @@
       <UniqueIdentifier>{8195535F-EA38-4B95-B378-E3294C07D7EC}</UniqueIdentifier>
       <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
     </Filter>
+    <Filter Include="Source Files\AssetIndex">
+      <UniqueIdentifier>{7857B2B3-AE68-4C9F-8933-C6CF688CB917}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\AssetIndex">
+      <UniqueIdentifier>{7B5D968A-1EC3-49B4-B90D-F5AC8EB56908}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Third Party\\ImGui">
       <UniqueIdentifier>{81220F45-ED73-4957-B161-3A1F82D63A6D}</UniqueIdentifier>
     </Filter>
@@ -19,6 +25,9 @@
   <ItemGroup>
     <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\AssetIndex\AssetIndex.cpp">
+      <Filter>Source Files\AssetIndex</Filter>
     </ClCompile>
     <ClCompile Include="..\third_party\imgui\imgui.cpp">
       <Filter>Third Party\ImGui</Filter>
@@ -43,6 +52,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\AssetIndex\AssetIndex.h">
+      <Filter>Header Files\AssetIndex</Filter>
+    </ClInclude>
     <ClInclude Include="..\third_party\imgui\imgui.h">
       <Filter>Third Party\ImGui</Filter>
     </ClInclude>
