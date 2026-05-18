@@ -1511,11 +1511,41 @@ namespace DagorAssetsExtractor::Export
                 payload = std::move(packPayload);
             }
 
+            // Determine how many mips actually fit in the decompressed payload
+            uint32_t actualMips = 0;
+            size_t accumulatedMipSize = 0;
+            std::vector<size_t> mipSizes;
+            if (CalculateDdsMipSizes(header, mipSizes))
+            {
+                for (size_t i = 0; i < mipSizes.size(); ++i)
+                {
+                    if (accumulatedMipSize + mipSizes[i] <= payload.size())
+                    {
+                        accumulatedMipSize += mipSizes[i];
+                        actualMips++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
+            DagorFormats::DdsxHeader exportHeader = header;
+            if (actualMips > 0 && actualMips < std::max<uint32_t>(1, header.mipCount))
+            {
+                result.warnings.push_back(
+                    "DDS payload size (" + std::to_string(payload.size()) +
+                    " bytes) is smaller than expected for " + std::to_string(header.mipCount) +
+                    " mip(s). Clamping mip count to " + std::to_string(actualMips) + " based on available data.");
+                exportHeader.mipCount = static_cast<uint8_t>(actualMips);
+            }
+
             std::string mipOrderWarning;
             std::string mipOrderError;
-            if (!NormalizeMipOrderIfNeeded(header, payload, mipOrderWarning, mipOrderError))
+            if (!NormalizeMipOrderIfNeeded(exportHeader, payload, mipOrderWarning, mipOrderError))
             {
-                result.error = mipOrderError + " " + BuildDdsxDiagnostic(header, packPayload.size());
+                result.error = mipOrderError + " " + BuildDdsxDiagnostic(exportHeader, packPayload.size());
                 return result;
             }
             if (!mipOrderWarning.empty())
@@ -1524,16 +1554,16 @@ namespace DagorAssetsExtractor::Export
             }
 
             size_t expectedPayloadSize = 0;
-            if (CalculateDdsPayloadSize(header, expectedPayloadSize))
+            if (CalculateDdsPayloadSize(exportHeader, expectedPayloadSize))
             {
                 if (payload.size() < expectedPayloadSize)
                 {
-                    result.error = "DDS payload is too small for " + std::string(header.FormatName()) +
-                        " " + std::to_string(header.width) + "x" + std::to_string(header.height) +
-                        " with " + std::to_string(std::max<uint32_t>(1, header.mipCount)) +
+                    result.error = "DDS payload is too small for " + std::string(exportHeader.FormatName()) +
+                        " " + std::to_string(exportHeader.width) + "x" + std::to_string(exportHeader.height) +
+                        " with " + std::to_string(std::max<uint32_t>(1, exportHeader.mipCount)) +
                         " mip(s): expected at least " + std::to_string(expectedPayloadSize) +
                         " bytes, got " + std::to_string(payload.size()) + ". " +
-                        BuildDdsxDiagnostic(header, packPayload.size());
+                        BuildDdsxDiagnostic(exportHeader, packPayload.size());
                     return result;
                 }
 
@@ -1546,7 +1576,7 @@ namespace DagorAssetsExtractor::Export
             else
             {
                 result.warnings.push_back("Could not validate DDS payload size for format code " +
-                    std::to_string(header.d3dFormat) + ".");
+                    std::to_string(exportHeader.d3dFormat) + ".");
             }
 
             const std::string normalizedFormat = NormalizeTextureFormat(options.format);
@@ -1575,7 +1605,7 @@ namespace DagorAssetsExtractor::Export
             {
                 RasterImage image;
                 std::string readableError;
-                if (DecodeTopMipToRaster(header, payload, image, readableError))
+                if (DecodeTopMipToRaster(exportHeader, payload, image, readableError))
                 {
                     std::filesystem::path outputPath;
                     if (!prepareOutputPath(TextureFormatExtension(normalizedFormat), outputPath))
@@ -1588,7 +1618,7 @@ namespace DagorAssetsExtractor::Export
                         result.success = true;
                         result.outputPath = outputPath;
 
-                        if (header.mipCount > 1)
+                        if (exportHeader.mipCount > 1)
                         {
                             result.warnings.push_back(std::string(normalizedFormat) + " export writes only the top mip level.");
                         }
@@ -1644,7 +1674,7 @@ namespace DagorAssetsExtractor::Export
                 return result;
             }
 
-            if (WriteDds(outputPath, header, payload, result.error))
+            if (WriteDds(outputPath, exportHeader, payload, result.error))
             {
                 result.success = true;
                 result.outputPath = outputPath;
@@ -1658,10 +1688,10 @@ namespace DagorAssetsExtractor::Export
                 manifest.appVersion = "0.1.0-alpha";
                 manifest.formatDecoderVersion = "DdsxReader v1.0";
 
-                if (NeedsDX10Header(header.d3dFormat))
+                if (NeedsDX10Header(exportHeader.d3dFormat))
                 {
                     manifest.decodeWarnings.push_back(
-                        "DX10 extended header used for DXGI format " + std::to_string(header.d3dFormat));
+                        "DX10 extended header used for DXGI format " + std::to_string(exportHeader.d3dFormat));
                 }
 
                 for (const std::string& warning : result.warnings)
