@@ -1098,7 +1098,7 @@ namespace
 
         ok &= Expect(WriteBinaryFile(descriptorPath, MakeSyntheticGameResDescPayload()),
             "Descriptor link test should write synthetic descriptor");
-        ok &= Expect(WriteBinaryFile(grpPath, MakeSyntheticGrpPack("sample_tank")),
+        ok &= Expect(WriteBinaryFile(grpPath, MakeSyntheticModernGrpPack("sample_tank", 0x77F8232Fu, "RIND")),
             "Descriptor link test should write synthetic GRP");
         ok &= Expect(WriteBinaryFile(dxpPath, MakeSyntheticDxpPack({ "body_tex", "body_n" })),
             "Descriptor link test should write synthetic DXP");
@@ -1134,6 +1134,9 @@ namespace
             ok &= Expect(link.matchedGrpPath.has_value(), "Descriptor link should match GRP pack");
             ok &= Expect(link.matchedGrpEntryName.has_value() && *link.matchedGrpEntryName == "sample_tank",
                 "Descriptor link should match GRP entry name");
+            ok &= Expect(link.matchedGrpClassId == 0x77F8232Fu, "Descriptor link should preserve matched GRP class id");
+            ok &= Expect(link.matchedGrpClassName == "RendInst", "Descriptor link should preserve matched GRP class name");
+            ok &= Expect(link.matchedGrpEntryCanExportStaticModel, "Descriptor link should mark RendInst matches as exportable");
             if (link.matchedGrpPath)
             {
                 ok &= Expect(link.matchedGrpPath->filename() == "sample_vehicle.grp",
@@ -1156,6 +1159,63 @@ namespace
                         "Descriptor texture link should prefer BLK-linked DXP pack");
                 }
             }
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    bool TestDescriptorResourceLinksNonStaticGrpMatch()
+    {
+        bool ok = true;
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_DescriptorLinkAnimTest_" + std::to_string(stamp));
+        const fs::path resDir = tempDir / "content" / "base" / "res";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(resDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp non-static descriptor link test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        const fs::path descriptorPath = resDir / "riDesc.bin";
+        const fs::path grpPath = resDir / "sample_vehicle.grp";
+        const fs::path dxpPath = resDir / "sample_textures.dxp.bin";
+        const fs::path blkPath = resDir / "sample_rules.blk";
+
+        ok &= Expect(WriteBinaryFile(descriptorPath, MakeSyntheticGameResDescPayload()),
+            "Non-static descriptor link test should write synthetic descriptor");
+        ok &= Expect(WriteBinaryFile(grpPath, MakeSyntheticModernGrpPack("sample_tank", 0x40C586F9u, "A2D!")),
+            "Non-static descriptor link test should write synthetic GRP");
+        ok &= Expect(WriteBinaryFile(dxpPath, MakeSyntheticDxpPack({ "body_tex", "body_n" })),
+            "Non-static descriptor link test should write synthetic DXP");
+
+        {
+            std::ofstream blk(blkPath);
+            blk << "gameResPack:t=\"sample_vehicle\"\n";
+            blk << "ddsxTexPack:t=\"sample_textures\"\n";
+        }
+
+        std::vector<AssetIndex::ResourceRecord> records;
+        records.push_back(MakeResourceRecord(descriptorPath, AssetIndex::AssetType::Descriptor));
+        records.push_back(MakeResourceRecord(grpPath, AssetIndex::AssetType::Grp));
+        records.push_back(MakeResourceRecord(dxpPath, AssetIndex::AssetType::Dxp));
+        records.push_back(MakeResourceRecord(blkPath, AssetIndex::AssetType::Blk));
+
+        const AssetIndex::BlkResourceLinkBuildResult blkLinks = AssetIndex::BuildBlkResourceLinks(records);
+        const AssetIndex::DescriptorResourceLinkBuildResult descriptorLinks =
+            AssetIndex::BuildDescriptorResourceLinks(records, &blkLinks.links);
+
+        ok &= Expect(descriptorLinks.links.size() == 1, "Non-static descriptor link test should expose one descriptor resource");
+        if (!descriptorLinks.links.empty())
+        {
+            const AssetIndex::DescriptorResourceLink& link = descriptorLinks.links[0];
+            ok &= Expect(link.matchedGrpClassId == 0x40C586F9u, "Descriptor link should preserve Anim2Data class id");
+            ok &= Expect(link.matchedGrpClassName == "Anim2Data", "Descriptor link should preserve Anim2Data class name");
+            ok &= Expect(!link.matchedGrpEntryCanExportStaticModel, "Descriptor link should mark Anim2Data matches as non-exportable");
         }
 
         fs::remove_all(tempDir, ec);
@@ -1728,6 +1788,7 @@ int main(int argc, char** argv)
     ok &= Expect(TestFixtureBlk(fixtureRoot), "fixture BLK parser test should pass");
     ok &= Expect(TestBlkResourceLinks(discovered.records), "fixture BLK resource link test should pass");
     ok &= Expect(TestDescriptorResourceLinks(), "descriptor resource link test should pass");
+    ok &= Expect(TestDescriptorResourceLinksNonStaticGrpMatch(), "descriptor non-static GRP link test should pass");
     ok &= Expect(TestPackContentsFixtures(fixtureRoot), "fixture PackContents tests should pass");
 
     const std::array<std::pair<const char*, AssetIndex::AssetType>, 5> classifyCases = {

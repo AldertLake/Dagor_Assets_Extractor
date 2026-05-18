@@ -29,6 +29,9 @@ namespace DagorAssetsExtractor::AssetIndex
         std::vector<uint32_t> materialTextureRefs;
         std::optional<std::filesystem::path> matchedGrpPath;
         std::optional<std::string> matchedGrpEntryName;
+        uint32_t matchedGrpClassId = 0;
+        std::string matchedGrpClassName;
+        bool matchedGrpEntryCanExportStaticModel = false;
         std::vector<DescriptorTextureLink> textureLinks;
     };
 

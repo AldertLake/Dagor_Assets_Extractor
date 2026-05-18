@@ -719,61 +719,135 @@ namespace DagorAssetsExtractor::UI
 
         if (selected.type == AssetType::Descriptor)
         {
-            const AssetIndex::DescriptorResourceLink* foundLink = nullptr;
+            std::vector<const AssetIndex::DescriptorResourceLink*> descriptorMatches;
             for (const auto& link : *links)
             {
                 if (link.descriptorPath == selected.path)
                 {
-                    foundLink = &link;
-                    break;
+                    descriptorMatches.push_back(&link);
                 }
             }
 
-            if (!foundLink)
+            if (descriptorMatches.empty())
             {
                 ImGui::TextWrapped("No relationships found for this descriptor.");
                 return;
             }
 
-            ImGui::Text("Resource Name: %s", foundLink->resourceName.c_str());
-            ImGui::Text("Resource ID: 0x%X (%u)", foundLink->resId, foundLink->resId);
+            const size_t resolvedGrpCount = static_cast<size_t>(std::count_if(
+                descriptorMatches.begin(),
+                descriptorMatches.end(),
+                [](const auto* link) { return link->matchedGrpPath.has_value(); }));
 
-            ImGui::TextUnformatted("GRP Match:");
-            ImGui::SameLine();
-            if (foundLink->matchedGrpPath)
+            ImGui::Text("Resources in this descriptor: %zu", descriptorMatches.size());
+            ImGui::Text("Resolved GRP matches: %zu", resolvedGrpCount);
+
+            ImGuiTableFlags resourceTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+            if (ImGui::BeginTable("DescriptorMatchesTable", 6, resourceTableFlags, ImVec2(0.0f, 210.0f)))
             {
-                ImGui::TextColored(ImVec4(0.43f, 0.86f, 0.55f, 1.0f), "%s -> %s",
-                    Platform::PathToUtf8(foundLink->matchedGrpPath->filename()).c_str(),
-                    foundLink->matchedGrpEntryName ? foundLink->matchedGrpEntryName->c_str() : "Root");
-                if (ImGui::IsItemHovered())
-                {
-                    ImGui::SetTooltip("%s", Platform::PathToUtf8(*foundLink->matchedGrpPath).c_str());
-                }
+                ImGui::TableSetupColumn("Resource Name", ImGuiTableColumnFlags_WidthStretch, 0.28f);
+                ImGui::TableSetupColumn("Resource ID", ImGuiTableColumnFlags_WidthFixed, 88.0f);
+                ImGui::TableSetupColumn("GRP Entry", ImGuiTableColumnFlags_WidthStretch, 0.28f);
+                ImGui::TableSetupColumn("GRP Class", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+                ImGui::TableSetupColumn("Textures", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+                ImGui::TableHeadersRow();
 
-                ImGui::SameLine();
-                if (ImGui::Button("Export Unified Model##desc"))
+                for (size_t rowIndex = 0; rowIndex < descriptorMatches.size(); ++rowIndex)
                 {
-                    if (foundLink->matchedGrpEntryName)
+                    const AssetIndex::DescriptorResourceLink& link = *descriptorMatches[rowIndex];
+                    const size_t resolvedTextureCount = static_cast<size_t>(std::count_if(
+                        link.textureLinks.begin(),
+                        link.textureLinks.end(),
+                        [](const auto& texLink) { return texLink.matchedDxpPath.has_value(); }));
+
+                    ImGui::PushID(static_cast<int>(rowIndex));
+                    ImGui::TableNextRow();
+
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(link.resourceName.c_str());
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("0x%X", link.resId);
+
+                    ImGui::TableSetColumnIndex(2);
+                    if (link.matchedGrpPath)
                     {
-                        App::RequestModelExportByName(app, *foundLink->matchedGrpPath, *foundLink->matchedGrpEntryName);
+                        ImGui::TextUnformatted(link.matchedGrpEntryName ? link.matchedGrpEntryName->c_str() : "Root");
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip("%s", Platform::PathToUtf8(*link.matchedGrpPath).c_str());
+                        }
                     }
                     else
                     {
-                        // If no entry name, we assume the whole GRP is the resource (unlikely for RendInst but possible for other types)
-                        App::AddLog(app, App::LogLevel::Warning, "Cannot export unified model: GRP entry name is missing.");
+                        ImGui::TextColored(ImVec4(1.0f, 0.49f, 0.42f, 1.0f), "Unresolved");
                     }
+
+                    ImGui::TableSetColumnIndex(3);
+                    if (!link.matchedGrpClassName.empty())
+                    {
+                        ImGui::TextUnformatted(link.matchedGrpClassName.c_str());
+                    }
+                    else if (link.matchedGrpPath)
+                    {
+                        ImGui::TextDisabled("Unknown");
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("-");
+                    }
+
+                    ImGui::TableSetColumnIndex(4);
+                    ImGui::Text("%zu/%zu", resolvedTextureCount, link.textureLinks.size());
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImGui::SetTooltip("%zu resolved texture pack matches out of %zu descriptor texture references.",
+                            resolvedTextureCount, link.textureLinks.size());
+                    }
+
+                    ImGui::TableSetColumnIndex(5);
+                    const bool hasMatchedGrpEntry = link.matchedGrpPath.has_value() && link.matchedGrpEntryName.has_value();
+                    const bool canExportUnifiedModel = hasMatchedGrpEntry && link.matchedGrpEntryCanExportStaticModel;
+                    ImGui::BeginDisabled(!canExportUnifiedModel);
+                    if (ImGui::Button("Export Model"))
+                    {
+                        App::RequestModelExportByName(app, *link.matchedGrpPath, *link.matchedGrpEntryName);
+                    }
+                    if (!canExportUnifiedModel && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    {
+                        if (!link.matchedGrpPath)
+                        {
+                            ImGui::SetTooltip("This descriptor resource is not matched to any GRP entry yet.");
+                        }
+                        else if (!link.matchedGrpEntryName)
+                        {
+                            ImGui::SetTooltip("The matched GRP entry name is missing.");
+                        }
+                        else if (!link.matchedGrpClassName.empty())
+                        {
+                            ImGui::SetTooltip("Only RendInst static meshes can be exported right now. This descriptor resolves to %s.",
+                                link.matchedGrpClassName.c_str());
+                        }
+                        else
+                        {
+                            ImGui::SetTooltip("Only RendInst static meshes can be exported right now.");
+                        }
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::PopID();
                 }
-            }
-            else
-            {
-                ImGui::TextColored(ImVec4(1.0f, 0.49f, 0.42f, 1.0f), "Unresolved GRP");
+
+                ImGui::EndTable();
             }
 
-            ImGui::Text("Textures: %zu (Resolved: %zu)", foundLink->textureLinks.size(),
-                std::count_if(foundLink->textureLinks.begin(), foundLink->textureLinks.end(), [](const auto& t) { return t.matchedDxpPath.has_value(); }));
-            ImGui::Text("Materials: %zu", foundLink->materialNames.size());
+            const AssetIndex::DescriptorResourceLink& primaryLink = *descriptorMatches.front();
+            ImGui::Text("Primary resource preview: %s", primaryLink.resourceName.c_str());
+            ImGui::Text("Textures: %zu (Resolved: %zu)", primaryLink.textureLinks.size(),
+                std::count_if(primaryLink.textureLinks.begin(), primaryLink.textureLinks.end(), [](const auto& t) { return t.matchedDxpPath.has_value(); }));
+            ImGui::Text("Materials: %zu", primaryLink.materialNames.size());
 
-            if (!foundLink->textureLinks.empty())
+            if (!primaryLink.textureLinks.empty())
             {
                 ImGui::TextUnformatted("Texture Dependencies:");
                 ImGuiTableFlags tblFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
@@ -785,7 +859,7 @@ namespace DagorAssetsExtractor::UI
                     ImGui::TableSetupColumn("Entry", ImGuiTableColumnFlags_WidthStretch, 0.15f);
                     ImGui::TableHeadersRow();
 
-                    for (const auto& texLink : foundLink->textureLinks)
+                    for (const auto& texLink : primaryLink.textureLinks)
                     {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);

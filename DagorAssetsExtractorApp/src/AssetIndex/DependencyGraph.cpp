@@ -339,6 +339,9 @@ namespace DagorAssetsExtractor::AssetIndex
         {
             fs::path packPath;
             std::string entryName;
+            uint32_t grpClassId = 0;
+            std::string grpClassName;
+            bool canExportStaticModel = false;
         };
 
         std::optional<PackEntryMatch> FindEntryInPacks(
@@ -363,7 +366,13 @@ namespace DagorAssetsExtractor::AssetIndex
                 {
                     if (NamesMatch(entry.name, entryName))
                     {
-                        return PackEntryMatch{ packPath, entry.name };
+                        PackEntryMatch match;
+                        match.packPath = packPath;
+                        match.entryName = entry.name;
+                        match.grpClassId = entry.grpClassId;
+                        match.grpClassName = entry.formatInfo;
+                        match.canExportStaticModel = CanExportGrpEntryAsStaticModel(entry);
+                        return match;
                     }
                 }
             }
@@ -455,6 +464,9 @@ namespace DagorAssetsExtractor::AssetIndex
                 {
                     link.matchedGrpPath = grpMatch->packPath;
                     link.matchedGrpEntryName = grpMatch->entryName;
+                    link.matchedGrpClassId = grpMatch->grpClassId;
+                    link.matchedGrpClassName = grpMatch->grpClassName;
+                    link.matchedGrpEntryCanExportStaticModel = grpMatch->canExportStaticModel;
                 }
 
                 const std::vector<fs::path> dxpCandidates = BuildDxpCandidatePaths(

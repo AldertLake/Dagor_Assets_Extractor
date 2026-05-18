@@ -666,7 +666,15 @@ namespace DagorAssetsExtractor::App
                     for (const auto& link : *descriptorLinks)
                     {
                         // Match by name and by GRP path if available
-                        bool nameMatch = (link.resourceName == entry.name);
+                        bool nameMatch = false;
+                        if (link.matchedGrpEntryName)
+                        {
+                            nameMatch = (*link.matchedGrpEntryName == entry.name);
+                        }
+                        else
+                        {
+                            nameMatch = (link.resourceName == entry.name);
+                        }
                         bool packMatch = !link.matchedGrpPath || (*link.matchedGrpPath == packPath);
 
                         if (nameMatch && packMatch)
