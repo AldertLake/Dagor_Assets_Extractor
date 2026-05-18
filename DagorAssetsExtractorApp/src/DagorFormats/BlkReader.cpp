@@ -331,4 +331,55 @@ namespace DagorFormats
         throw std::runtime_error(
             std::string(message) + " at line " + std::to_string(m_line) + ".");
     }
+
+    bool IsBinaryBlk(std::string_view text)
+    {
+        if (text.size() < 4)
+        {
+            return false;
+        }
+
+        // Check for null bytes in the first 4 bytes
+        for (size_t i = 0; i < 4 && i < text.size(); ++i)
+        {
+            if (text[i] == '\0')
+            {
+                return true;
+            }
+        }
+
+        // Check for Zstd magic number (0xFD2FB528) at the start or in the first few bytes
+        // (e.g. network.blk has 02-EC-09-00-28-B5-2F-FD, where 28-B5-2F-FD is at offset 4)
+        if (text.size() >= 8)
+        {
+            const unsigned char* bytes = reinterpret_cast<const unsigned char*>(text.data());
+            auto matchesZstd = [](const unsigned char* p) {
+                return p[0] == 0x28 && p[1] == 0xB5 && p[2] == 0x2F && p[3] == 0xFD;
+            };
+
+            if (matchesZstd(bytes) || matchesZstd(bytes + 4))
+            {
+                return true;
+            }
+        }
+
+        // Also check if the text contains non-printable characters in the first 32 bytes
+        size_t printableCount = 0;
+        size_t checkLen = std::min<size_t>(32, text.size());
+        for (size_t i = 0; i < checkLen; ++i)
+        {
+            unsigned char c = text[i];
+            if ((c >= 32 && c <= 126) || c == '\r' || c == '\n' || c == '\t')
+            {
+                printableCount++;
+            }
+        }
+        if (printableCount < checkLen * 0.7) // if less than 70% is printable text
+        {
+            return true;
+        }
+
+        return false;
+    }
 }
+

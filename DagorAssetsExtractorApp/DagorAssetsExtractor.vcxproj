@@ -54,7 +54,7 @@
       <PreprocessorDefinitions>_WINDOWS;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\third_party\imgui;$(ProjectDir)..\third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\third_party;$(ProjectDir)..\third_party\imgui;$(ProjectDir)..\third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -72,7 +72,7 @@
       <PreprocessorDefinitions>_WINDOWS;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\third_party\imgui;$(ProjectDir)..\third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)..\third_party;$(ProjectDir)..\third_party\imgui;$(ProjectDir)..\third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -86,13 +86,27 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\App\AppState.cpp" />
     <ClCompile Include="src\AssetIndex\AssetIndex.cpp" />
+    <ClCompile Include="src\AssetIndex\BlkRelationships.cpp" />
+    <ClCompile Include="src\DagorIO\Decompression.cpp" />
     <ClCompile Include="src\DagorIO\BinaryReader.cpp" />
+    <ClCompile Include="..\third_party\adler32.c" />
+    <ClCompile Include="..\third_party\crc32.c" />
+    <ClCompile Include="..\third_party\tinflate.c" />
+    <ClCompile Include="..\third_party\tinfzlib.c" />
+    <ClCompile Include="..\third_party\zstddeclib.c" />
     <ClCompile Include="src\DagorFormats\VromfsReader.cpp" />
     <ClCompile Include="src\DagorFormats\DxpReader.cpp" />
+    <ClCompile Include="src\DagorFormats\GrpReader.cpp" />
+    <ClCompile Include="src\DagorFormats\GameResDescReader.cpp" />
+    <ClCompile Include="src\DagorFormats\RendInstReader.cpp" />
     <ClCompile Include="src\DagorFormats\DdsxReader.cpp" />
     <ClCompile Include="src\DagorFormats\BlkReader.cpp" />
     <ClCompile Include="src\AssetIndex\PackContents.cpp" />
+    <ClCompile Include="src\Jobs\JobSystem.cpp" />
     <ClCompile Include="src\Platform\Platform.cpp" />
+    <ClCompile Include="src\Export\ExportManifest.cpp" />
+    <ClCompile Include="src\Export\TextureExporter.cpp" />
+    <ClCompile Include="src\Export\ModelExporter.cpp" />
     <ClCompile Include="src\UI\UI.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_demo.cpp" />
@@ -104,14 +118,26 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\App\AppState.h" />
+    <ClInclude Include="src\DagorIO\Decompression.h" />
+    <ClInclude Include="..\third_party\tinf.h" />
+    <ClInclude Include="..\third_party\zstd.h" />
+    <ClInclude Include="..\third_party\zstd_errors.h" />
     <ClInclude Include="src\AssetIndex\AssetIndex.h" />
+    <ClInclude Include="src\AssetIndex\BlkRelationships.h" />
     <ClInclude Include="src\DagorIO\BinaryReader.h" />
     <ClInclude Include="src\DagorFormats\VromfsReader.h" />
     <ClInclude Include="src\DagorFormats\DxpReader.h" />
+    <ClInclude Include="src\DagorFormats\GrpReader.h" />
+    <ClInclude Include="src\DagorFormats\GameResDescReader.h" />
+    <ClInclude Include="src\DagorFormats\RendInstReader.h" />
     <ClInclude Include="src\DagorFormats\DdsxReader.h" />
     <ClInclude Include="src\DagorFormats\BlkReader.h" />
     <ClInclude Include="src\AssetIndex\PackContents.h" />
+    <ClInclude Include="src\Jobs\JobSystem.h" />
     <ClInclude Include="src\Platform\Platform.h" />
+    <ClInclude Include="src\Export\ExportManifest.h" />
+    <ClInclude Include="src\Export\TextureExporter.h" />
+    <ClInclude Include="src\Export\ModelExporter.h" />
     <ClInclude Include="src\UI\UI.h" />
     <ClInclude Include="..\third_party\imgui\imgui.h" />
     <ClInclude Include="..\third_party\imgui\imgui_internal.h" />

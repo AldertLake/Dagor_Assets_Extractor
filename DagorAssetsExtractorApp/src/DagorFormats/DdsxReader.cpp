@@ -13,7 +13,7 @@ bool DdsxHeader::IsValid() const
 
 bool DdsxHeader::IsCompressed() const
 {
-    return packedSize > 0;
+    return compressionType != 0;
 }
 
 bool DdsxHeader::IsOodleCompressed() const
@@ -71,6 +71,7 @@ const char* DdsxHeader::CompressionName() const
     case 1:  return "zlib";
     case 2:  return "zstd";
     case 3:  return "Oodle";
+    case 4:  return "LZMA/7zip";
     default: return "Unknown";
     }
 }
@@ -88,11 +89,15 @@ void DdsxReader::Parse()
     //   0x0C  uint16  width
     //   0x0E  uint16  height
     //   0x10  uint8   mipCount
-    //   0x11  uint8   depth
-    //   0x12  uint16  reserved
-    //   0x14  uint32  memorySize  (decompressed)
-    //   0x18  uint32  packedSize  (compressed, 0 = uncompressed)
-    //   0x1C  uint32  compressionType
+    //   0x11  uint8   hqPartLevels
+    //   0x12  uint16  depth
+    //   0x14  uint16  bitsPerPixel
+    //   0x16  uint16  quality/shift nibbles
+    //   0x18  uint32  memorySize  (decompressed)
+    //   0x1C  uint32  packedSize  (compressed, 0 = uncompressed)
+    //
+    // Compression is encoded in flags, not in a separate field:
+    //   flags high byte 0x20 = zstd, 0x40 = lzma/7zip, 0x60 = Oodle, 0x80 = zlib.
 
     if (m_data.size() < 32)
     {
@@ -107,11 +112,39 @@ void DdsxReader::Parse()
     m_header.width           = reader.ReadUInt16();
     m_header.height          = reader.ReadUInt16();
     m_header.mipCount        = reader.ReadUInt8();
-    m_header.depth           = reader.ReadUInt8();
-    m_header.reserved        = reader.ReadUInt16();
+    m_header.hqPartLevels    = reader.ReadUInt8();
+    m_header.depth           = reader.ReadUInt16();
+    m_header.bitsPerPixel    = reader.ReadUInt16();
+    const uint16_t quality   = reader.ReadUInt16();
+    m_header.lQmip           = static_cast<uint8_t>(quality & 0x0F);
+    m_header.mQmip           = static_cast<uint8_t>((quality >> 4) & 0x0F);
+    m_header.dxtShift        = static_cast<uint8_t>((quality >> 8) & 0x0F);
+    m_header.uQmip           = static_cast<uint8_t>((quality >> 12) & 0x0F);
     m_header.memorySize      = reader.ReadUInt32();
     m_header.packedSize      = reader.ReadUInt32();
-    m_header.compressionType = reader.ReadUInt32();
+    m_header.compressionFlag = static_cast<uint8_t>((m_header.flags >> 24) & 0xE0);
+
+    switch (m_header.compressionFlag)
+    {
+    case 0x00:
+        m_header.compressionType = 0;
+        break;
+    case 0x20:
+        m_header.compressionType = 2; // zstd
+        break;
+    case 0x40:
+        m_header.compressionType = 4; // lzma/7zip
+        break;
+    case 0x60:
+        m_header.compressionType = 3; // Oodle
+        break;
+    case 0x80:
+        m_header.compressionType = 1; // zlib
+        break;
+    default:
+        m_header.compressionType = 0xFFFFFFFFu;
+        break;
+    }
 
     if (!m_header.IsValid())
     {

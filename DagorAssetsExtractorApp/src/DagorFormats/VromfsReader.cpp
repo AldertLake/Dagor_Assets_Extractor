@@ -1,5 +1,6 @@
 #include "VromfsReader.h"
 #include <stdexcept>
+#include "DagorIO/Decompression.h"
 
 namespace DagorFormats {
 
@@ -34,12 +35,18 @@ void VromfsReader::Parse() {
     bool isPacked = false;
     if (type == 0x80 && packedSize > 0) {
         isPacked = true;
+        // Zlib
+        auto compressedData = reader.ReadSpan(packedSize);
+        m_decompressedData = DagorIO::Decompressor::DecompressZlib(compressedData, originalSize);
+        m_data = m_decompressedData;
+        reader = DagorIO::MemoryReader(m_data);
     } else if (type == 0xc0) {
         isPacked = true;
-    }
-
-    if (isPacked) {
-        throw std::runtime_error("Packed VROMFS not supported yet");
+        // Zstd
+        auto compressedData = reader.ReadSpan(packedSize);
+        m_decompressedData = DagorIO::Decompressor::DecompressZstd(compressedData, originalSize);
+        m_data = m_decompressedData;
+        reader = DagorIO::MemoryReader(m_data);
     }
 
     if (reader.GetRemaining() < 16) {

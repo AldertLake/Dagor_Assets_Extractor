@@ -1,5 +1,7 @@
 #include "Platform.h"
 
+#include <iterator>
+
 namespace DagorAssetsExtractor::Platform {
 
     namespace fs = std::filesystem;
@@ -173,6 +175,69 @@ namespace DagorAssetsExtractor::Platform {
         {
             IShellItem* item = nullptr;
             if (SUCCEEDED(SHCreateItemFromParsingName(initialPath.wstring().c_str(), nullptr, IID_PPV_ARGS(&item))))
+            {
+                dialog->SetFolder(item);
+                item->Release();
+            }
+        }
+
+        std::optional<fs::path> selected;
+        if (SUCCEEDED(dialog->Show(owner)))
+        {
+            IShellItem* result = nullptr;
+            if (SUCCEEDED(dialog->GetResult(&result)))
+            {
+                PWSTR rawPath = nullptr;
+                if (SUCCEEDED(result->GetDisplayName(SIGDN_FILESYSPATH, &rawPath)))
+                {
+                    selected = fs::path(rawPath);
+                    CoTaskMemFree(rawPath);
+                }
+                result->Release();
+            }
+        }
+
+        dialog->Release();
+        return selected;
+#else
+        return std::nullopt;
+#endif
+    }
+
+    std::optional<fs::path> BrowseForFile(HWND owner, const wchar_t* title, const fs::path& initialPath)
+    {
+#if defined(_WIN32)
+        IFileOpenDialog* dialog = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+        {
+            return std::nullopt;
+        }
+
+        DWORD options = 0;
+        if (SUCCEEDED(dialog->GetOptions(&options)))
+        {
+            dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+        }
+
+        COMDLG_FILTERSPEC filters[] = {
+            { L"Oodle DLL", L"oo2core_6_win64.dll" },
+            { L"DLL files", L"*.dll" },
+            { L"All files", L"*.*" },
+        };
+        dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
+        dialog->SetTitle(title);
+
+        std::error_code ec;
+        fs::path initialFolder = initialPath;
+        if (!initialFolder.empty() && fs::is_regular_file(initialFolder, ec))
+        {
+            initialFolder = initialFolder.parent_path();
+        }
+
+        if (!initialFolder.empty() && fs::exists(initialFolder, ec))
+        {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(SHCreateItemFromParsingName(initialFolder.wstring().c_str(), nullptr, IID_PPV_ARGS(&item))))
             {
                 dialog->SetFolder(item);
                 item->Release();

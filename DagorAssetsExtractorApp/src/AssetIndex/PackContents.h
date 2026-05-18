@@ -17,7 +17,7 @@ namespace DagorAssetsExtractor::AssetIndex
         std::string name;          // Internal name / path inside the container
         uint32_t    offset  = 0;   // Byte offset within the container
         uint32_t    size    = 0;   // Size in bytes
-        std::string formatInfo;    // For textures: format string; for others: empty
+        std::string formatInfo;    // For textures: format string; for descriptors: class; for others: empty
 
         // DDSx-specific fields (only populated for DXP texture sub-assets)
         uint16_t    texWidth   = 0;
@@ -25,6 +25,13 @@ namespace DagorAssetsExtractor::AssetIndex
         uint8_t     texMips    = 0;
         std::string texFormat;     // Human-readable format name
         std::string texCompression; // Compression method name
+        std::vector<uint8_t> ddsxHeader; // Raw 32-byte DDSx header stored separately by DXP packs
+
+        // Descriptor-specific fields (only populated for GameResDesc entries)
+        uint32_t    resId      = 0;
+        std::vector<uint32_t> dependencyIds;
+        std::vector<std::string> textureNames;
+        std::vector<std::string> materialNames;
     };
 
     // Parsed contents of a single container pack, loaded on demand.
@@ -70,5 +77,13 @@ namespace DagorAssetsExtractor::AssetIndex
     // Parse the contents of a DXP container from disk, including DDSx header metadata.
     // Returns a PackContents with entries populated, or with error set.
     std::shared_ptr<PackContents> ParseDxpContents(const std::filesystem::path& path, size_t maxFileSize = 256 * 1024 * 1024);
+
+    // Parse the contents of a GRP container from disk.
+    // Returns a PackContents with entries populated, or with error set.
+    std::shared_ptr<PackContents> ParseGrpContents(const std::filesystem::path& path, size_t maxFileSize = 256 * 1024 * 1024);
+
+    // Parse the contents of a GameRes descriptor file (.bin) from disk.
+    // Returns a PackContents with entries populated, or with error set.
+    std::shared_ptr<PackContents> ParseDescriptorContents(const std::filesystem::path& path, size_t maxFileSize = 256 * 1024 * 1024);
 
 } // namespace DagorAssetsExtractor::AssetIndex

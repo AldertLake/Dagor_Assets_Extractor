@@ -30,11 +30,17 @@ struct DdsxHeader
     uint16_t width         = 0;
     uint16_t height        = 0;
     uint8_t  mipCount      = 0;
-    uint8_t  depth         = 1;   // For 3D / array textures
-    uint16_t reserved      = 0;
+    uint8_t  hqPartLevels  = 0;
+    uint16_t depth         = 1;   // For 3D / array textures
+    uint16_t bitsPerPixel  = 0;
+    uint8_t  lQmip         = 0;
+    uint8_t  mQmip         = 0;
+    uint8_t  dxtShift      = 0;
+    uint8_t  uQmip         = 0;
     uint32_t memorySize    = 0;   // Decompressed payload size
     uint32_t packedSize    = 0;   // Compressed payload size (0 = uncompressed)
-    uint32_t compressionType = 0; // 0 = none, 1 = zlib, 2 = zstd, 3 = oodle
+    uint8_t  compressionFlag = 0; // Header flags high byte: 0x20 zstd, 0x40 lzma, 0x60 oodle, 0x80 zlib
+    uint32_t compressionType = 0; // Normalized: 0 none, 1 zlib, 2 zstd, 3 oodle, 4 lzma/7zip
 
     // Derived helpers
     bool IsValid() const;

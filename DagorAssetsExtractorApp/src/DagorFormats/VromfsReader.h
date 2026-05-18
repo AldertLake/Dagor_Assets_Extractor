@@ -23,6 +23,7 @@ public:
 
 private:
     std::span<const uint8_t> m_data;
+    std::vector<uint8_t> m_decompressedData;
     std::vector<VromfsFileInfo> m_files;
 };
 

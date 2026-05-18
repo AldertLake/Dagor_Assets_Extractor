@@ -25,6 +25,8 @@ namespace DagorFormats
         std::vector<BlkBlock> children;
     };
 
+    bool IsBinaryBlk(std::string_view text);
+
     class BlkReader
     {
     public:

@@ -2,6 +2,8 @@
 #include "DagorFormats/VromfsReader.h"
 #include "DagorFormats/DxpReader.h"
 #include "DagorFormats/DdsxReader.h"
+#include "DagorFormats/GrpReader.h"
+#include "DagorFormats/GameResDescReader.h"
 
 #include <fstream>
 #include <algorithm>
@@ -157,6 +159,8 @@ namespace DagorAssetsExtractor::AssetIndex
                 // Try to parse the DDSx header for extra texture metadata
                 if (file.headerDdsx.size() >= 32)
                 {
+                    entry.ddsxHeader.assign(file.headerDdsx.begin(), file.headerDdsx.end());
+
                     try
                     {
                         DagorFormats::DdsxReader ddsxReader(file.headerDdsx);
@@ -183,6 +187,83 @@ namespace DagorAssetsExtractor::AssetIndex
         catch (const std::exception& ex)
         {
             contents->error = std::string("DXP parse error: ") + ex.what();
+        }
+
+        return contents;
+    }
+
+    // -- Parse GRP ------------------------------------------------------------
+
+    std::shared_ptr<PackContents> ParseGrpContents(const fs::path& path, size_t maxFileSize)
+    {
+        auto contents = std::make_shared<PackContents>();
+        contents->sourcePath = path;
+        contents->containerType = "GRP";
+        contents->parsed = true;
+
+        std::vector<uint8_t> data;
+        if (!ReadFileLimited(path, data, maxFileSize, contents->error))
+        {
+            return contents;
+        }
+
+        try
+        {
+            DagorFormats::GrpReader reader(data);
+            reader.Parse();
+
+            for (const DagorFormats::GrpFileInfo& file : reader.GetFiles())
+            {
+                SubAssetRecord entry;
+                entry.name   = file.name;
+                entry.offset = file.offset;
+                entry.size   = file.size;
+                contents->entries.push_back(std::move(entry));
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            contents->error = std::string("GRP parse error: ") + ex.what();
+        }
+
+        return contents;
+    }
+
+    // -- Parse Descriptor -----------------------------------------------------
+
+    std::shared_ptr<PackContents> ParseDescriptorContents(const fs::path& path, size_t maxFileSize)
+    {
+        auto contents = std::make_shared<PackContents>();
+        contents->sourcePath = path;
+        contents->containerType = "Descriptor";
+        contents->parsed = true;
+
+        std::vector<uint8_t> data;
+        if (!ReadFileLimited(path, data, maxFileSize, contents->error))
+        {
+            return contents;
+        }
+
+        try
+        {
+            DagorFormats::GameResDescReader reader(data);
+            reader.Parse();
+
+            for (const auto& entry : reader.GetEntries())
+            {
+                SubAssetRecord sub;
+                sub.name = entry.name;
+                sub.formatInfo = entry.className;
+                sub.resId = entry.resId;
+                sub.dependencyIds = entry.dependencyIds;
+                sub.textureNames = entry.textures;
+                sub.materialNames = entry.materials;
+                contents->entries.push_back(std::move(sub));
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            contents->error = std::string("Descriptor parse error: ") + ex.what();
         }
 
         return contents;

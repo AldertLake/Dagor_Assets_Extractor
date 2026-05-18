@@ -89,6 +89,8 @@ build/
 # Visual Studio generated folders
 ipch/
 .vscode/
+.vs/
+.gemini/
 
 # CMake, if used
 CMakeFiles/
@@ -115,3 +117,5 @@ desktop.ini
 # i use them for notes
 PROJECT_PLAN.md
 PROGRESS.md
+
+Build.ps1

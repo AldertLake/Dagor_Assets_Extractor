@@ -1,7 +1,14 @@
 #include "App/AppState.h"
 #include "Platform/Platform.h"
+#include "DagorIO/Decompression.h"
+#include "Export/TextureExporter.h"
+#include "Export/ModelExporter.h"
+#include "DagorFormats/BlkReader.h"
+#include "DagorFormats/RendInstReader.h"
 #include <fstream>
 #include <chrono>
+#include <sstream>
+#include <algorithm>
 
 namespace DagorAssetsExtractor::App
 {
@@ -242,6 +249,23 @@ namespace DagorAssetsExtractor::App
         app.scan.completed.store(false);
         app.scan.failed.store(false);
         app.packContentsCache.Clear();
+
+        {
+            std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
+            app.blkLinks.loading = false;
+            app.blkLinks.status = "Not built";
+            app.blkLinks.loadingRecords.reset();
+            app.blkLinks.links.reset();
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+            app.descriptorLinks.loading = false;
+            app.descriptorLinks.status = "Not built";
+            app.descriptorLinks.loadingRecords.reset();
+            app.descriptorLinks.loadingBlkLinks.reset();
+            app.descriptorLinks.links.reset();
+        }
     }
 
     void LoadIndexCacheIntoApp(AppState& app)
@@ -440,12 +464,6 @@ namespace DagorAssetsExtractor::App
             return;
         }
 
-        // Only VROMFS and DXP containers support sub-asset parsing
-        if (type != AssetIndex::AssetType::Vromfs && type != AssetIndex::AssetType::Dxp)
-        {
-            return;
-        }
-
         app.packContentsParsing.store(true);
         AddLog(app, LogLevel::Info, "Parsing contents of " + Platform::PathToUtf8(packPath.filename()) + "...");
 
@@ -459,6 +477,14 @@ namespace DagorAssetsExtractor::App
             else if (type == AssetIndex::AssetType::Dxp)
             {
                 contents = AssetIndex::ParseDxpContents(packPath);
+            }
+            else if (type == AssetIndex::AssetType::Grp)
+            {
+                contents = AssetIndex::ParseGrpContents(packPath);
+            }
+            else if (type == AssetIndex::AssetType::Descriptor)
+            {
+                contents = AssetIndex::ParseDescriptorContents(packPath);
             }
 
             if (contents)
@@ -480,5 +506,499 @@ namespace DagorAssetsExtractor::App
 
             app.packContentsParsing.store(false);
         }).detach();
+    }
+
+    Export::TextureExportOptions GetTextureExportOptions(const AppState& app)
+    {
+        Export::TextureExportOptions options;
+        options.outputDir = app.settings.exportRoot;
+        options.gameRoot = app.settings.gameRoot;
+        options.oodleDllPath = app.settings.oodleDllPath;
+        options.format = app.settings.textureExportFormat;
+        options.overwrite = true;
+        options.useOodleFromGameFolder = app.settings.useOodleFromGameFolder;
+        return options;
+    }
+
+    void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
+    {
+        AddLog(app, LogLevel::Info, "Exporting texture: " + entry.name + "...");
+        Export::TextureExportOptions options = GetTextureExportOptions(app);
+
+        app.backgroundJobs.Start("ExportTexture_" + entry.name, [&app, packPath, entry, options]() {
+            auto result = Export::TextureExporter::ExportTexture(packPath, entry, options);
+            if (result.success)
+            {
+                AddLog(app, LogLevel::Info, "Exported texture: " + entry.name + " to " + Platform::PathToUtf8(result.outputPath));
+            }
+            else
+            {
+                AddLog(app, LogLevel::Error, "Failed to export texture: " + entry.name + ". Error: " + result.error);
+            }
+        });
+    }
+
+    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
+    {
+        AddLog(app, LogLevel::Info, "Exporting model: " + entry.name + "...");
+
+        std::filesystem::path exportRoot = app.settings.exportRoot;
+        std::string format = app.settings.modelExportFormat;
+
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format]() {
+            try
+            {
+                std::ifstream file(packPath, std::ios::binary);
+                if (!file)
+                {
+                    AddLog(app, LogLevel::Error, "Could not open pack file: " + Platform::PathToUtf8(packPath));
+                    return;
+                }
+
+                file.seekg(static_cast<std::streamoff>(entry.offset), std::ios::beg);
+                std::vector<uint8_t> payload(entry.size);
+                if (!file.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size())))
+                {
+                    AddLog(app, LogLevel::Error, "Could not read model payload from GRP file.");
+                    return;
+                }
+
+                DagorFormats::RendInstReader reader(payload);
+                reader.Parse();
+
+                std::string safeName = entry.name;
+                std::replace(safeName.begin(), safeName.end(), '/', '_');
+                std::replace(safeName.begin(), safeName.end(), '\\', '_');
+                std::replace(safeName.begin(), safeName.end(), ':', '_');
+
+                std::error_code ec;
+                fs::create_directories(exportRoot, ec);
+
+                DagorAssetsExtractor::Export::ExportManifest manifest;
+                manifest.sourcePack = packPath.filename().string();
+                manifest.sourceResource = entry.name;
+                manifest.assetType = "RendInst Static Model";
+                manifest.appVersion = "1.0.0";
+                manifest.formatDecoderVersion = "RendInstReader v1.0";
+
+                bool success = false;
+                fs::path outPath;
+
+                if (format == "GLB" || format == "glb")
+                {
+                    outPath = exportRoot / (safeName + ".glb");
+                    manifest.outputFiles.push_back(outPath.filename().string());
+                    success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest);
+                }
+                else
+                {
+                    outPath = exportRoot / (safeName + ".obj");
+                    manifest.outputFiles.push_back(outPath.filename().string());
+                    if (!reader.GetLods().empty())
+                    {
+                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToObj(outPath, reader.GetLods()[0], manifest);
+                    }
+                    else
+                    {
+                        AddLog(app, LogLevel::Error, "No LODs available to export as OBJ.");
+                        return;
+                    }
+                }
+
+                if (success)
+                {
+                    AddLog(app, LogLevel::Info, "Exported model: " + entry.name + " to " + Platform::PathToUtf8(outPath));
+                }
+                else
+                {
+                    AddLog(app, LogLevel::Error, "Failed to export model: " + entry.name);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                AddLog(app, LogLevel::Error, "Exception while exporting model " + entry.name + ": " + e.what());
+            }
+        });
+    }
+
+    void RequestBatchTextureExport(AppState& app, const std::filesystem::path& packPath, std::shared_ptr<const AssetIndex::PackContents> contents)
+    {
+        if (!contents) return;
+
+        AddLog(app, LogLevel::Info, "Starting batch export of textures from " + Platform::PathToUtf8(packPath.filename()) + "...");
+        Export::TextureExportOptions options = GetTextureExportOptions(app);
+
+        app.backgroundJobs.Start("BatchExportTextures_" + packPath.filename().string(), [&app, packPath, contents, options]() {
+            auto result = Export::TextureExporter::ExportAllTextures(packPath, *contents, options, nullptr);
+
+            std::ostringstream msg;
+            msg << "Batch texture export completed: " << result.succeeded << " succeeded, "
+                << result.failed << " failed, " << result.skipped << " skipped.";
+            AddLog(app, LogLevel::Info, msg.str());
+
+            for (const auto& err : result.errors)
+            {
+                AddLog(app, LogLevel::Error, err);
+            }
+            for (const auto& warn : result.warnings)
+            {
+                AddLog(app, LogLevel::Warning, warn);
+            }
+        });
+    }
+
+    bool IsOodleAvailable(const AppState& app)
+    {
+        std::string gameRoot = app.settings.useOodleFromGameFolder
+            ? Platform::PathToUtf8(app.settings.gameRoot)
+            : std::string();
+        std::string oodleDllPath = Platform::PathToUtf8(app.settings.oodleDllPath);
+        return DagorIO::Decompressor::IsOodleAvailable(gameRoot, oodleDllPath);
+    }
+
+    size_t CountBlkPropertiesRecursive(const DagorFormats::BlkBlock& block)
+    {
+        size_t count = block.properties.size();
+        for (const auto& child : block.children)
+        {
+            count += CountBlkPropertiesRecursive(child);
+        }
+        return count;
+    }
+
+    size_t CountBlkBlocksRecursive(const DagorFormats::BlkBlock& block)
+    {
+        size_t count = block.children.size();
+        for (const auto& child : block.children)
+        {
+            count += CountBlkBlocksRecursive(child);
+        }
+        return count;
+    }
+
+    void CollectBlkPreviewLines(const DagorFormats::BlkBlock& block, BlkPreview& preview, int depth = 0)
+    {
+        if (preview.lines.size() >= 48)
+        {
+            return;
+        }
+
+        const std::string indent(static_cast<size_t>(depth) * 2, ' ');
+
+        for (const auto& prop : block.properties)
+        {
+            if (preview.lines.size() >= 48)
+            {
+                return;
+            }
+            preview.lines.push_back(indent + prop.name + ": " + prop.value);
+        }
+
+        for (const auto& child : block.children)
+        {
+            if (preview.lines.size() >= 48)
+            {
+                return;
+            }
+            preview.lines.push_back(indent + child.name + " {");
+            CollectBlkPreviewLines(child, preview, depth + 1);
+
+            if (preview.lines.size() >= 48)
+            {
+                return;
+            }
+            preview.lines.push_back(indent + "}");
+        }
+    }
+
+    BlkPreview LoadBlkPreview(const fs::path& path)
+    {
+        constexpr uintmax_t MaxPreviewBytes = 1024 * 1024;
+
+        BlkPreview preview;
+        preview.path = path;
+        preview.loaded = true;
+
+        std::error_code ec;
+        const uintmax_t fileSize = fs::file_size(path, ec);
+        if (ec)
+        {
+            preview.error = "Could not read BLK size: " + ec.message();
+            return preview;
+        }
+
+        if (fileSize > MaxPreviewBytes)
+        {
+            preview.error = "BLK file is larger than the 1 MB preview limit.";
+            return preview;
+        }
+
+        std::ifstream file(path, std::ios::binary);
+        if (!file)
+        {
+            preview.error = "Could not open BLK file.";
+            return preview;
+        }
+
+        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+        if (DagorFormats::IsBinaryBlk(text))
+        {
+            preview.error = "This BLK file is in binary/packed format and cannot be previewed as text.";
+            return preview;
+        }
+
+        try
+        {
+            DagorFormats::BlkReader reader(text);
+            reader.Parse();
+
+            const DagorFormats::BlkBlock& root = reader.GetRoot();
+            preview.propertyCount = CountBlkPropertiesRecursive(root);
+            preview.blockCount = CountBlkBlocksRecursive(root);
+            CollectBlkPreviewLines(root, preview);
+        }
+        catch (const std::exception& exception)
+        {
+            preview.error = std::string("BLK parse error: ") + exception.what();
+        }
+
+        return preview;
+    }
+
+    std::shared_ptr<const BlkPreview> SnapshotBlkPreview(AppState& app, const std::filesystem::path& path)
+    {
+        std::lock_guard<std::mutex> lock(app.blkPreview.mutex);
+        if (app.blkPreview.preview && app.blkPreview.preview->path == path)
+        {
+            return app.blkPreview.preview;
+        }
+        return nullptr;
+    }
+
+    bool IsBlkPreviewLoading(AppState& app, const std::filesystem::path& path)
+    {
+        std::lock_guard<std::mutex> lock(app.blkPreview.mutex);
+        return app.blkPreview.loading && app.blkPreview.loadingPath == path;
+    }
+
+    void RequestBlkPreview(AppState& app, const std::filesystem::path& path)
+    {
+        {
+            std::lock_guard<std::mutex> lock(app.blkPreview.mutex);
+            if (app.blkPreview.loading && app.blkPreview.loadingPath == path)
+            {
+                return;
+            }
+            app.blkPreview.loading = true;
+            app.blkPreview.loadingPath = path;
+        }
+
+        app.backgroundJobs.Start("BlkPreview_" + path.filename().string(), [&app, path]() {
+            BlkPreview result = LoadBlkPreview(path);
+
+            std::lock_guard<std::mutex> lock(app.blkPreview.mutex);
+            if (app.blkPreview.loadingPath == path)
+            {
+                app.blkPreview.preview = std::make_shared<const BlkPreview>(std::move(result));
+                app.blkPreview.loading = false;
+            }
+        });
+    }
+
+    void RequestBlkResourceLinks(AppState& app, std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records)
+    {
+        if (!records) return;
+
+        {
+            std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
+            if (app.blkLinks.loading) return;
+            app.blkLinks.loading = true;
+            app.blkLinks.status = "Building relationships...";
+            app.blkLinks.loadingRecords = records;
+        }
+
+        app.backgroundJobs.Start("BlkResourceLinks", [&app, records]() {
+            try
+            {
+                auto result = AssetIndex::BuildBlkResourceLinks(*records);
+                const auto links = std::make_shared<const std::vector<AssetIndex::BlkResourceLink>>(std::move(result.links));
+
+                {
+                    std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
+                    if (app.blkLinks.loadingRecords != records)
+                    {
+                        return;
+                    }
+
+                    app.blkLinks.links = links;
+                    app.blkLinks.status = "Built " + std::to_string(app.blkLinks.links->size()) + " relationships";
+                    app.blkLinks.loading = false;
+                    app.blkLinks.loadingRecords.reset();
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+                    app.descriptorLinks.status = "Not built";
+                    app.descriptorLinks.links.reset();
+                    app.descriptorLinks.loadingRecords.reset();
+                    app.descriptorLinks.loadingBlkLinks.reset();
+                    app.descriptorLinks.loading = false;
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
+                if (app.blkLinks.loadingRecords != records)
+                {
+                    return;
+                }
+
+                app.blkLinks.status = "Failed: " + std::string(e.what());
+                app.blkLinks.loading = false;
+                app.blkLinks.loadingRecords.reset();
+            }
+        });
+    }
+
+    std::shared_ptr<const std::vector<AssetIndex::BlkResourceLink>> SnapshotBlkResourceLinks(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
+        return app.blkLinks.links;
+    }
+
+    std::string GetBlkResourceLinkStatus(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
+        return app.blkLinks.status;
+    }
+
+    bool IsBlkResourceLinksLoading(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
+        return app.blkLinks.loading;
+    }
+
+    void RequestDescriptorResourceLinks(AppState& app, std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records)
+    {
+        if (!records)
+        {
+            return;
+        }
+
+        const std::shared_ptr<const std::vector<AssetIndex::BlkResourceLink>> blkLinks = SnapshotBlkResourceLinks(app);
+
+        {
+            std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+            if (app.descriptorLinks.loading)
+            {
+                return;
+            }
+
+            app.descriptorLinks.loading = true;
+            app.descriptorLinks.status = "Building descriptor relationships...";
+            app.descriptorLinks.loadingRecords = records;
+            app.descriptorLinks.loadingBlkLinks = blkLinks;
+        }
+
+        app.backgroundJobs.Start("DescriptorResourceLinks", [&app, records, blkLinks]() {
+            try
+            {
+                auto result = AssetIndex::BuildDescriptorResourceLinks(
+                    *records,
+                    blkLinks ? blkLinks.get() : nullptr);
+
+                const size_t warningCount = result.warnings.size();
+                const size_t parseErrors = result.parseErrors;
+                const size_t descriptorFilesParsed = result.descriptorFilesParsed;
+                const size_t descriptorFilesSkipped = result.descriptorFilesSkipped;
+                const size_t grpPacksParsed = result.grpPacksParsed;
+                const size_t dxpPacksParsed = result.dxpPacksParsed;
+                const auto links = std::make_shared<const std::vector<AssetIndex::DescriptorResourceLink>>(std::move(result.links));
+
+                std::ostringstream status;
+                status << "Built " << links->size()
+                       << " descriptor links from " << descriptorFilesParsed
+                       << " descriptor file" << (descriptorFilesParsed == 1 ? "" : "s");
+                if (descriptorFilesSkipped > 0)
+                {
+                    status << ", skipped " << descriptorFilesSkipped;
+                }
+                if (parseErrors > 0)
+                {
+                    status << ", " << parseErrors << " parse error" << (parseErrors == 1 ? "" : "s");
+                }
+                if (warningCount > 0)
+                {
+                    status << ", " << warningCount << " warning" << (warningCount == 1 ? "" : "s");
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+                    if (app.descriptorLinks.loadingRecords != records)
+                    {
+                        return;
+                    }
+
+                    app.descriptorLinks.links = links;
+                    app.descriptorLinks.status = status.str();
+                    app.descriptorLinks.loading = false;
+                    app.descriptorLinks.loadingRecords.reset();
+                    app.descriptorLinks.loadingBlkLinks.reset();
+                }
+
+                std::ostringstream log;
+                log << "Descriptor relationships built: " << links->size()
+                    << " resources, " << grpPacksParsed << " GRP packs parsed, "
+                    << dxpPacksParsed << " DXP packs parsed.";
+                AddLog(app, warningCount > 0 || parseErrors > 0 ? LogLevel::Warning : LogLevel::Info, log.str());
+
+                for (size_t i = 0; i < std::min<size_t>(warningCount, 5); ++i)
+                {
+                    AddLog(app, LogLevel::Warning, result.warnings[i]);
+                }
+            }
+            catch (const std::exception& e)
+            {
+                std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+                if (app.descriptorLinks.loadingRecords != records)
+                {
+                    return;
+                }
+
+                app.descriptorLinks.status = "Failed: " + std::string(e.what());
+                app.descriptorLinks.loading = false;
+                app.descriptorLinks.loadingRecords.reset();
+                app.descriptorLinks.loadingBlkLinks.reset();
+            }
+        });
+    }
+
+    std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> SnapshotDescriptorResourceLinks(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+        return app.descriptorLinks.links;
+    }
+
+    std::string GetDescriptorResourceLinkStatus(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+        return app.descriptorLinks.status;
+    }
+
+    bool IsDescriptorResourceLinksLoading(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+        return app.descriptorLinks.loading;
+    }
+
+    void JoinFinishedBackgroundJobs(AppState& app)
+    {
+        app.backgroundJobs.JoinFinished();
+    }
+
+    void WaitForBackgroundJobs(AppState& app)
+    {
+        app.backgroundJobs.JoinAll();
     }
 }

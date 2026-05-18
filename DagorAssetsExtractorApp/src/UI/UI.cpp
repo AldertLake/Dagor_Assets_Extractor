@@ -284,6 +284,22 @@ namespace DagorAssetsExtractor::UI
             }
             ImGui::EndDisabled();
 
+            const bool canRebuildBlk = app.validation.IsValid() && app.scan.completed.load() && !App::IsBlkResourceLinksLoading(app);
+            ImGui::BeginDisabled(!canRebuildBlk);
+            if (ImGui::MenuItem("Rebuild BLK Relationships"))
+            {
+                App::RequestBlkResourceLinks(app, App::SnapshotRecords(app.scan));
+            }
+            ImGui::EndDisabled();
+
+            const bool canRebuildDesc = app.validation.IsValid() && app.scan.completed.load() && !App::IsDescriptorResourceLinksLoading(app);
+            ImGui::BeginDisabled(!canRebuildDesc);
+            if (ImGui::MenuItem("Rebuild Descriptor Relationships"))
+            {
+                App::RequestDescriptorResourceLinks(app, App::SnapshotRecords(app.scan));
+            }
+            ImGui::EndDisabled();
+
             ImGui::BeginDisabled(!app.scan.running.load());
             if (ImGui::MenuItem("Cancel Scan"))
             {
@@ -431,6 +447,8 @@ namespace DagorAssetsExtractor::UI
         ImGui::BulletText("BLK: %u", counts[4]);
         ImGui::Spacing();
         ImGui::TextWrapped("Cache: %s", App::GetCacheStatus(app.scan).c_str());
+        ImGui::TextWrapped("BLK Links: %s", App::GetBlkResourceLinkStatus(app).c_str());
+        ImGui::TextWrapped("Desc Links: %s", App::GetDescriptorResourceLinkStatus(app).c_str());
     }
 
     void DrawContentBrowser(AppState& app, const std::shared_ptr<const std::vector<ResourceRecord>>& recordsPtr)
@@ -590,6 +608,295 @@ namespace DagorAssetsExtractor::UI
         }
     }
 
+    std::string OptionalStringValue(const std::optional<std::string>& value)
+    {
+        if (!value)
+        {
+            return "Missing";
+        }
+        return *value;
+    }
+
+    void DrawBlkResourceLinks(AppState& app, const ResourceRecord& selected)
+    {
+        const std::shared_ptr<const std::vector<AssetIndex::BlkResourceLink>> links = App::SnapshotBlkResourceLinks(app);
+        const bool isLoading = App::IsBlkResourceLinksLoading(app);
+
+        ImGui::TextUnformatted("BLK Resource Links");
+        ImGui::BeginDisabled(isLoading || !app.scan.completed.load());
+        if (ImGui::Button("Refresh Links##blk", ImVec2(110.0f, 0.0f)))
+        {
+            App::RequestBlkResourceLinks(app, App::SnapshotRecords(app.scan));
+        }
+        ImGui::EndDisabled();
+
+        if (isLoading)
+        {
+            ImGui::TextColored(ImVec4(0.72f, 0.84f, 1.0f, 1.0f), "Building BLK links...");
+            return;
+        }
+
+        if (!links)
+        {
+            ImGui::TextWrapped("Click Refresh Links to parse all BLK files and index their referenced assets.");
+            return;
+        }
+
+        std::vector<const AssetIndex::BlkResourceLink*> rows;
+        for (const auto& link : *links)
+        {
+            if (link.blkPath == selected.path)
+            {
+                rows.push_back(&link);
+            }
+        }
+
+        if (rows.empty())
+        {
+            ImGui::TextWrapped("No resource links found in this BLK.");
+            return;
+        }
+
+        ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+        if (ImGui::BeginTable("BlkLinksTable", 4, flags, ImVec2(0.0f, 200.0f)))
+        {
+            ImGui::TableSetupColumn("Resource Name", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+            ImGui::TableSetupColumn("Expected Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("Matched Path", ImGuiTableColumnFlags_WidthStretch, 0.50f);
+            ImGui::TableSetupColumn("Line", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+            ImGui::TableHeadersRow();
+
+            for (const auto* row : rows)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(row->resourceName.c_str());
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(AssetIndex::AssetTypeName(row->expectedType));
+
+                ImGui::TableSetColumnIndex(2);
+                if (row->matchedPath)
+                {
+                    ImGui::TextUnformatted(Platform::PathToUtf8(*row->matchedPath).c_str());
+                }
+                else
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.49f, 0.42f, 1.0f), "Unresolved");
+                }
+
+                ImGui::TableSetColumnIndex(3);
+                ImGui::Text("%u", row->line);
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    void DrawDescriptorResourceLinks(AppState& app, const ResourceRecord& selected)
+    {
+        const std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> links = App::SnapshotDescriptorResourceLinks(app);
+        const bool isLoading = App::IsDescriptorResourceLinksLoading(app);
+
+        ImGui::TextUnformatted("Descriptor Resource Links");
+        ImGui::BeginDisabled(isLoading || !app.scan.completed.load());
+        if (ImGui::Button("Refresh Links##desc", ImVec2(110.0f, 0.0f)))
+        {
+            App::RequestDescriptorResourceLinks(app, App::SnapshotRecords(app.scan));
+        }
+        ImGui::EndDisabled();
+
+        if (isLoading)
+        {
+            ImGui::TextColored(ImVec4(0.72f, 0.84f, 1.0f, 1.0f), "Building descriptor relationships...");
+            return;
+        }
+
+        if (!links)
+        {
+            ImGui::TextWrapped("Click Refresh Links to parse descriptor files and build relationship graphs.");
+            return;
+        }
+
+        if (selected.type == AssetType::Descriptor)
+        {
+            const AssetIndex::DescriptorResourceLink* foundLink = nullptr;
+            for (const auto& link : *links)
+            {
+                if (link.descriptorPath == selected.path)
+                {
+                    foundLink = &link;
+                    break;
+                }
+            }
+
+            if (!foundLink)
+            {
+                ImGui::TextWrapped("No relationships found for this descriptor.");
+                return;
+            }
+
+            ImGui::Text("Resource Name: %s", foundLink->resourceName.c_str());
+            ImGui::Text("Resource ID: 0x%X (%u)", foundLink->resId, foundLink->resId);
+
+            ImGui::TextUnformatted("GRP Match:");
+            ImGui::SameLine();
+            if (foundLink->matchedGrpPath)
+            {
+                ImGui::TextColored(ImVec4(0.43f, 0.86f, 0.55f, 1.0f), "%s -> %s",
+                    Platform::PathToUtf8(foundLink->matchedGrpPath->filename()).c_str(),
+                    foundLink->matchedGrpEntryName ? foundLink->matchedGrpEntryName->c_str() : "Root");
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("%s", Platform::PathToUtf8(*foundLink->matchedGrpPath).c_str());
+                }
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.49f, 0.42f, 1.0f), "Unresolved GRP");
+            }
+
+            ImGui::Text("Textures: %zu (Resolved: %zu)", foundLink->textureLinks.size(),
+                std::count_if(foundLink->textureLinks.begin(), foundLink->textureLinks.end(), [](const auto& t) { return t.matchedDxpPath.has_value(); }));
+            ImGui::Text("Materials: %zu", foundLink->materialNames.size());
+
+            if (!foundLink->textureLinks.empty())
+            {
+                ImGui::TextUnformatted("Texture Dependencies:");
+                ImGuiTableFlags tblFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+                if (ImGui::BeginTable("DescTexTable", 4, tblFlags, ImVec2(0.0f, 140.0f)))
+                {
+                    ImGui::TableSetupColumn("Idx", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+                    ImGui::TableSetupColumn("Texture Name", ImGuiTableColumnFlags_WidthStretch, 0.5f);
+                    ImGui::TableSetupColumn("Matched DXP", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+                    ImGui::TableSetupColumn("Entry", ImGuiTableColumnFlags_WidthStretch, 0.15f);
+                    ImGui::TableHeadersRow();
+
+                    for (const auto& texLink : foundLink->textureLinks)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("%u", texLink.textureIndex);
+
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextUnformatted(texLink.textureName.c_str());
+
+                        ImGui::TableSetColumnIndex(2);
+                        if (texLink.matchedDxpPath)
+                        {
+                            ImGui::TextUnformatted(Platform::PathToUtf8(texLink.matchedDxpPath->filename()).c_str());
+                            if (ImGui::IsItemHovered())
+                            {
+                                ImGui::SetTooltip("%s", Platform::PathToUtf8(*texLink.matchedDxpPath).c_str());
+                            }
+                        }
+                        else
+                        {
+                            ImGui::TextColored(ImVec4(1.0f, 0.49f, 0.42f, 1.0f), "Unresolved DXP");
+                        }
+
+                        ImGui::TableSetColumnIndex(3);
+                        if (texLink.matchedDxpEntryName)
+                        {
+                            ImGui::TextUnformatted(texLink.matchedDxpEntryName->c_str());
+                        }
+                        else
+                        {
+                            ImGui::TextDisabled("-");
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+            }
+        }
+        else if (selected.type == AssetType::Grp)
+        {
+            std::vector<const AssetIndex::DescriptorResourceLink*> grpMatches;
+            for (const auto& link : *links)
+            {
+                if (link.matchedGrpPath && *link.matchedGrpPath == selected.path)
+                {
+                    grpMatches.push_back(&link);
+                }
+            }
+
+            ImGui::Text("Descriptor resources resolving to this GRP: %zu", grpMatches.size());
+            if (!grpMatches.empty())
+            {
+                ImGuiTableFlags tblFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+                if (ImGui::BeginTable("GrpMatchesTable", 3, tblFlags, ImVec2(0.0f, 150.0f)))
+                {
+                    ImGui::TableSetupColumn("Resource Name", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                    ImGui::TableSetupColumn("GRP Entry", ImGuiTableColumnFlags_WidthStretch, 0.3f);
+                    ImGui::TableSetupColumn("Descriptor File", ImGuiTableColumnFlags_WidthStretch, 0.3f);
+                    ImGui::TableHeadersRow();
+
+                    for (const auto* match : grpMatches)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted(match->resourceName.c_str());
+
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextUnformatted(match->matchedGrpEntryName ? match->matchedGrpEntryName->c_str() : "Root");
+
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::TextUnformatted(Platform::PathToUtf8(match->descriptorPath.filename()).c_str());
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip("%s", Platform::PathToUtf8(match->descriptorPath).c_str());
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+            }
+        }
+        else if (selected.type == AssetType::Dxp)
+        {
+            std::vector<std::pair<const AssetIndex::DescriptorResourceLink*, const AssetIndex::DescriptorTextureLink*>> dxpMatches;
+            for (const auto& link : *links)
+            {
+                for (const auto& texLink : link.textureLinks)
+                {
+                    if (texLink.matchedDxpPath && *texLink.matchedDxpPath == selected.path)
+                    {
+                        dxpMatches.push_back({&link, &texLink});
+                    }
+                }
+            }
+
+            ImGui::Text("Descriptor textures resolving to this DXP: %zu", dxpMatches.size());
+            if (!dxpMatches.empty())
+            {
+                ImGuiTableFlags tblFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+                if (ImGui::BeginTable("DxpMatchesTable", 3, tblFlags, ImVec2(0.0f, 150.0f)))
+                {
+                    ImGui::TableSetupColumn("Texture Entry", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+                    ImGui::TableSetupColumn("Resource Name", ImGuiTableColumnFlags_WidthStretch, 0.3f);
+                    ImGui::TableSetupColumn("Descriptor File", ImGuiTableColumnFlags_WidthStretch, 0.3f);
+                    ImGui::TableHeadersRow();
+
+                    for (const auto& match : dxpMatches)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted(match.second->matchedDxpEntryName ? match.second->matchedDxpEntryName->c_str() : "Root");
+
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextUnformatted(match.first->resourceName.c_str());
+
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::TextUnformatted(Platform::PathToUtf8(match.first->descriptorPath.filename()).c_str());
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip("%s", Platform::PathToUtf8(match.first->descriptorPath).c_str());
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+            }
+        }
+    }
+
     void DrawInspector(AppState& app, const std::vector<ResourceRecord>& records)
     {
         ImGui::TextUnformatted("Inspector");
@@ -610,8 +917,8 @@ namespace DagorAssetsExtractor::UI
         ImGui::TextWrapped("%s", Platform::PathToUtf8(selected->path).c_str());
         ImGui::Separator();
 
-        // Container sub-asset inspection (VROMFS and DXP only)
-        const bool isContainer = (selected->type == AssetType::Vromfs || selected->type == AssetType::Dxp);
+        // Container sub-asset inspection (VROMFS, GRP, DXP, and Descriptor)
+        const bool isContainer = (selected->type == AssetType::Vromfs || selected->type == AssetType::Dxp || selected->type == AssetType::Grp || selected->type == AssetType::Descriptor);
         if (isContainer)
         {
             const auto cachedContents = app.packContentsCache.Get(selected->path);
@@ -647,22 +954,52 @@ namespace DagorAssetsExtractor::UI
                 // Parsed successfully — show sub-assets
                 ImGui::Text("Container: %s", cachedContents->containerType.c_str());
                 ImGui::Text("Sub-assets: %zu", cachedContents->entries.size());
+                
+                if (selected->type == AssetType::Dxp)
+                {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Batch Export All##dxp"))
+                    {
+                        App::RequestBatchTextureExport(app, selected->path, cachedContents);
+                    }
+                }
                 ImGui::Separator();
 
                 const bool isDxp = (selected->type == AssetType::Dxp);
-                const int columnCount = isDxp ? 4 : 3;
+                const bool isGrp = (selected->type == AssetType::Grp);
+                const bool isDesc = (selected->type == AssetType::Descriptor);
+                const bool hasActions = (isDxp || isGrp);
+
+                int columnCount = 3;
+                if (isDxp) columnCount = 5;      // Name, Offset, Size, Format, Actions
+                else if (isGrp) columnCount = 4; // Name, Offset, Size, Actions
+                else if (isDesc) columnCount = 4; // Resource Name, ID, Class, Deps
 
                 ImGuiTableFlags subFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
 
                 if (ImGui::BeginTable("SubAssets", columnCount, subFlags, ImVec2(0.0f, 0.0f)))
                 {
-                    ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("Offset", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                    ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                    if (isDxp)
+                    if (isDesc)
                     {
-                        ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+                        ImGui::TableSetupColumn("Resource Name", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Resource ID", ImGuiTableColumnFlags_WidthFixed, 88.0f);
+                        ImGui::TableSetupColumn("Class Type", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                        ImGui::TableSetupColumn("Deps", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                    }
+                    else
+                    {
+                        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Offset", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                        if (isDxp)
+                        {
+                            ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+                        }
+                        if (hasActions)
+                        {
+                            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                        }
                     }
                     ImGui::TableHeadersRow();
 
@@ -675,18 +1012,15 @@ namespace DagorAssetsExtractor::UI
                             const AssetIndex::SubAssetRecord& entry = cachedContents->entries[row];
                             ImGui::TableNextRow();
 
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::TextUnformatted(entry.name.c_str());
-
-                            ImGui::TableSetColumnIndex(1);
-                            ImGui::Text("0x%X", entry.offset);
-
-                            ImGui::TableSetColumnIndex(2);
-                            ImGui::TextUnformatted(FormatBytes(entry.size).c_str());
-
-                            if (isDxp)
+                            if (isDesc)
                             {
-                                ImGui::TableSetColumnIndex(3);
+                                ImGui::TableSetColumnIndex(0);
+                                ImGui::TextUnformatted(entry.name.c_str());
+
+                                ImGui::TableSetColumnIndex(1);
+                                ImGui::Text("0x%X", entry.resId);
+
+                                ImGui::TableSetColumnIndex(2);
                                 if (!entry.formatInfo.empty())
                                 {
                                     ImGui::TextUnformatted(entry.formatInfo.c_str());
@@ -694,6 +1028,84 @@ namespace DagorAssetsExtractor::UI
                                 else
                                 {
                                     ImGui::TextDisabled("N/A");
+                                }
+
+                                ImGui::TableSetColumnIndex(3);
+                                const size_t depCount = entry.dependencyIds.size();
+                                const size_t texCount = entry.textureNames.size();
+                                const size_t matCount = entry.materialNames.size();
+                                ImGui::Text("%zu links", depCount + texCount + matCount);
+                                
+                                if (ImGui::IsItemHovered())
+                                {
+                                    ImGui::BeginTooltip();
+                                    ImGui::Text("Dependency Count: %zu", depCount);
+                                    ImGui::Text("Textures: %zu", texCount);
+                                    ImGui::Text("Materials: %zu", matCount);
+                                    
+                                    if (!entry.textureNames.empty())
+                                    {
+                                        ImGui::Separator();
+                                        ImGui::TextUnformatted("Textures:");
+                                        for (size_t t = 0; t < std::min(entry.textureNames.size(), size_t(8)); ++t)
+                                        {
+                                            ImGui::BulletText("%s", entry.textureNames[t].c_str());
+                                        }
+                                        if (entry.textureNames.size() > 8) ImGui::BulletText("...and %zu more", entry.textureNames.size() - 8);
+                                    }
+                                    
+                                    if (!entry.materialNames.empty())
+                                    {
+                                        ImGui::Separator();
+                                        ImGui::TextUnformatted("Materials:");
+                                        for (size_t m = 0; m < std::min(entry.materialNames.size(), size_t(8)); ++m)
+                                        {
+                                            ImGui::BulletText("%s", entry.materialNames[m].c_str());
+                                        }
+                                        if (entry.materialNames.size() > 8) ImGui::BulletText("...and %zu more", entry.materialNames.size() - 8);
+                                    }
+                                    ImGui::EndTooltip();
+                                }
+                            }
+                            else
+                            {
+                                ImGui::TableSetColumnIndex(0);
+                                ImGui::TextUnformatted(entry.name.c_str());
+
+                                ImGui::TableSetColumnIndex(1);
+                                ImGui::Text("0x%X", entry.offset);
+
+                                ImGui::TableSetColumnIndex(2);
+                                ImGui::TextUnformatted(FormatBytes(entry.size).c_str());
+
+                                if (isDxp)
+                                {
+                                    ImGui::TableSetColumnIndex(3);
+                                    if (!entry.formatInfo.empty())
+                                    {
+                                        ImGui::TextUnformatted(entry.formatInfo.c_str());
+                                    }
+                                    else
+                                    {
+                                        ImGui::TextDisabled("N/A");
+                                    }
+                                }
+
+                                if (hasActions)
+                                {
+                                    ImGui::TableSetColumnIndex(isDxp ? 4 : 3);
+                                    std::string btnLabel = "Export##" + entry.name;
+                                    if (ImGui::Button(btnLabel.c_str()))
+                                    {
+                                        if (isDxp)
+                                        {
+                                            App::RequestTextureExport(app, selected->path, entry);
+                                        }
+                                        else if (isGrp)
+                                        {
+                                            App::RequestModelExport(app, selected->path, entry);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -709,10 +1121,17 @@ namespace DagorAssetsExtractor::UI
         {
             DrawBlkPreview(*selected);
             ImGui::Separator();
+            DrawBlkResourceLinks(app, *selected);
+            ImGui::Separator();
+        }
+        else if (selected->type == AssetType::Descriptor || selected->type == AssetType::Grp || selected->type == AssetType::Dxp)
+        {
+            DrawDescriptorResourceLinks(app, *selected);
+            ImGui::Separator();
         }
 
         ImGui::TextUnformatted("Current Support");
-        ImGui::BulletText("Discovery and metadata only.");
+        ImGui::BulletText("Discovery and metadata indexing.");
         if (isContainer)
         {
             ImGui::BulletText("Sub-asset listing (lazy loaded on demand).");
@@ -721,8 +1140,14 @@ namespace DagorAssetsExtractor::UI
         {
             ImGui::BulletText("Text BLK preview for resource relationship metadata.");
         }
-        ImGui::BulletText("Binary asset decode and export are intentionally not enabled yet.");
-        ImGui::BulletText("Future export manifests will record this source path and decode warnings.");
+        if (selected->type == AssetType::Dxp)
+        {
+            ImGui::BulletText("DDS texture extraction with reversed-mip reordering & decompression.");
+        }
+        if (selected->type == AssetType::Grp)
+        {
+            ImGui::BulletText("Binary static model extraction to glTF 2.0 GLB / Wavefront OBJ.");
+        }
     }
 
     void DrawJobAndLogPanel(AppState& app)
@@ -735,6 +1160,10 @@ namespace DagorAssetsExtractor::UI
         ImGui::SameLine();
         ImGui::Text("Found: %llu", static_cast<unsigned long long>(app.scan.recordsFound.load()));
         ImGui::Text("Cache: %s", App::GetCacheStatus(app.scan).c_str());
+        ImGui::SameLine();
+        ImGui::Text("BLK Links: %s", App::GetBlkResourceLinkStatus(app).c_str());
+        ImGui::SameLine();
+        ImGui::Text("Desc Links: %s", App::GetDescriptorResourceLinkStatus(app).c_str());
 
         ImGui::Separator();
 
@@ -924,6 +1353,7 @@ namespace DagorAssetsExtractor::UI
     void DrawMainShell(AppState& app, bool& running)
     {
         App::JoinFinishedScan(app);
+        App::JoinFinishedBackgroundJobs(app);
 
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->WorkPos);

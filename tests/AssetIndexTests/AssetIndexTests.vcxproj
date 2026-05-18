@@ -54,7 +54,7 @@
       <PreprocessorDefinitions>_CONSOLE;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\DagorAssetsExtractorApp\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\DagorAssetsExtractorApp\src;$(MSBuildThisFileDirectory)..\..\third_party;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -71,7 +71,7 @@
       <PreprocessorDefinitions>_CONSOLE;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\DagorAssetsExtractorApp\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\DagorAssetsExtractorApp\src;$(MSBuildThisFileDirectory)..\..\third_party;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -83,22 +83,48 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\AssetIndex.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorIO\Decompression.cpp" />
+    <ClCompile Include="..\..\third_party\adler32.c" />
+    <ClCompile Include="..\..\third_party\crc32.c" />
+    <ClCompile Include="..\..\third_party\tinflate.c" />
+    <ClCompile Include="..\..\third_party\tinfzlib.c" />
+    <ClCompile Include="..\..\third_party\zstddeclib.c" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\BlkRelationships.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorIO\BinaryReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\VromfsReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DxpReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GrpReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DdsxReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\BlkReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\PackContents.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GameResDescReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\RendInstReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\Export\ExportManifest.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\Export\TextureExporter.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\Export\ModelExporter.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\Jobs\JobSystem.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\Platform\Platform.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\AssetIndex.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorIO\Decompression.h" />
+    <ClInclude Include="..\..\third_party\tinf.h" />
+    <ClInclude Include="..\..\third_party\zstd.h" />
+    <ClInclude Include="..\..\third_party\zstd_errors.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\BlkRelationships.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorIO\BinaryReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\VromfsReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DxpReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GrpReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DdsxReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\RendInstReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GameResDescReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\BlkReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\PackContents.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\Export\ExportManifest.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\Export\TextureExporter.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\Export\ModelExporter.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\Jobs\JobSystem.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\Platform\Platform.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

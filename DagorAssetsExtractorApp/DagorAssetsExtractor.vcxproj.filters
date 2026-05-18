@@ -21,8 +21,14 @@
     <Filter Include="Source Files\DagorIO">
       <UniqueIdentifier>{2951F7F6-92DA-449E-B3FD-B22259CC997C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\Jobs">
+      <UniqueIdentifier>{72707EC8-5FF7-4E5C-9760-41B55991B504}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\Platform">
       <UniqueIdentifier>{7657A353-DA4C-488A-B68F-137362DA1342}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Export">
+      <UniqueIdentifier>{E02520EB-E251-4F8F-A569-8F2E028197D3}</UniqueIdentifier>
     </Filter>
     <Filter Include="Source Files\UI">
       <UniqueIdentifier>{028197D3-E251-4F8F-A569-ED02520EB8F2}</UniqueIdentifier>
@@ -39,8 +45,14 @@
     <Filter Include="Header Files\DagorIO">
       <UniqueIdentifier>{E1B108D9-00A8-45E3-9C1D-D787AD690540}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Jobs">
+      <UniqueIdentifier>{7D507934-551F-4916-B82A-E9780683176C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Header Files\Platform">
       <UniqueIdentifier>{82AC0A06-C359-4B8D-8560-99A58CF9E788}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Export">
+      <UniqueIdentifier>{A0FE46E6-21E9-4C3A-8BB1-3D8ED8780BBC}</UniqueIdentifier>
     </Filter>
     <Filter Include="Header Files\UI">
       <UniqueIdentifier>{B0FE46E6-21E9-4C3A-8BB1-3D8ED8780BBD}</UniqueIdentifier>
@@ -50,6 +62,12 @@
     </Filter>
     <Filter Include="Third Party\ImGui\Backends">
       <UniqueIdentifier>{4EB16A9A-76EE-487E-B570-D2D0CC69FEFD}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party\tinf">
+      <UniqueIdentifier>{72380F45-ED73-4957-B161-3A1F82D63A6E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party\zstd">
+      <UniqueIdentifier>{72380F45-ED73-4957-B161-3A1F82D63A6F}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -62,13 +80,43 @@
     <ClCompile Include="src\AssetIndex\AssetIndex.cpp">
       <Filter>Source Files\AssetIndex</Filter>
     </ClCompile>
+    <ClCompile Include="src\AssetIndex\BlkRelationships.cpp">
+      <Filter>Source Files\AssetIndex</Filter>
+    </ClCompile>
     <ClCompile Include="src\AssetIndex\PackContents.cpp">
       <Filter>Source Files\AssetIndex</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorIO\Decompression.cpp">
+      <Filter>Source Files\DagorIO</Filter>
+    </ClCompile>
+    <ClCompile Include="..\third_party\adler32.c">
+      <Filter>Third Party\tinf</Filter>
+    </ClCompile>
+    <ClCompile Include="..\third_party\crc32.c">
+      <Filter>Third Party\tinf</Filter>
+    </ClCompile>
+    <ClCompile Include="..\third_party\tinflate.c">
+      <Filter>Third Party\tinf</Filter>
+    </ClCompile>
+    <ClCompile Include="..\third_party\tinfzlib.c">
+      <Filter>Third Party\tinf</Filter>
+    </ClCompile>
+    <ClCompile Include="..\third_party\zstddeclib.c">
+      <Filter>Third Party\zstd</Filter>
     </ClCompile>
     <ClCompile Include="src\DagorFormats\VromfsReader.cpp">
       <Filter>Source Files\DagorFormats</Filter>
     </ClCompile>
     <ClCompile Include="src\DagorFormats\DxpReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorFormats\GrpReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorFormats\GameResDescReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorFormats\RendInstReader.cpp">
       <Filter>Source Files\DagorFormats</Filter>
     </ClCompile>
     <ClCompile Include="src\DagorFormats\DdsxReader.cpp">
@@ -80,8 +128,20 @@
     <ClCompile Include="src\DagorIO\BinaryReader.cpp">
       <Filter>Source Files\DagorIO</Filter>
     </ClCompile>
+    <ClCompile Include="src\Jobs\JobSystem.cpp">
+      <Filter>Source Files\Jobs</Filter>
+    </ClCompile>
     <ClCompile Include="src\Platform\Platform.cpp">
       <Filter>Source Files\Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Export\ExportManifest.cpp">
+      <Filter>Source Files\Export</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Export\TextureExporter.cpp">
+      <Filter>Source Files\Export</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Export\ModelExporter.cpp">
+      <Filter>Source Files\Export</Filter>
     </ClCompile>
     <ClCompile Include="src\UI\UI.cpp">
       <Filter>Source Files\UI</Filter>
@@ -112,7 +172,22 @@
     <ClInclude Include="src\App\AppState.h">
       <Filter>Header Files\App</Filter>
     </ClInclude>
+    <ClInclude Include="src\DagorIO\Decompression.h">
+      <Filter>Header Files\DagorIO</Filter>
+    </ClInclude>
+    <ClInclude Include="..\third_party\tinf.h">
+      <Filter>Third Party\tinf</Filter>
+    </ClInclude>
+    <ClInclude Include="..\third_party\zstd.h">
+      <Filter>Third Party\zstd</Filter>
+    </ClInclude>
+    <ClInclude Include="..\third_party\zstd_errors.h">
+      <Filter>Third Party\zstd</Filter>
+    </ClInclude>
     <ClInclude Include="src\AssetIndex\AssetIndex.h">
+      <Filter>Header Files\AssetIndex</Filter>
+    </ClInclude>
+    <ClInclude Include="src\AssetIndex\BlkRelationships.h">
       <Filter>Header Files\AssetIndex</Filter>
     </ClInclude>
     <ClInclude Include="src\AssetIndex\PackContents.h">
@@ -124,6 +199,15 @@
     <ClInclude Include="src\DagorFormats\DxpReader.h">
       <Filter>Header Files\DagorFormats</Filter>
     </ClInclude>
+    <ClInclude Include="src\DagorFormats\GrpReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DagorFormats\GameResDescReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DagorFormats\RendInstReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
+    </ClInclude>
     <ClInclude Include="src\DagorFormats\DdsxReader.h">
       <Filter>Header Files\DagorFormats</Filter>
     </ClInclude>
@@ -133,8 +217,20 @@
     <ClInclude Include="src\DagorIO\BinaryReader.h">
       <Filter>Header Files\DagorIO</Filter>
     </ClInclude>
+    <ClInclude Include="src\Jobs\JobSystem.h">
+      <Filter>Header Files\Jobs</Filter>
+    </ClInclude>
     <ClInclude Include="src\Platform\Platform.h">
       <Filter>Header Files\Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Export\ExportManifest.h">
+      <Filter>Header Files\Export</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Export\TextureExporter.h">
+      <Filter>Header Files\Export</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Export\ModelExporter.h">
+      <Filter>Header Files\Export</Filter>
     </ClInclude>
     <ClInclude Include="src\UI\UI.h">
       <Filter>Header Files\UI</Filter>

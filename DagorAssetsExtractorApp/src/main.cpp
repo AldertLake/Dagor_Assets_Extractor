@@ -59,7 +59,7 @@ namespace
         swapChainDesc.SampleDesc.Count = 1;
         swapChainDesc.SampleDesc.Quality = 0;
         swapChainDesc.Windowed = TRUE;
-        swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
         UINT createDeviceFlags = 0;
 #if defined(_DEBUG)
@@ -271,6 +271,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             break;
         }
 
+        DagorAssetsExtractor::App::JoinFinishedBackgroundJobs(app);
+
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
@@ -286,6 +288,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     }
 
     DagorAssetsExtractor::App::StopScan(app);
+    DagorAssetsExtractor::App::WaitForBackgroundJobs(app);
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
