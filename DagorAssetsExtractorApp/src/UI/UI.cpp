@@ -986,7 +986,7 @@ namespace DagorAssetsExtractor::UI
 
                 int columnCount = 3;
                 if (isDxp) columnCount = 5;      // Name, Offset, Size, Format, Actions
-                else if (isGrp) columnCount = 4; // Name, Offset, Size, Actions
+                else if (isGrp) columnCount = 5; // Name, Offset, Size, Class, Actions
                 else if (isDesc) columnCount = 4; // Resource Name, ID, Class, Deps
 
                 ImGuiTableFlags subFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
@@ -1009,6 +1009,10 @@ namespace DagorAssetsExtractor::UI
                         if (isDxp)
                         {
                             ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+                        }
+                        else if (isGrp)
+                        {
+                            ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthFixed, 140.0f);
                         }
                         if (hasActions)
                         {
@@ -1092,7 +1096,7 @@ namespace DagorAssetsExtractor::UI
                                 ImGui::TableSetColumnIndex(2);
                                 ImGui::TextUnformatted(FormatBytes(entry.size).c_str());
 
-                                if (isDxp)
+                                if (isDxp || isGrp)
                                 {
                                     ImGui::TableSetColumnIndex(3);
                                     if (!entry.formatInfo.empty())
@@ -1104,11 +1108,13 @@ namespace DagorAssetsExtractor::UI
                                         ImGui::TextDisabled("N/A");
                                     }
                                 }
-
+                                
                                 if (hasActions)
                                 {
-                                    ImGui::TableSetColumnIndex(isDxp ? 4 : 3);
+                                    ImGui::TableSetColumnIndex((isDxp || isGrp) ? 4 : 3);
                                     std::string btnLabel = "Export##" + entry.name;
+                                    const bool canExportModel = !isGrp || AssetIndex::CanExportGrpEntryAsStaticModel(entry);
+                                    ImGui::BeginDisabled(isGrp && !canExportModel);
                                     if (ImGui::Button(btnLabel.c_str()))
                                     {
                                         if (isDxp)
@@ -1120,6 +1126,18 @@ namespace DagorAssetsExtractor::UI
                                             App::RequestModelExport(app, selected->path, entry);
                                         }
                                     }
+                                    if (isGrp && !canExportModel && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                                    {
+                                        if (!entry.formatInfo.empty())
+                                        {
+                                            ImGui::SetTooltip("Only RendInst static meshes can be exported right now. This entry is %s.", entry.formatInfo.c_str());
+                                        }
+                                        else
+                                        {
+                                            ImGui::SetTooltip("Only RendInst static meshes can be exported right now.");
+                                        }
+                                    }
+                                    ImGui::EndDisabled();
                                 }
                             }
                         }
@@ -1393,21 +1411,23 @@ namespace DagorAssetsExtractor::UI
         const float bottomHeight = std::min(190.0f, available.y * 0.32f);
         const float topHeight = std::max(200.0f, available.y - bottomHeight - spacing);
         const float leftWidth = 290.0f;
-        const float rightWidth = 340.0f;
-        const float centerWidth = std::max(300.0f, available.x - leftWidth - rightWidth - spacing * 2.0f);
+        const float inspectorHeight = std::clamp(topHeight * 0.42f, 140.0f, std::max(140.0f, topHeight - 160.0f));
 
         ImGui::BeginChild("LeftPanel", ImVec2(leftWidth, topHeight), true);
         DrawLeftPanel(app, records);
         ImGui::EndChild();
 
         ImGui::SameLine();
-        ImGui::BeginChild("ContentBrowserPanel", ImVec2(centerWidth, topHeight), true);
+        ImGui::BeginChild("MainStackPanel", ImVec2(0.0f, topHeight), false);
+
+        ImGui::BeginChild("InspectorPanel", ImVec2(0.0f, inspectorHeight), true);
+        DrawInspector(app, records);
+        ImGui::EndChild();
+
+        ImGui::BeginChild("ContentBrowserPanel", ImVec2(0.0f, 0.0f), true);
         DrawContentBrowser(app, recordsPtr);
         ImGui::EndChild();
 
-        ImGui::SameLine();
-        ImGui::BeginChild("InspectorPanel", ImVec2(0.0f, topHeight), true);
-        DrawInspector(app, records);
         ImGui::EndChild();
 
         ImGui::BeginChild("BottomPanel", ImVec2(0.0f, 0.0f), true);

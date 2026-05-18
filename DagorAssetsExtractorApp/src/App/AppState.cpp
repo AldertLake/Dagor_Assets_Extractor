@@ -5,8 +5,11 @@
 #include "Export/ModelExporter.h"
 #include "DagorFormats/BlkReader.h"
 #include "DagorFormats/RendInstReader.h"
+#include <cctype>
+#include <cstring>
 #include <fstream>
 #include <chrono>
+#include <iomanip>
 #include <sstream>
 #include <algorithm>
 
@@ -49,6 +52,47 @@ namespace DagorAssetsExtractor::App
         char buffer[32] = {};
         std::strftime(buffer, sizeof(buffer), "%H:%M:%S", &localTime);
         return buffer;
+    }
+
+    bool HasRendInstMagic(const std::vector<uint8_t>& payload)
+    {
+        return payload.size() >= 4 && std::memcmp(payload.data(), "RIND", 4) == 0;
+    }
+
+    std::string FormatPayloadMagic(const std::vector<uint8_t>& payload)
+    {
+        if (payload.empty())
+        {
+            return "<empty>";
+        }
+
+        const size_t length = std::min<size_t>(4, payload.size());
+        bool printable = true;
+        for (size_t i = 0; i < length; ++i)
+        {
+            if (std::isprint(static_cast<unsigned char>(payload[i])) == 0)
+            {
+                printable = false;
+                break;
+            }
+        }
+
+        if (printable)
+        {
+            return std::string(reinterpret_cast<const char*>(payload.data()), length);
+        }
+
+        std::ostringstream stream;
+        stream << std::hex << std::uppercase << std::setfill('0');
+        for (size_t i = 0; i < length; ++i)
+        {
+            if (i > 0)
+            {
+                stream << ' ';
+            }
+            stream << std::setw(2) << static_cast<unsigned int>(payload[i]);
+        }
+        return stream.str();
     }
 
     void AddLog(AppState& app, LogLevel level, std::string message)
@@ -540,6 +584,16 @@ namespace DagorAssetsExtractor::App
 
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
     {
+        if (entry.grpClassId != 0 && !AssetIndex::CanExportGrpEntryAsStaticModel(entry))
+        {
+            const std::string className = AssetIndex::DescribeGrpClassId(entry.grpClassId);
+            AddLog(app, LogLevel::Warning,
+                "Skipped export for " + entry.name + ": " +
+                (className.empty() ? std::string("unsupported GRP entry type") : className) +
+                ". Only RendInst static meshes can be exported right now.");
+            return;
+        }
+
         AddLog(app, LogLevel::Info, "Exporting model: " + entry.name + "...");
 
         std::filesystem::path exportRoot = app.settings.exportRoot;
@@ -566,6 +620,23 @@ namespace DagorAssetsExtractor::App
                 if (!file.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size())))
                 {
                     AddLog(app, LogLevel::Error, "Could not read model payload from GRP file.");
+                    return;
+                }
+
+                if (!HasRendInstMagic(payload))
+                {
+                    std::string message = "Skipped export for " + entry.name + ": ";
+                    const std::string className = AssetIndex::DescribeGrpClassId(entry.grpClassId);
+                    if (!className.empty())
+                    {
+                        message += className + " entry";
+                    }
+                    else
+                    {
+                        message += "unsupported GRP payload";
+                    }
+                    message += " (magic " + FormatPayloadMagic(payload) + "). Only RendInst static meshes can be exported right now.";
+                    AddLog(app, LogLevel::Warning, std::move(message));
                     return;
                 }
 

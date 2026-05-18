@@ -13,6 +13,69 @@ namespace DagorAssetsExtractor::AssetIndex
 {
     namespace fs = std::filesystem;
 
+    namespace
+    {
+        constexpr uint32_t kDynModelGameResClassId = 0xB4B7D9C4u;
+        constexpr uint32_t kRendInstGameResClassId = 0x77F8232Fu;
+        constexpr uint32_t kGeomNodeTreeGameResClassId = 0x56F81B6Du;
+        constexpr uint32_t kCharacterGameResClassId = 0xA6F87A9Bu;
+        constexpr uint32_t kFastPhysDataGameResClassId = 0x855A1BE6u;
+        constexpr uint32_t kAnim2DataGameResClassId = 0x40C586F9u;
+        constexpr uint32_t kPhysSysGameResClassId = 0xDBBCB7D2u;
+        constexpr uint32_t kPhysObjGameResClassId = 0xD543E771u;
+        constexpr uint32_t kCollisionGameResClassId = 0xACE50000u;
+        constexpr uint32_t kRagdollGameResClassId = 0xD403C21Cu;
+        constexpr uint32_t kEffectGameResClassId = 0x88B7A117u;
+        constexpr uint32_t kAnimBnlGameResClassId = 0x8F2A7018u;
+        constexpr uint32_t kAnimGraphGameResClassId = 0x8F2A701Au;
+    }
+
+    std::string DescribeGrpClassId(uint32_t classId)
+    {
+        switch (classId)
+        {
+        case 0:
+            return {};
+        case kDynModelGameResClassId:
+            return "DynModel";
+        case kRendInstGameResClassId:
+            return "RendInst";
+        case kGeomNodeTreeGameResClassId:
+            return "GeomNodeTree";
+        case kCharacterGameResClassId:
+            return "Character";
+        case kFastPhysDataGameResClassId:
+            return "FastPhysData";
+        case kAnim2DataGameResClassId:
+            return "Anim2Data";
+        case kPhysSysGameResClassId:
+            return "PhysSys";
+        case kPhysObjGameResClassId:
+            return "PhysObj";
+        case kCollisionGameResClassId:
+            return "CollisionResource";
+        case kRagdollGameResClassId:
+            return "Ragdoll";
+        case kEffectGameResClassId:
+            return "Effect";
+        case kAnimBnlGameResClassId:
+            return "AnimBnl";
+        case kAnimGraphGameResClassId:
+            return "AnimGraph";
+        default:
+        {
+            char classIdText[32] = {};
+            std::snprintf(classIdText, sizeof(classIdText), "class 0x%08X", classId);
+            return classIdText;
+        }
+        }
+    }
+
+    bool CanExportGrpEntryAsStaticModel(const SubAssetRecord& entry)
+    {
+        return entry.grpClassId == 0 || entry.grpClassId == kRendInstGameResClassId;
+    }
+
     // -- PackContentsCache ----------------------------------------------------
 
     std::shared_ptr<const PackContents> PackContentsCache::Get(const fs::path& packPath) const
@@ -219,12 +282,8 @@ namespace DagorAssetsExtractor::AssetIndex
                 entry.name   = file.name;
                 entry.offset = file.offset;
                 entry.size   = file.size;
-                if (file.classId != 0)
-                {
-                    char classIdText[32] = {};
-                    std::snprintf(classIdText, sizeof(classIdText), "class 0x%08X", file.classId);
-                    entry.formatInfo = classIdText;
-                }
+                entry.grpClassId = file.classId;
+                entry.formatInfo = DescribeGrpClassId(file.classId);
                 contents->entries.push_back(std::move(entry));
             }
         }

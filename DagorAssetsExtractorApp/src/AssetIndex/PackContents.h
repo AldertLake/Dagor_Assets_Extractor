@@ -18,6 +18,7 @@ namespace DagorAssetsExtractor::AssetIndex
         uint32_t    offset  = 0;   // Byte offset within the container
         uint32_t    size    = 0;   // Size in bytes
         std::string formatInfo;    // For textures: format string; for descriptors: class; for others: empty
+        uint32_t    grpClassId = 0; // GRP resource class id when available
 
         // DDSx-specific fields (only populated for DXP texture sub-assets)
         uint16_t    texWidth   = 0;
@@ -81,6 +82,12 @@ namespace DagorAssetsExtractor::AssetIndex
     // Parse the contents of a GRP container from disk.
     // Returns a PackContents with entries populated, or with error set.
     std::shared_ptr<PackContents> ParseGrpContents(const std::filesystem::path& path, size_t maxFileSize = 256 * 1024 * 1024);
+
+    // Describe a known Dagor GRP resource class id.
+    std::string DescribeGrpClassId(uint32_t classId);
+
+    // Whether the current tool can export this GRP entry as a static model.
+    bool CanExportGrpEntryAsStaticModel(const SubAssetRecord& entry);
 
     // Parse the contents of a GameRes descriptor file (.bin) from disk.
     // Returns a PackContents with entries populated, or with error set.

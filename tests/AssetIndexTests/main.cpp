@@ -552,6 +552,22 @@ namespace
         data.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
     }
 
+    void SetU16(std::vector<uint8_t>& data, size_t offset, uint16_t value)
+    {
+        data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+        data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+    }
+
+    void SetU32(std::vector<uint8_t>& data, size_t offset, uint32_t value)
+    {
+        data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+        data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+        data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+    }
+
+    bool WriteBinaryFile(const fs::path& path, const std::vector<uint8_t>& data);
+
     void AppendVlq(std::vector<uint8_t>& data, uint32_t value)
     {
         do
@@ -705,6 +721,93 @@ namespace
                 ok &= Expect(sub.materialNames.size() == 1, "Descriptor PackContents should preserve material list");
             }
         }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    std::vector<uint8_t> MakeSyntheticModernGrpPack(std::string_view entryName, uint32_t classId, std::string_view payloadMagic)
+    {
+        constexpr size_t payloadOffset = 0x80;
+        std::vector<uint8_t> data(payloadOffset + payloadMagic.size(), 0);
+        data[0] = 'G';
+        data[1] = 'R';
+        data[2] = 'P';
+        data[3] = '2';
+        SetU32(data, 4, 0x70);
+        SetU32(data, 8, 0x70);
+        SetU32(data, 12, static_cast<uint32_t>(data.size() - 16));
+
+        SetU32(data, 0x10, 0x40);
+        SetU32(data, 0x14, 1);
+        SetU32(data, 0x20, 0x50);
+        SetU32(data, 0x24, 1);
+        SetU32(data, 0x40, 0x60);
+
+        SetU32(data, 0x50, classId);
+        SetU32(data, 0x54, static_cast<uint32_t>(payloadOffset));
+        SetU16(data, 0x58, 0);
+
+        std::copy(entryName.begin(), entryName.end(), data.begin() + 0x60);
+        data[0x60 + entryName.size()] = 0;
+        std::copy(payloadMagic.begin(), payloadMagic.end(), data.begin() + payloadOffset);
+        return data;
+    }
+
+    bool TestGrpPackContentsMetadata()
+    {
+        bool ok = true;
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_GrpPackTest_" + std::to_string(stamp));
+        const fs::path rendInstPath = tempDir / "static_mesh.grp";
+        const fs::path animPath = tempDir / "animation.grp";
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp GRP test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        ok &= Expect(
+            WriteBinaryFile(rendInstPath, MakeSyntheticModernGrpPack("static_mesh", 0x77F8232Fu, "RIND")),
+            "Modern RendInst GRP fixture should be written");
+        ok &= Expect(
+            WriteBinaryFile(animPath, MakeSyntheticModernGrpPack("anim_tree", 0x40C586F9u, "A2D!")),
+            "Modern Anim2Data GRP fixture should be written");
+
+        const std::shared_ptr<AssetIndex::PackContents> rendInstContents = AssetIndex::ParseGrpContents(rendInstPath);
+        ok &= Expect(rendInstContents != nullptr, "Modern RendInst GRP PackContents should be returned");
+        if (rendInstContents)
+        {
+            ok &= Expect(rendInstContents->error.empty(), "Modern RendInst GRP PackContents should parse without error");
+            ok &= Expect(rendInstContents->entries.size() == 1, "Modern RendInst GRP should expose one entry");
+            if (!rendInstContents->entries.empty())
+            {
+                const AssetIndex::SubAssetRecord& entry = rendInstContents->entries[0];
+                ok &= Expect(entry.grpClassId == 0x77F8232Fu, "Modern RendInst GRP should preserve class id");
+                ok &= Expect(entry.formatInfo == "RendInst", "Modern RendInst GRP should label class name");
+                ok &= Expect(AssetIndex::CanExportGrpEntryAsStaticModel(entry), "RendInst GRP entry should be exportable");
+            }
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> animContents = AssetIndex::ParseGrpContents(animPath);
+        ok &= Expect(animContents != nullptr, "Modern Anim2Data GRP PackContents should be returned");
+        if (animContents)
+        {
+            ok &= Expect(animContents->error.empty(), "Modern Anim2Data GRP PackContents should parse without error");
+            ok &= Expect(animContents->entries.size() == 1, "Modern Anim2Data GRP should expose one entry");
+            if (!animContents->entries.empty())
+            {
+                const AssetIndex::SubAssetRecord& entry = animContents->entries[0];
+                ok &= Expect(entry.grpClassId == 0x40C586F9u, "Modern Anim2Data GRP should preserve class id");
+                ok &= Expect(entry.formatInfo == "Anim2Data", "Modern Anim2Data GRP should label class name");
+                ok &= Expect(!AssetIndex::CanExportGrpEntryAsStaticModel(entry), "Anim2Data GRP entry should not be exportable as a static model");
+            }
+        }
+
+        ok &= Expect(AssetIndex::DescribeGrpClassId(0xDEADBEEFu) == "class 0xDEADBEEF", "Unknown GRP class id should be formatted as hex");
 
         fs::remove_all(tempDir, ec);
         return ok;
@@ -1595,6 +1698,7 @@ int main(int argc, char** argv)
     ok &= Expect(TestDdsxReader(), "DdsxReader tests should pass");
     ok &= Expect(TestBlkReader(), "BlkReader tests should pass");
     ok &= Expect(TestGameResDescReader(), "GameResDescReader tests should pass");
+    ok &= Expect(TestGrpPackContentsMetadata(), "GRP PackContents metadata tests should pass");
     ok &= Expect(TestJobSystem(), "JobSystem tests should pass");
     ok &= Expect(TestDecompression(), "Decompression tests should pass");
     ok &= Expect(TestExportManifest(), "ExportManifest tests should pass");
