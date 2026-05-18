@@ -1494,12 +1494,12 @@ namespace DagorAssetsExtractor::UI
         ImGui::SameLine();
         ImGui::BeginChild("MainStackPanel", ImVec2(0.0f, topHeight), false);
 
-        ImGui::BeginChild("InspectorPanel", ImVec2(0.0f, inspectorHeight), true);
-        DrawInspector(app, records);
+        ImGui::BeginChild("ContentBrowserPanel", ImVec2(0.0f, -(inspectorHeight + ImGui::GetStyle().ItemSpacing.y)), true);
+        DrawContentBrowser(app, recordsPtr);
         ImGui::EndChild();
 
-        ImGui::BeginChild("ContentBrowserPanel", ImVec2(0.0f, 0.0f), true);
-        DrawContentBrowser(app, recordsPtr);
+        ImGui::BeginChild("InspectorPanel", ImVec2(0.0f, 0.0f), true);
+        DrawInspector(app, records);
         ImGui::EndChild();
 
         ImGui::EndChild();
