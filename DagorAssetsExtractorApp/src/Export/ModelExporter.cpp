@@ -136,26 +136,57 @@ namespace DagorAssetsExtractor::Export
         }
         json << "  ],\n";
 
+        // Pre-calculate accessor indices for indices
+        std::vector<std::vector<size_t>> indexAccessorIndices(lods.size());
+        size_t currentAccessor = lods.size() * 3;
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            size_t primCount = lods[i].primitives.size();
+            if (primCount == 0) primCount = 1; // Default primitive
+            for (size_t p = 0; p < primCount; ++p)
+            {
+                indexAccessorIndices[i].push_back(currentAccessor++);
+            }
+        }
+
         // Meshes definition
         json << "  \"meshes\": [\n";
         for (size_t i = 0; i < lods.size(); ++i)
         {
+            const auto& mesh = lods[i];
             json << "    {\n";
-            json << "      \"name\": \"" << lods[i].name << "\",\n";
+            json << "      \"name\": \"" << mesh.name << "\",\n";
             json << "      \"primitives\": [\n";
-            json << "        {\n";
-            json << "          \"attributes\": {\n";
-            json << "            \"POSITION\": " << (i * 3) << ",\n";
-            json << "            \"NORMAL\": " << (i * 3 + 1) << ",\n";
-            json << "            \"TEXCOORD_0\": " << (i * 3 + 2) << "\n";
-            json << "          },\n";
-            json << "          \"indices\": " << (lods.size() * 3 + i) << ",\n";
-            if (!materials.empty())
+            
+            auto prims = mesh.primitives;
+            if (prims.empty())
             {
-                json << "          \"material\": 0,\n";
+                prims.push_back({ 0, 0, static_cast<uint32_t>(mesh.indices.size()) });
             }
-            json << "          \"mode\": 4\n"; // TRIANGLES
-            json << "        }\n";
+
+            for (size_t p = 0; p < prims.size(); ++p)
+            {
+                const auto& prim = prims[p];
+                json << "        {\n";
+                json << "          \"attributes\": {\n";
+                json << "            \"POSITION\": " << (i * 3) << ",\n";
+                json << "            \"NORMAL\": " << (i * 3 + 1) << ",\n";
+                json << "            \"TEXCOORD_0\": " << (i * 3 + 2) << "\n";
+                json << "          },\n";
+                json << "          \"indices\": " << indexAccessorIndices[i][p] << ",\n";
+                
+                if (!materials.empty())
+                {
+                    size_t matIdx = static_cast<size_t>(prim.materialIndex);
+                    if (matIdx >= materials.size()) matIdx = 0;
+                    json << "          \"material\": " << matIdx << ",\n";
+                }
+                
+                json << "          \"mode\": 4\n"; // TRIANGLES
+                json << "        }";
+                if (p + 1 < prims.size()) json << ",";
+                json << "\n";
+            }
             json << "      ]\n";
             json << "    }";
             if (i + 1 < lods.size()) json << ",";
@@ -285,20 +316,29 @@ namespace DagorAssetsExtractor::Export
             json << "    },\n";
         }
 
-        // Accessors for indices
+        // Accessors for indices (one per primitive)
         for (size_t i = 0; i < lods.size(); ++i)
         {
             const auto& mesh = lods[i];
+            auto prims = mesh.primitives;
+            if (prims.empty())
+            {
+                prims.push_back({ 0, 0, static_cast<uint32_t>(mesh.indices.size()) });
+            }
 
-            json << "    {\n";
-            json << "      \"bufferView\": " << (lods.size() + i) << ",\n";
-            json << "      \"byteOffset\": 0,\n";
-            json << "      \"componentType\": 5125,\n"; // UNSIGNED_INT
-            json << "      \"count\": " << mesh.indices.size() << ",\n";
-            json << "      \"type\": \"SCALAR\"\n";
-            json << "    }";
-            if (i + 1 < lods.size()) json << ",";
-            json << "\n";
+            for (size_t p = 0; p < prims.size(); ++p)
+            {
+                const auto& prim = prims[p];
+                json << "    {\n";
+                json << "      \"bufferView\": " << (lods.size() + i) << ",\n";
+                json << "      \"byteOffset\": " << (prim.firstIndex * sizeof(uint32_t)) << ",\n";
+                json << "      \"componentType\": 5125,\n"; // UNSIGNED_INT
+                json << "      \"count\": " << prim.indexCount << ",\n";
+                json << "      \"type\": \"SCALAR\"\n";
+                json << "    }";
+                if (i + 1 < lods.size() || p + 1 < prims.size()) json << ",";
+                json << "\n";
+            }
         }
         json << "  ],\n";
 

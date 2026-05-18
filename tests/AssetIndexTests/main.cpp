@@ -1329,6 +1329,14 @@ namespace
         // Indices
         pushBytes(mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
 
+        // Primitives
+        uint32_t primitiveCount = 1;
+        pushBytes(&primitiveCount, sizeof(primitiveCount));
+        uint32_t matIdx = 0, firstIdx = 0, count = indexCount;
+        pushBytes(&matIdx, sizeof(matIdx));
+        pushBytes(&firstIdx, sizeof(firstIdx));
+        pushBytes(&count, sizeof(count));
+
         // 3. Parse with RendInstReader
         DagorFormats::RendInstReader reader(buffer);
         try {
@@ -1388,6 +1396,75 @@ namespace
         std::error_code ec;
         fs::remove_all(tempDir, ec);
 
+        return ok;
+    }
+
+    bool TestMultiMaterialModelExport()
+    {
+        bool ok = true;
+        const fs::path tempDir = fs::temp_directory_path() / "DagorAssetsExtractorTests_MultiMat";
+        fs::create_directories(tempDir);
+
+        // 1. Create a synthetic RendInstMesh with 2 primitives
+        DagorFormats::RendInstMesh mesh;
+        mesh.name = "multi_mat_mesh";
+        mesh.vertices = {
+            { 0,0,0, 0,1,0, 0,0 }, { 1,0,0, 0,1,0, 1,0 }, { 0,0,1, 0,1,0, 0,1 }, // Tri 0
+            { 2,0,0, 0,1,0, 0,0 }, { 3,0,0, 0,1,0, 1,0 }, { 2,0,1, 0,1,0, 0,1 }  // Tri 1
+        };
+        mesh.indices = { 0,1,2, 3,4,5 };
+        mesh.primitives = {
+            { 0, 0, 3 }, // Mat 0, indices 0-2
+            { 1, 3, 3 }  // Mat 1, indices 3-5
+        };
+
+        std::vector<DagorFormats::RendInstMesh> lods = { mesh };
+        DagorAssetsExtractor::Export::ExportManifest manifest;
+        manifest.sourceResource = "multi_mat_test";
+        
+        std::vector<DagorAssetsExtractor::Export::MaterialInfo> materials = {
+            { "mat_a", "tex_a.dds" },
+            { "mat_b", "tex_b.dds" }
+        };
+
+        const fs::path glbPath = tempDir / "test_multi.glb";
+        if (DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(glbPath, lods, manifest, materials))
+        {
+            std::ifstream file(glbPath, std::ios::binary);
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            
+            // Basic GLB structural checks
+            ok &= Expect(content.size() > 100, "GLB should have some content");
+            ok &= Expect(content.find("\"primitives\":") != std::string::npos, "GLB should have primitives");
+            
+            // Check for multiple primitives in the JSON chunk
+            size_t pos = content.find("\"primitives\":");
+            size_t count = 0;
+            while (pos != std::string::npos)
+            {
+                // Simple check for primitive opening brace
+                size_t nextPrim = content.find('{', pos);
+                if (nextPrim != std::string::npos)
+                {
+                    count++;
+                    pos = content.find('{', nextPrim + 1);
+                    // This is a bit naive but good enough for a synthetic test
+                    if (pos != std::string::npos && pos < content.find(']', nextPrim)) count++;
+                }
+                pos = content.find("\"primitives\":", pos + 1);
+            }
+            // Better check: search for multiple "material": X
+            size_t mat0 = content.find("\"material\": 0");
+            size_t mat1 = content.find("\"material\": 1");
+            ok &= Expect(mat0 != std::string::npos && mat1 != std::string::npos, "GLB should reference both materials");
+        }
+        else
+        {
+            ok &= Expect(false, "GLB export should succeed");
+        }
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
         return ok;
     }
 
@@ -1463,6 +1540,7 @@ int main(int argc, char** argv)
     ok &= Expect(TestTextureExporterDxpPayloadExport(), "TextureExporter DXP payload export test should pass");
     ok &= Expect(TestTextureExporterMissingOodleFallback(), "TextureExporter missing-Oodle fallback test should pass");
     ok &= Expect(TestRendInstParsingAndExport(), "RendInst geometry parsing and GLB/OBJ export tests should pass");
+    ok &= Expect(TestMultiMaterialModelExport(), "Multi-material model export test should pass");
     ok &= Expect(TestUnifiedModelExport(), "Unified model export test should pass");
 
     const AssetIndex::ValidationResult validation = AssetIndex::ValidateGameRoot(fixtureRoot);

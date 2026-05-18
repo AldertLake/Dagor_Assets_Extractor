@@ -690,6 +690,43 @@ namespace DagorAssetsExtractor::App
         });
     }
 
+    void RequestModelExportByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName)
+    {
+        AddLog(app, LogLevel::Info, "Resolving model " + entryName + " in " + Platform::PathToUtf8(packPath.filename()) + "...");
+
+        app.backgroundJobs.Start("ResolveAndExportModel_" + entryName, [&app, packPath, entryName]() {
+            auto contents = app.packContentsCache.Get(packPath);
+            if (!contents)
+            {
+                auto newContents = AssetIndex::ParseGrpContents(packPath);
+                if (newContents)
+                {
+                    app.packContentsCache.Put(packPath, newContents);
+                    contents = newContents;
+                }
+            }
+
+            if (!contents || !contents->error.empty())
+            {
+                AddLog(app, LogLevel::Error, "Could not parse GRP contents for " + Platform::PathToUtf8(packPath.filename()) + (contents ? ": " + contents->error : ""));
+                return;
+            }
+
+            auto it = std::find_if(contents->entries.begin(), contents->entries.end(), [&](const auto& e) {
+                return e.name == entryName;
+            });
+
+            if (it == contents->entries.end())
+            {
+                AddLog(app, LogLevel::Error, "Could not find model " + entryName + " in " + Platform::PathToUtf8(packPath.filename()));
+                return;
+            }
+
+            // Delegate to the main export function
+            RequestModelExport(app, packPath, *it);
+        });
+    }
+
     void RequestBatchTextureExport(AppState& app, const std::filesystem::path& packPath, std::shared_ptr<const AssetIndex::PackContents> contents)
     {
         if (!contents) return;

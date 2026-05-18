@@ -13,10 +13,17 @@ struct Vertex {
     float u, v;
 };
 
+struct RendInstPrimitive {
+    uint32_t materialIndex = 0;
+    uint32_t firstIndex = 0;
+    uint32_t indexCount = 0;
+};
+
 struct RendInstMesh {
     std::string name;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<RendInstPrimitive> primitives;
 };
 
 class RendInstReader {

@@ -749,6 +749,20 @@ namespace DagorAssetsExtractor::UI
                 {
                     ImGui::SetTooltip("%s", Platform::PathToUtf8(*foundLink->matchedGrpPath).c_str());
                 }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Export Unified Model##desc"))
+                {
+                    if (foundLink->matchedGrpEntryName)
+                    {
+                        App::RequestModelExportByName(app, *foundLink->matchedGrpPath, *foundLink->matchedGrpEntryName);
+                    }
+                    else
+                    {
+                        // If no entry name, we assume the whole GRP is the resource (unlikely for RendInst but possible for other types)
+                        App::AddLog(app, App::LogLevel::Warning, "Cannot export unified model: GRP entry name is missing.");
+                    }
+                }
             }
             else
             {

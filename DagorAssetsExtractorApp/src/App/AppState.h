@@ -166,6 +166,7 @@ namespace DagorAssetsExtractor::App
     void RequestPackContents(AppState& app, const std::filesystem::path& packPath, AssetIndex::AssetType type);
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
+    void RequestModelExportByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName);
     void RequestBatchTextureExport(AppState& app, const std::filesystem::path& packPath, std::shared_ptr<const AssetIndex::PackContents> contents);
     bool IsOodleAvailable(const AppState& app);
     std::shared_ptr<const BlkPreview> SnapshotBlkPreview(AppState& app, const std::filesystem::path& path);

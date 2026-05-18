@@ -66,6 +66,26 @@ void RendInstReader::Parse() {
             lod.indices.push_back(reader.ReadUInt32());
         }
 
+        // Read primitives (material slots)
+        if (reader.GetRemaining() >= 4) {
+            uint32_t primitiveCount = reader.ReadUInt32();
+            if (reader.GetRemaining() >= primitiveCount * 12) { // materialIndex(4) + firstIndex(4) + indexCount(4)
+                lod.primitives.reserve(primitiveCount);
+                for (uint32_t p = 0; p < primitiveCount; ++p) {
+                    RendInstPrimitive prim;
+                    prim.materialIndex = reader.ReadUInt32();
+                    prim.firstIndex = reader.ReadUInt32();
+                    prim.indexCount = reader.ReadUInt32();
+                    lod.primitives.push_back(prim);
+                }
+            }
+        }
+
+        // If no primitives were found, create a default one covering all indices
+        if (lod.primitives.empty()) {
+            lod.primitives.push_back({ 0, 0, indexCount });
+        }
+
         m_lods.push_back(std::move(lod));
     }
 }
