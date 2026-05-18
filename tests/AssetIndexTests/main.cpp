@@ -164,39 +164,101 @@ namespace
     {
         bool ok = true;
 
-        // Construct a synthetic 4+4 + 11 + 4+4+4+4 = 35 byte GRP
-        std::vector<uint8_t> data;
-        const char magic[] = "GRP\x01";
-        data.insert(data.end(), magic, magic + 4);
+        auto putU16 = [](std::vector<uint8_t>& out, size_t offset, uint16_t value) {
+            out[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            out[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        };
+        auto putU32 = [](std::vector<uint8_t>& out, size_t offset, uint32_t value) {
+            out[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            out[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            out[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            out[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
 
-        uint32_t count = 1;
-        data.push_back(count & 0xFF); data.push_back(0); data.push_back(0); data.push_back(0);
-
-        const char name[] = "test_model";
-        data.insert(data.end(), name, name + 11); // "test_model\0"
-
-        uint32_t offset = 0x100;
-        data.push_back(offset & 0xFF); data.push_back(0x01); data.push_back(0); data.push_back(0);
-
-        uint32_t size = 10;
-        data.push_back(size & 0xFF); data.push_back(0); data.push_back(0); data.push_back(0);
-
-        uint32_t uncompressedSize = 10;
-        data.push_back(uncompressedSize & 0xFF); data.push_back(0); data.push_back(0); data.push_back(0);
-
-        uint32_t flags = 0;
-        data.push_back(flags & 0xFF); data.push_back(0); data.push_back(0); data.push_back(0);
-
-        DagorFormats::GrpReader reader(data);
-        reader.Parse();
-
-        const auto& files = reader.GetFiles();
-        ok &= Expect(files.size() == 1, "GrpReader should parse 1 file");
-        if (!files.empty())
         {
-            ok &= Expect(files[0].name == "test_model", "GrpReader name match");
-            ok &= Expect(files[0].offset == 0x100, "GrpReader offset match");
-            ok &= Expect(files[0].size == 10, "GrpReader size match");
+            // Legacy synthetic 4+4 + 11 + 4+4+4+4 GRP fixture.
+            std::vector<uint8_t> data;
+            const char magic[] = "GRP\x01";
+            data.insert(data.end(), magic, magic + 4);
+
+            uint32_t count = 1;
+            data.push_back(count & 0xFF); data.push_back(0); data.push_back(0); data.push_back(0);
+
+            const char name[] = "test_model";
+            data.insert(data.end(), name, name + 11); // "test_model\0"
+
+            uint32_t offset = 0x100;
+            data.push_back(offset & 0xFF); data.push_back(0x01); data.push_back(0); data.push_back(0);
+
+            uint32_t size = 10;
+            data.push_back(size & 0xFF); data.push_back(0); data.push_back(0); data.push_back(0);
+
+            uint32_t uncompressedSize = 10;
+            data.push_back(uncompressedSize & 0xFF); data.push_back(0); data.push_back(0); data.push_back(0);
+
+            uint32_t flags = 0;
+            data.push_back(flags & 0xFF); data.push_back(0); data.push_back(0); data.push_back(0);
+
+            DagorFormats::GrpReader reader(data);
+            reader.Parse();
+
+            const auto& files = reader.GetFiles();
+            ok &= Expect(files.size() == 1, "GrpReader should parse 1 legacy file");
+            if (!files.empty())
+            {
+                ok &= Expect(files[0].name == "test_model", "GrpReader legacy name match");
+                ok &= Expect(files[0].offset == 0x100, "GrpReader legacy offset match");
+                ok &= Expect(files[0].size == 10, "GrpReader legacy size match");
+            }
+        }
+
+        {
+            // Modern Dagor GRP2 layout: 16-byte header + PatchableTab-backed GrpData.
+            constexpr size_t payloadOffset = 0x80;
+            std::vector<uint8_t> data(payloadOffset + 4, 0);
+            data[0] = 'G'; data[1] = 'R'; data[2] = 'P'; data[3] = '2';
+            putU32(data, 4, 0x70); // descOnlySize is informational for this reader.
+            putU32(data, 8, 0x70); // fullDataSize: bytes after the header before payloads.
+            putU32(data, 12, static_cast<uint32_t>(data.size() - 16));
+
+            // GrpData.nameMap PatchableTab at 0x10.
+            putU32(data, 0x10, 0x40);
+            putU32(data, 0x14, 1);
+
+            // GrpData.resTable PatchableTab at 0x20.
+            putU32(data, 0x20, 0x50);
+            putU32(data, 0x24, 1);
+
+            // GrpData.resData PatchableTab at 0x30 remains empty.
+            putU32(data, 0x40, 0x60); // nameMap[0] -> "modern_model"
+
+            putU32(data, 0x50, 0x1234ABCD); // classId
+            putU32(data, 0x54, static_cast<uint32_t>(payloadOffset));
+            putU16(data, 0x58, 0); // resId
+
+            const char modernName[] = "modern_model";
+            std::copy(std::begin(modernName), std::end(modernName), data.begin() + 0x60);
+            data[payloadOffset + 0] = 0xCA;
+            data[payloadOffset + 1] = 0xFE;
+            data[payloadOffset + 2] = 0xBA;
+            data[payloadOffset + 3] = 0xBE;
+
+            DagorFormats::GrpReader reader(data);
+            reader.Parse();
+
+            const auto& files = reader.GetFiles();
+            ok &= Expect(files.size() == 1, "GrpReader should parse 1 GRP2 file");
+            if (!files.empty())
+            {
+                ok &= Expect(files[0].name == "modern_model", "GrpReader GRP2 name match");
+                ok &= Expect(files[0].offset == payloadOffset, "GrpReader GRP2 payload offset match");
+                ok &= Expect(files[0].size == 4, "GrpReader GRP2 payload size match");
+                ok &= Expect(files[0].classId == 0x1234ABCD, "GrpReader GRP2 class id match");
+
+                auto payload = reader.GetFileData(files[0]);
+                ok &= Expect(payload.size() == 4 && payload[0] == 0xCA && payload[3] == 0xBE,
+                    "GrpReader GRP2 payload data should be readable");
+            }
         }
 
         return ok;

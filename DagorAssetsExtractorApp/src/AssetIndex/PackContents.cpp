@@ -7,6 +7,7 @@
 
 #include <fstream>
 #include <algorithm>
+#include <cstdio>
 
 namespace DagorAssetsExtractor::AssetIndex
 {
@@ -218,6 +219,12 @@ namespace DagorAssetsExtractor::AssetIndex
                 entry.name   = file.name;
                 entry.offset = file.offset;
                 entry.size   = file.size;
+                if (file.classId != 0)
+                {
+                    char classIdText[32] = {};
+                    std::snprintf(classIdText, sizeof(classIdText), "class 0x%08X", file.classId);
+                    entry.formatInfo = classIdText;
+                }
                 contents->entries.push_back(std::move(entry));
             }
         }
