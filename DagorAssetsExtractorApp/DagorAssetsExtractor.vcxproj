@@ -87,6 +87,11 @@
     <ClCompile Include="src\App\AppState.cpp" />
     <ClCompile Include="src\AssetIndex\AssetIndex.cpp" />
     <ClCompile Include="src\DagorIO\BinaryReader.cpp" />
+    <ClCompile Include="src\DagorFormats\VromfsReader.cpp" />
+    <ClCompile Include="src\DagorFormats\DxpReader.cpp" />
+    <ClCompile Include="src\DagorFormats\DdsxReader.cpp" />
+    <ClCompile Include="src\DagorFormats\BlkReader.cpp" />
+    <ClCompile Include="src\AssetIndex\PackContents.cpp" />
     <ClCompile Include="src\Platform\Platform.cpp" />
     <ClCompile Include="src\UI\UI.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui.cpp" />
@@ -98,9 +103,16 @@
     <ClCompile Include="..\third_party\imgui\backends\imgui_impl_win32.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\App\AppState.h" />
     <ClInclude Include="src\AssetIndex\AssetIndex.h" />
     <ClInclude Include="src\DagorIO\BinaryReader.h" />
+    <ClInclude Include="src\DagorFormats\VromfsReader.h" />
+    <ClInclude Include="src\DagorFormats\DxpReader.h" />
+    <ClInclude Include="src\DagorFormats\DdsxReader.h" />
+    <ClInclude Include="src\DagorFormats\BlkReader.h" />
+    <ClInclude Include="src\AssetIndex\PackContents.h" />
     <ClInclude Include="src\Platform\Platform.h" />
+    <ClInclude Include="src\UI\UI.h" />
     <ClInclude Include="..\third_party\imgui\imgui.h" />
     <ClInclude Include="..\third_party\imgui\imgui_internal.h" />
     <ClInclude Include="..\third_party\imgui\imconfig.h" />

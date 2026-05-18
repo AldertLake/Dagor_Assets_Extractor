@@ -9,16 +9,46 @@
       <UniqueIdentifier>{8195535F-EA38-4B95-B378-E3294C07D7EC}</UniqueIdentifier>
       <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
     </Filter>
+    <Filter Include="Source Files\App">
+      <UniqueIdentifier>{D0B5F580-2F60-45C5-B8B0-0E5A2D5D2BBE}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\AssetIndex">
       <UniqueIdentifier>{7857B2B3-AE68-4C9F-8933-C6CF688CB917}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\DagorFormats">
+      <UniqueIdentifier>{3BA17EB0-7074-4C24-93D7-0D741A47730E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\DagorIO">
+      <UniqueIdentifier>{2951F7F6-92DA-449E-B3FD-B22259CC997C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Platform">
+      <UniqueIdentifier>{7657A353-DA4C-488A-B68F-137362DA1342}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\UI">
+      <UniqueIdentifier>{028197D3-E251-4F8F-A569-ED02520EB8F2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\App">
+      <UniqueIdentifier>{C991E39E-7A56-4F34-802A-3623CA223841}</UniqueIdentifier>
     </Filter>
     <Filter Include="Header Files\AssetIndex">
       <UniqueIdentifier>{7B5D968A-1EC3-49B4-B90D-F5AC8EB56908}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Third Party\\ImGui">
+    <Filter Include="Header Files\DagorFormats">
+      <UniqueIdentifier>{9D2853C8-7B81-470C-A7A2-0BD898F8CE79}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\DagorIO">
+      <UniqueIdentifier>{E1B108D9-00A8-45E3-9C1D-D787AD690540}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Platform">
+      <UniqueIdentifier>{82AC0A06-C359-4B8D-8560-99A58CF9E788}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\UI">
+      <UniqueIdentifier>{B0FE46E6-21E9-4C3A-8BB1-3D8ED8780BBD}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party\ImGui">
       <UniqueIdentifier>{81220F45-ED73-4957-B161-3A1F82D63A6D}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Third Party\\ImGui\\Backends">
+    <Filter Include="Third Party\ImGui\Backends">
       <UniqueIdentifier>{4EB16A9A-76EE-487E-B570-D2D0CC69FEFD}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
@@ -31,6 +61,30 @@
     </ClCompile>
     <ClCompile Include="src\AssetIndex\AssetIndex.cpp">
       <Filter>Source Files\AssetIndex</Filter>
+    </ClCompile>
+    <ClCompile Include="src\AssetIndex\PackContents.cpp">
+      <Filter>Source Files\AssetIndex</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorFormats\VromfsReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorFormats\DxpReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorFormats\DdsxReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorFormats\BlkReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DagorIO\BinaryReader.cpp">
+      <Filter>Source Files\DagorIO</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Platform\Platform.cpp">
+      <Filter>Source Files\Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="src\UI\UI.cpp">
+      <Filter>Source Files\UI</Filter>
     </ClCompile>
     <ClCompile Include="..\third_party\imgui\imgui.cpp">
       <Filter>Third Party\ImGui</Filter>
@@ -55,14 +109,35 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\App\AppState.h">
+      <Filter>Header Files\App</Filter>
+    </ClInclude>
     <ClInclude Include="src\AssetIndex\AssetIndex.h">
       <Filter>Header Files\AssetIndex</Filter>
+    </ClInclude>
+    <ClInclude Include="src\AssetIndex\PackContents.h">
+      <Filter>Header Files\AssetIndex</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DagorFormats\VromfsReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DagorFormats\DxpReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DagorFormats\DdsxReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DagorFormats\BlkReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
     </ClInclude>
     <ClInclude Include="src\DagorIO\BinaryReader.h">
       <Filter>Header Files\DagorIO</Filter>
     </ClInclude>
     <ClInclude Include="src\Platform\Platform.h">
       <Filter>Header Files\Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="src\UI\UI.h">
+      <Filter>Header Files\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\third_party\imgui\imgui.h">
       <Filter>Third Party\ImGui</Filter>
@@ -77,11 +152,6 @@
       <Filter>Third Party\ImGui\Backends</Filter>
     </ClInclude>
     <ClInclude Include="..\third_party\imgui\backends\imgui_impl_win32.h">
-      <Filter>Third Party\ImGui\Backends</Filter>
-    </ClInclude>
-  </ItemGroup>
-</Project>
-
       <Filter>Third Party\ImGui\Backends</Filter>
     </ClInclude>
   </ItemGroup>

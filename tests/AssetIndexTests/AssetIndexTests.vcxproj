@@ -84,11 +84,21 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\AssetIndex.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorIO\BinaryReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\VromfsReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DxpReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DdsxReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\BlkReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\PackContents.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\Platform\Platform.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\AssetIndex.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorIO\BinaryReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\VromfsReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DxpReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DdsxReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\BlkReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\PackContents.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\Platform\Platform.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

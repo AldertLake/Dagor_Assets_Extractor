@@ -8,8 +8,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <memory>
 
 #include "AssetIndex/AssetIndex.h"
+#include "AssetIndex/PackContents.h"
 
 namespace DagorAssetsExtractor::App
 {
@@ -55,7 +57,7 @@ namespace DagorAssetsExtractor::App
         std::string status = "Idle";
         std::string cacheStatus = "Not loaded";
         bool cacheLoaded = false;
-        std::vector<AssetIndex::ResourceRecord> records;
+        std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records;
         std::thread worker;
     };
 
@@ -83,10 +85,19 @@ namespace DagorAssetsExtractor::App
         bool showDxp = true;
         bool showDescriptors = true;
         bool showBlk = true;
+
+        // UI Cache
+        std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> lastRecords;
+        std::string lastSearch;
+        std::vector<size_t> filteredIndices;
+
+        // Lazy-loaded pack contents cache (sub-assets parsed on demand)
+        AssetIndex::PackContentsCache packContentsCache;
+        std::atomic_bool packContentsParsing{false};
     };
 
     void AddLog(AppState& app, LogLevel level, std::string message);
-    std::vector<AssetIndex::ResourceRecord> SnapshotRecords(ScanState& scan);
+    std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> SnapshotRecords(ScanState& scan);
     std::string GetScanStatus(ScanState& scan);
     std::string GetCacheStatus(ScanState& scan);
     void SetCacheStatus(ScanState& scan, std::string status, bool loaded);
@@ -103,4 +114,5 @@ namespace DagorAssetsExtractor::App
     void StopScan(AppState& app);
     void JoinFinishedScan(AppState& app);
     void ClearResourceIndex(AppState& app, std::string status);
+    void RequestPackContents(AppState& app, const std::filesystem::path& packPath, AssetIndex::AssetType type);
 }

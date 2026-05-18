@@ -54,9 +54,13 @@ namespace DagorAssetsExtractor::App
         }
     }
 
-    std::vector<ResourceRecord> SnapshotRecords(ScanState& scan)
+    std::shared_ptr<const std::vector<ResourceRecord>> SnapshotRecords(ScanState& scan)
     {
         std::lock_guard<std::mutex> lock(scan.mutex);
+        if (!scan.records)
+        {
+            return std::make_shared<std::vector<ResourceRecord>>();
+        }
         return scan.records;
     }
 
@@ -226,7 +230,7 @@ namespace DagorAssetsExtractor::App
     {
         {
             std::lock_guard<std::mutex> lock(app.scan.mutex);
-            app.scan.records.clear();
+            app.scan.records = nullptr;
             app.scan.status = std::move(status);
             app.scan.cacheStatus = app.settings.indexCacheEnabled ? "Not loaded" : "Disabled";
             app.scan.cacheLoaded = false;
@@ -237,6 +241,7 @@ namespace DagorAssetsExtractor::App
         app.scan.recordsFound.store(0);
         app.scan.completed.store(false);
         app.scan.failed.store(false);
+        app.packContentsCache.Clear();
     }
 
     void LoadIndexCacheIntoApp(AppState& app)
@@ -269,7 +274,7 @@ namespace DagorAssetsExtractor::App
 
         {
             std::lock_guard<std::mutex> lock(app.scan.mutex);
-            app.scan.records = result.records;
+            app.scan.records = std::make_shared<std::vector<ResourceRecord>>(result.records);
             app.scan.status = result.records.empty() ? "Idle" : "Loaded from cache";
             app.scan.cacheStatus = result.message;
             app.scan.cacheLoaded = !result.records.empty();
@@ -329,7 +334,7 @@ namespace DagorAssetsExtractor::App
 
         {
             std::lock_guard<std::mutex> lock(app.scan.mutex);
-            app.scan.records.clear();
+            app.scan.records = nullptr;
             app.scan.status = "Preparing scan";
             app.scan.cacheStatus = app.settings.indexCacheEnabled ? "Refreshing" : "Disabled";
             app.scan.cacheLoaded = false;
@@ -356,17 +361,21 @@ namespace DagorAssetsExtractor::App
                 options.onFileVisited = [&app](uint64_t filesVisited) {
                     app.scan.filesVisited.store(filesVisited);
                 };
-                options.onRecordFound = [&app](const ResourceRecord& record) {
-                    size_t recordsFound = 0;
+                std::vector<ResourceRecord> localRecords;
+
+                options.onRecordFound = [&app, &localRecords](const ResourceRecord& record) {
+                    localRecords.push_back(record);
+                    const size_t count = localRecords.size();
+
+                    if (count % 500 == 0)
                     {
                         std::lock_guard<std::mutex> lock(app.scan.mutex);
-                        app.scan.records.push_back(record);
-                        recordsFound = app.scan.records.size();
+                        app.scan.records = std::make_shared<std::vector<ResourceRecord>>(localRecords);
                         std::ostringstream status;
-                        status << "Scanning - " << recordsFound << " records found";
+                        status << "Scanning - " << count << " records found";
                         app.scan.status = status.str();
                     }
-                    app.scan.recordsFound.store(static_cast<uint64_t>(recordsFound));
+                    app.scan.recordsFound.store(static_cast<uint64_t>(count));
                 };
 
                 const DiscoverResult result = AssetIndex::DiscoverResources(root, options);
@@ -393,14 +402,14 @@ namespace DagorAssetsExtractor::App
                     AddLog(app, LogLevel::Info, message.str());
                     app.scan.completed.store(true);
 
-                    if (writeIndexCache)
+                    if (writeIndexCache && result.records.size() > 0)
                     {
                         std::string cacheError;
-                        const std::vector<ResourceRecord> records = SnapshotRecords(app.scan);
-                        if (AssetIndex::SaveIndexCacheRecords(cachePath, root, records, cacheError))
+                        // Use result.records instead of copying from scan state
+                        if (AssetIndex::SaveIndexCacheRecords(cachePath, root, result.records, cacheError))
                         {
                             std::ostringstream cacheMessage;
-                            cacheMessage << "Index cache saved with " << records.size() << " records.";
+                            cacheMessage << "Index cache saved with " << result.records.size() << " records.";
                             SetCacheStatus(app.scan, cacheMessage.str(), true);
                             AddLog(app, LogLevel::Info, cacheMessage.str());
                         }
@@ -421,5 +430,55 @@ namespace DagorAssetsExtractor::App
 
             app.scan.running.store(false);
         });
+    }
+
+    void RequestPackContents(AppState& app, const fs::path& packPath, AssetIndex::AssetType type)
+    {
+        // Already cached or currently parsing
+        if (app.packContentsCache.Has(packPath) || app.packContentsParsing.load())
+        {
+            return;
+        }
+
+        // Only VROMFS and DXP containers support sub-asset parsing
+        if (type != AssetIndex::AssetType::Vromfs && type != AssetIndex::AssetType::Dxp)
+        {
+            return;
+        }
+
+        app.packContentsParsing.store(true);
+        AddLog(app, LogLevel::Info, "Parsing contents of " + Platform::PathToUtf8(packPath.filename()) + "...");
+
+        std::thread([&app, packPath, type]() {
+            std::shared_ptr<AssetIndex::PackContents> contents;
+
+            if (type == AssetIndex::AssetType::Vromfs)
+            {
+                contents = AssetIndex::ParseVromfsContents(packPath);
+            }
+            else if (type == AssetIndex::AssetType::Dxp)
+            {
+                contents = AssetIndex::ParseDxpContents(packPath);
+            }
+
+            if (contents)
+            {
+                app.packContentsCache.Put(packPath, contents);
+
+                if (contents->error.empty())
+                {
+                    std::ostringstream msg;
+                    msg << "Parsed " << contents->entries.size() << " sub-assets from "
+                        << Platform::PathToUtf8(packPath.filename());
+                    AddLog(app, LogLevel::Info, msg.str());
+                }
+                else
+                {
+                    AddLog(app, LogLevel::Warning, contents->error);
+                }
+            }
+
+            app.packContentsParsing.store(false);
+        }).detach();
     }
 }

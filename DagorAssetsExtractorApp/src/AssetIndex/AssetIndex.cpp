@@ -1,5 +1,7 @@
 #include "AssetIndex/AssetIndex.h"
 #include "../Platform/Platform.h"
+#include "DagorFormats/VromfsReader.h"
+#include "DagorFormats/DxpReader.h"
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -13,6 +15,7 @@
 #include <cctype>
 #include <cwctype>
 #include <fstream>
+#include <iostream>
 #include <iomanip>
 #include <sstream>
 
@@ -265,6 +268,8 @@ namespace DagorAssetsExtractor::AssetIndex
         return true;
     }
 
+
+
     bool ContainsKnownContainer(const fs::path& root, uint32_t visitLimit)
     {
         std::error_code ec;
@@ -404,6 +409,7 @@ namespace DagorAssetsExtractor::AssetIndex
                         record.type = *type;
                         record.sizeBytes = sizeBytes;
                         record.lastWriteTicks = lastWriteTicks;
+
                         result.records.push_back(record);
 
                         if (options.onRecordFound)
@@ -454,7 +460,8 @@ namespace DagorAssetsExtractor::AssetIndex
                  << std::quoted(Platform::PathToUtf8(record.path)) << ' '
                  << AssetTypeCacheName(record.type) << ' '
                  << record.sizeBytes << ' '
-                 << record.lastWriteTicks << '\n';
+                 << record.lastWriteTicks;
+            file << '\n';
         }
 
         if (!file)
@@ -490,13 +497,18 @@ namespace DagorAssetsExtractor::AssetIndex
         fs::path cachedRoot;
         std::vector<ResourceRecord> parsedRecords;
 
-        std::string tag;
-        while (file >> tag)
+        std::string line;
+        while (std::getline(file, line))
         {
+            if (line.empty()) continue;
+            std::stringstream ss(line);
+            std::string tag;
+            if (!(ss >> tag)) continue;
+
             if (tag == "root")
             {
                 std::string rootUtf8;
-                if (file >> std::quoted(rootUtf8))
+                if (ss >> std::quoted(rootUtf8))
                 {
                     cachedRoot = Platform::Utf8ToPath(rootUtf8);
                 }
@@ -509,7 +521,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 std::string typeName;
                 uintmax_t cachedSize = 0;
                 int64_t cachedTicks = 0;
-                if (!(file >> std::quoted(pathUtf8) >> typeName >> cachedSize >> cachedTicks))
+                if (!(ss >> std::quoted(pathUtf8) >> typeName >> cachedSize >> cachedTicks))
                 {
                     result.message = "Index cache is truncated or malformed.";
                     return result;
@@ -527,12 +539,10 @@ namespace DagorAssetsExtractor::AssetIndex
                 record.type = *type;
                 record.sizeBytes = cachedSize;
                 record.lastWriteTicks = cachedTicks;
+
                 parsedRecords.push_back(std::move(record));
                 continue;
             }
-
-            std::string ignoredLine;
-            std::getline(file, ignoredLine);
         }
 
         if (cachedRoot.empty())
