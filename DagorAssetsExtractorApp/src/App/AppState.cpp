@@ -190,6 +190,10 @@ namespace DagorAssetsExtractor::App
             {
                 settings.exportRoot = Platform::Utf8ToPath(value);
             }
+            else if (key == "oodleDllPath")
+            {
+                settings.oodleDllPath = Platform::Utf8ToPath(value);
+            }
             else if (key == "textureExportFormat")
             {
                 settings.textureExportFormat = value;
@@ -240,6 +244,7 @@ namespace DagorAssetsExtractor::App
 
         file << "gameRoot=" << Platform::PathToUtf8(settings.gameRoot) << '\n';
         file << "exportRoot=" << Platform::PathToUtf8(settings.exportRoot) << '\n';
+        file << "oodleDllPath=" << Platform::PathToUtf8(settings.oodleDllPath) << '\n';
         file << "textureExportFormat=" << settings.textureExportFormat << '\n';
         file << "modelExportFormat=" << settings.modelExportFormat << '\n';
         file << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
@@ -254,6 +259,7 @@ namespace DagorAssetsExtractor::App
     {
         CopyToBuffer(app.gameRootBuffer, Platform::PathToUtf8(app.settings.gameRoot));
         CopyToBuffer(app.exportRootBuffer, Platform::PathToUtf8(app.settings.exportRoot));
+        CopyToBuffer(app.oodleDllPathBuffer, Platform::PathToUtf8(app.settings.oodleDllPath));
     }
 
     void StopScan(AppState& app)
@@ -559,6 +565,7 @@ namespace DagorAssetsExtractor::App
         options.gameRoot = app.settings.gameRoot;
         options.oodleDllPath = app.settings.oodleDllPath;
         options.format = app.settings.textureExportFormat;
+        options.preserveOriginalDDS = app.settings.preserveOriginalDDS;
         options.overwrite = true;
         options.useOodleFromGameFolder = app.settings.useOodleFromGameFolder;
         return options;

@@ -456,6 +456,7 @@ namespace DagorAssetsExtractor::UI
         ImGui::TextUnformatted("Content Browser");
         ImGui::Separator();
 
+        ImGui::SetNextItemWidth(-1.0f);
         bool searchChanged = ImGui::InputTextWithHint("##Search", "Search discovered packs and descriptors", app.searchBuffer.data(), app.searchBuffer.size());
         const std::string search = AssetIndex::ToLowerAscii(std::string(app.searchBuffer.data()));
 
@@ -504,6 +505,7 @@ namespace DagorAssetsExtractor::UI
             {
                 for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; row++)
                 {
+                    ImGui::PushID(row);
                     const ResourceRecord& record = records[app.filteredIndices[row]];
                     const std::wstring nativePath = record.path.wstring();
                     const bool selected = nativePath == app.selectedPath;
@@ -525,6 +527,7 @@ namespace DagorAssetsExtractor::UI
 
                     ImGui::TableSetColumnIndex(3);
                     ImGui::TextUnformatted(FormatBytes(record.sizeBytes).c_str());
+                    ImGui::PopID();
                 }
             }
             ImGui::EndTable();
@@ -1101,6 +1104,7 @@ namespace DagorAssetsExtractor::UI
                     {
                         for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
                         {
+                            ImGui::PushID(row);
                             const AssetIndex::SubAssetRecord& entry = cachedContents->entries[row];
                             ImGui::TableNextRow();
 
@@ -1214,6 +1218,7 @@ namespace DagorAssetsExtractor::UI
                                     ImGui::EndDisabled();
                                 }
                             }
+                            ImGui::PopID();
                         }
                     }
                     ImGui::EndTable();
@@ -1248,7 +1253,7 @@ namespace DagorAssetsExtractor::UI
         }
         if (selected->type == AssetType::Dxp)
         {
-            ImGui::BulletText("DDS texture extraction with reversed-mip reordering & decompression.");
+            ImGui::BulletText("DDS texture extraction with reversed-mip reordering, decompression, and readable PNG/TGA export for uncompressed plus BC1-BC5 textures.");
         }
         if (selected->type == AssetType::Grp)
         {
@@ -1346,9 +1351,38 @@ namespace DagorAssetsExtractor::UI
             }
         }
 
+        ImGui::InputText("Oodle DLL", app.oodleDllPathBuffer.data(), app.oodleDllPathBuffer.size());
+        ImGui::SameLine();
+        if (ImGui::Button("Browse##OodleDll"))
+        {
+            if (const auto selected = Platform::BrowseForFile(static_cast<HWND>(app.hwnd), L"Choose oo2core_6_win64.dll", app.settings.oodleDllPath))
+            {
+                app.settings.oodleDllPath = *selected;
+                App::SyncSettingsBuffers(app);
+            }
+        }
+
+        static const char* textureFormats[] = { "DDS", "PNG", "TGA" };
+        const std::string textureFormat = AssetIndex::ToLowerAscii(app.settings.textureExportFormat);
+        int textureFormatIndex = 0;
+        if (textureFormat == "png")
+        {
+            textureFormatIndex = 1;
+        }
+        else if (textureFormat == "tga")
+        {
+            textureFormatIndex = 2;
+        }
+
+        if (ImGui::Combo("Texture Format", &textureFormatIndex, textureFormats, IM_ARRAYSIZE(textureFormats)))
+        {
+            app.settings.textureExportFormat = textureFormats[textureFormatIndex];
+        }
+
         ImGui::Checkbox("Export textures with models", &app.settings.exportTexturesWithModels);
-        ImGui::Checkbox("Preserve original DDS when possible", &app.settings.preserveOriginalDDS);
+        ImGui::Checkbox("Fallback to DDS when PNG/TGA conversion is unavailable", &app.settings.preserveOriginalDDS);
         ImGui::Checkbox("Use Oodle DLL from game folder if present", &app.settings.useOodleFromGameFolder);
+        ImGui::TextDisabled("PNG/TGA currently exports the top mip for BC1-BC5 plus uncompressed R8, R8G8, RGBA8, and BGRA8 DDSx textures.");
         if (ImGui::Checkbox("Enable index cache", &app.settings.indexCacheEnabled))
         {
             if (app.settings.indexCacheEnabled)
@@ -1365,6 +1399,7 @@ namespace DagorAssetsExtractor::UI
         if (ImGui::Button("Save Settings"))
         {
             app.settings.exportRoot = Platform::Utf8ToPath(app.exportRootBuffer.data());
+            app.settings.oodleDllPath = Platform::Utf8ToPath(app.oodleDllPathBuffer.data());
             App::SetGameRoot(app, Platform::Utf8ToPath(app.gameRootBuffer.data()));
             App::SaveSettingsWithLog(app);
         }
@@ -1485,7 +1520,17 @@ namespace DagorAssetsExtractor::UI
         const float bottomHeight = std::min(190.0f, available.y * 0.32f);
         const float topHeight = std::max(200.0f, available.y - bottomHeight - spacing);
         const float leftWidth = 290.0f;
-        const float inspectorHeight = std::clamp(topHeight * 0.42f, 140.0f, std::max(140.0f, topHeight - 160.0f));
+        // Initialize inspectorHeight if not set
+        if (app.inspectorHeight < 0.0f)
+        {
+            app.inspectorHeight = topHeight * 0.42f;
+        }
+
+        // Clamp inspector height to stay within reasonable bounds
+        const float minInspectorHeight = 100.0f;
+        const float maxInspectorHeight = topHeight - 160.0f;
+        app.inspectorHeight = std::clamp(app.inspectorHeight, minInspectorHeight, std::max(minInspectorHeight, maxInspectorHeight));
+
 
         ImGui::BeginChild("LeftPanel", ImVec2(leftWidth, topHeight), true);
         DrawLeftPanel(app, records);
@@ -1494,9 +1539,31 @@ namespace DagorAssetsExtractor::UI
         ImGui::SameLine();
         ImGui::BeginChild("MainStackPanel", ImVec2(0.0f, topHeight), false);
 
-        ImGui::BeginChild("ContentBrowserPanel", ImVec2(0.0f, -(inspectorHeight + ImGui::GetStyle().ItemSpacing.y)), true);
+        const float splitterHeight = 6.0f;
+        const float contentBrowserHeight = topHeight - app.inspectorHeight - splitterHeight - ImGui::GetStyle().ItemSpacing.y;
+
+        ImGui::BeginChild("ContentBrowserPanel", ImVec2(0.0f, contentBrowserHeight), true);
         DrawContentBrowser(app, recordsPtr);
         ImGui::EndChild();
+
+        // Horizontal splitter between ContentBrowserPanel and InspectorPanel
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Separator]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyle().Colors[ImGuiCol_SeparatorActive]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyle().Colors[ImGuiCol_SeparatorActive]);
+
+        ImGui::Button("##inspector_splitter", ImVec2(-1.0f, splitterHeight));
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        }
+        if (ImGui::IsItemActive())
+        {
+            app.inspectorHeight -= ImGui::GetIO().MouseDelta.y;
+        }
+
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(1);
 
         ImGui::BeginChild("InspectorPanel", ImVec2(0.0f, 0.0f), true);
         DrawInspector(app, records);

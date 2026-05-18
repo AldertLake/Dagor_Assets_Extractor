@@ -128,6 +128,8 @@ namespace DagorAssetsExtractor::App
         bool showDescriptors = true;
         bool showBlk = true;
         bool groupByBlk = false;
+        float inspectorHeight = -1.0f;
+
 
         // UI Cache
         std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> lastRecords;

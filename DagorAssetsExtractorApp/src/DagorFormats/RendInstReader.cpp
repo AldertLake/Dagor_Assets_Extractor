@@ -24,6 +24,9 @@ void RendInstReader::Parse() {
     }
 
     uint32_t lodCount = reader.ReadUInt32();
+    if (static_cast<uint64_t>(lodCount) * 40 > reader.GetRemaining()) {
+        throw std::runtime_error("RendInst lodCount is unreasonably large");
+    }
     m_lods.clear();
     m_lods.reserve(lodCount);
 
@@ -42,8 +45,8 @@ void RendInstReader::Parse() {
         uint32_t indexCount = reader.ReadUInt32();
 
         // Safety check for vertex and index sizes
-        size_t requiredBytes = vertCount * sizeof(Vertex) + indexCount * sizeof(uint32_t);
-        if (reader.GetRemaining() < requiredBytes) {
+        uint64_t requiredBytes = static_cast<uint64_t>(vertCount) * sizeof(Vertex) + static_cast<uint64_t>(indexCount) * sizeof(uint32_t);
+        if (requiredBytes > reader.GetRemaining()) {
             throw std::runtime_error("RendInst truncated LOD vertex/index buffers");
         }
 
@@ -69,7 +72,7 @@ void RendInstReader::Parse() {
         // Read primitives (material slots)
         if (reader.GetRemaining() >= 4) {
             uint32_t primitiveCount = reader.ReadUInt32();
-            if (reader.GetRemaining() >= primitiveCount * 12) { // materialIndex(4) + firstIndex(4) + indexCount(4)
+            if (static_cast<uint64_t>(primitiveCount) * 12 <= reader.GetRemaining()) { // materialIndex(4) + firstIndex(4) + indexCount(4)
                 lod.primitives.reserve(primitiveCount);
                 for (uint32_t p = 0; p < primitiveCount; ++p) {
                     RendInstPrimitive prim;

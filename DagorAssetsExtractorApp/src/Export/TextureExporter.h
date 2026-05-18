@@ -15,7 +15,8 @@ namespace DagorAssetsExtractor::Export
         std::filesystem::path outputDir;
         std::filesystem::path gameRoot;
         std::filesystem::path oodleDllPath;
-        std::string format = "DDS"; // "DDS", "PNG", etc.
+        std::string format = "DDS"; // "DDS", "PNG", "TGA"
+        bool preserveOriginalDDS = true;
         bool overwrite = true;
         bool useOodleFromGameFolder = true;
     };

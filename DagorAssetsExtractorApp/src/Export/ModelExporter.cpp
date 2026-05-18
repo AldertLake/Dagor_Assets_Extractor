@@ -9,10 +9,32 @@ namespace DagorAssetsExtractor::Export
 {
     bool ModelExporter::ExportToGlb(
         const std::filesystem::path& path,
-        const std::vector<DagorFormats::RendInstMesh>& lods,
+        const std::vector<DagorFormats::RendInstMesh>& lods_in,
         const ExportManifest& manifest,
         const std::vector<MaterialInfo>& materials)
     {
+        std::vector<DagorFormats::RendInstMesh> lods;
+        for (const auto& lod_in : lods_in)
+        {
+            if (lod_in.vertices.empty() || lod_in.indices.empty())
+                continue;
+
+            DagorFormats::RendInstMesh validLod = lod_in;
+            // Remove primitives with 0 indices
+            validLod.primitives.erase(
+                std::remove_if(validLod.primitives.begin(), validLod.primitives.end(),
+                    [](const DagorFormats::RendInstPrimitive& p) { return p.indexCount == 0; }),
+                validLod.primitives.end());
+
+            if (validLod.primitives.empty())
+            {
+                // Create a default primitive if all were empty or none existed
+                validLod.primitives.push_back({ 0, 0, static_cast<uint32_t>(validLod.indices.size()) });
+            }
+
+            lods.push_back(std::move(validLod));
+        }
+
         if (lods.empty())
         {
             return false;
@@ -403,6 +425,11 @@ namespace DagorAssetsExtractor::Export
         const DagorFormats::RendInstMesh& mesh,
         const ExportManifest& manifest)
     {
+        if (mesh.vertices.empty() || mesh.indices.empty())
+        {
+            return false;
+        }
+
         std::ofstream out(path);
         if (!out)
         {

@@ -1397,6 +1397,488 @@ namespace
         return ok;
     }
 
+    bool TestTextureExporterReadablePngExport()
+    {
+        bool ok = true;
+
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TexturePngExportTest_" + std::to_string(stamp));
+        const fs::path packPath = tempDir / "synthetic_textures_png.dxp.bin";
+        const fs::path outputDir = tempDir / "out";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp PNG texture export test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        auto put16 = [](std::vector<uint8_t>& data, size_t offset, uint16_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        };
+        auto put32 = [](std::vector<uint8_t>& data, size_t offset, uint32_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
+
+        std::vector<uint8_t> data(0xC0, 0);
+        data[0] = 'D'; data[1] = 'x'; data[2] = 'P'; data[3] = '2';
+        put16(data, 0x8, 1);
+        put32(data, 0x20, 0x60);
+        put32(data, 0x30, 0x80);
+
+        const std::string textureName = "folder/tex:png";
+        std::copy(textureName.begin(), textureName.end(), data.begin() + 0x48);
+
+        data[0x70] = 0x44; data[0x71] = 0x44; data[0x72] = 0x53; data[0x73] = 0x78;
+        put32(data, 0x74, 28); // R8G8B8A8_UNORM
+        put16(data, 0x7C, 1);
+        put16(data, 0x7E, 1);
+        data[0x80] = 1;
+        put16(data, 0x82, 1);
+        put16(data, 0x84, 32);
+        put32(data, 0x88, 4);
+        put32(data, 0x8C, 0);
+
+        put32(data, 0x9C, 0xB0);
+        put32(data, 0xA0, 4);
+        data[0xB0] = 0x12; data[0xB1] = 0x34; data[0xB2] = 0x56; data[0xB3] = 0xFF;
+
+        {
+            std::ofstream pack(packPath, std::ios::binary);
+            pack.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> contents = AssetIndex::ParseDxpContents(packPath);
+        ok &= Expect(contents != nullptr, "PNG export test should parse pack contents");
+        ok &= Expect(contents && contents->error.empty(), "PNG export test should parse without DXP errors");
+        ok &= Expect(contents && contents->entries.size() == 1, "PNG export test should expose one texture");
+
+        if (contents && !contents->entries.empty())
+        {
+            DagorAssetsExtractor::Export::TextureExportOptions options;
+            options.outputDir = outputDir;
+            options.gameRoot = tempDir;
+            options.format = "PNG";
+            options.overwrite = false;
+
+            DagorAssetsExtractor::Export::TextureExportResult result =
+                DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
+
+            ok &= Expect(result.success, "TextureExporter should export readable PNG output");
+            ok &= Expect(result.outputPath.extension() == ".png", "Readable PNG export should produce a .png file");
+            ok &= Expect(fs::exists(result.outputPath), "Readable PNG export should create the PNG output");
+
+            if (fs::exists(result.outputPath))
+            {
+                std::ifstream png(result.outputPath, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(png)), std::istreambuf_iterator<char>());
+                ok &= Expect(bytes.size() >= 8, "Readable PNG export should produce a non-empty PNG file");
+                ok &= Expect(bytes.size() >= 8 &&
+                    bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+                    bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A,
+                    "Readable PNG export should start with the PNG signature");
+            }
+
+            fs::path manifestPath = result.outputPath;
+            manifestPath.replace_extension(".export-manifest.json");
+            ok &= Expect(fs::exists(manifestPath), "Readable PNG export should create an export manifest");
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    bool TestTextureExporterReadableTgaExport()
+    {
+        bool ok = true;
+
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TextureTgaExportTest_" + std::to_string(stamp));
+        const fs::path packPath = tempDir / "synthetic_textures_tga.dxp.bin";
+        const fs::path outputDir = tempDir / "out";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp TGA texture export test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        auto put16 = [](std::vector<uint8_t>& data, size_t offset, uint16_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        };
+        auto put32 = [](std::vector<uint8_t>& data, size_t offset, uint32_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
+
+        std::vector<uint8_t> data(0xC0, 0);
+        data[0] = 'D'; data[1] = 'x'; data[2] = 'P'; data[3] = '2';
+        put16(data, 0x8, 1);
+        put32(data, 0x20, 0x60);
+        put32(data, 0x30, 0x80);
+
+        const std::string textureName = "gray/tga_tex";
+        std::copy(textureName.begin(), textureName.end(), data.begin() + 0x48);
+
+        data[0x70] = 0x44; data[0x71] = 0x44; data[0x72] = 0x53; data[0x73] = 0x78;
+        put32(data, 0x74, 61); // R8_UNORM
+        put16(data, 0x7C, 2);
+        put16(data, 0x7E, 1);
+        data[0x80] = 1;
+        put16(data, 0x82, 1);
+        put16(data, 0x84, 8);
+        put32(data, 0x88, 2);
+        put32(data, 0x8C, 0);
+
+        put32(data, 0x9C, 0xB0);
+        put32(data, 0xA0, 2);
+        data[0xB0] = 0x11; data[0xB1] = 0xCC;
+
+        {
+            std::ofstream pack(packPath, std::ios::binary);
+            pack.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> contents = AssetIndex::ParseDxpContents(packPath);
+        ok &= Expect(contents != nullptr, "TGA export test should parse pack contents");
+        ok &= Expect(contents && contents->error.empty(), "TGA export test should parse without DXP errors");
+        ok &= Expect(contents && contents->entries.size() == 1, "TGA export test should expose one texture");
+
+        if (contents && !contents->entries.empty())
+        {
+            DagorAssetsExtractor::Export::TextureExportOptions options;
+            options.outputDir = outputDir;
+            options.gameRoot = tempDir;
+            options.format = "TGA";
+            options.overwrite = false;
+
+            DagorAssetsExtractor::Export::TextureExportResult result =
+                DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
+
+            ok &= Expect(result.success, "TextureExporter should export readable TGA output");
+            ok &= Expect(result.outputPath.extension() == ".tga", "Readable TGA export should produce a .tga file");
+            ok &= Expect(fs::exists(result.outputPath), "Readable TGA export should create the TGA output");
+
+            if (fs::exists(result.outputPath))
+            {
+                std::ifstream tga(result.outputPath, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(tga)), std::istreambuf_iterator<char>());
+                ok &= Expect(bytes.size() == 20, "Readable TGA export should contain an 18-byte header plus 2 bytes of grayscale pixels");
+                ok &= Expect(bytes.size() >= 18 && bytes[2] == 3, "Readable TGA export should use the grayscale image type");
+                ok &= Expect(bytes.size() >= 18 && bytes[16] == 8, "Readable TGA export should use 8 bits per pixel for grayscale data");
+            }
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    bool TestTextureExporterReadableBc1TgaExport()
+    {
+        bool ok = true;
+
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TextureBc1TgaExportTest_" + std::to_string(stamp));
+        const fs::path packPath = tempDir / "synthetic_textures_bc1_tga.dxp.bin";
+        const fs::path outputDir = tempDir / "out";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp BC1 TGA texture export test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        auto put16 = [](std::vector<uint8_t>& data, size_t offset, uint16_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        };
+        auto put32 = [](std::vector<uint8_t>& data, size_t offset, uint32_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
+
+        std::vector<uint8_t> data(0xC8, 0);
+        data[0] = 'D'; data[1] = 'x'; data[2] = 'P'; data[3] = '2';
+        put16(data, 0x8, 1);
+        put32(data, 0x20, 0x60);
+        put32(data, 0x30, 0x80);
+
+        const std::string textureName = "bc1/readable_tga";
+        std::copy(textureName.begin(), textureName.end(), data.begin() + 0x48);
+
+        data[0x70] = 0x44; data[0x71] = 0x44; data[0x72] = 0x53; data[0x73] = 0x78;
+        put32(data, 0x74, 827611204); // DXT1
+        put16(data, 0x7C, 4);
+        put16(data, 0x7E, 4);
+        data[0x80] = 1;
+        put16(data, 0x82, 1);
+        put16(data, 0x84, 4);
+        put32(data, 0x88, 8);
+        put32(data, 0x8C, 0);
+
+        put32(data, 0x9C, 0xB0);
+        put32(data, 0xA0, 8);
+        data[0xB0] = 0x00; data[0xB1] = 0xF8; // red 565
+        data[0xB2] = 0xE0; data[0xB3] = 0x07; // green 565
+        data[0xB4] = 0x00; data[0xB5] = 0x00; data[0xB6] = 0x00; data[0xB7] = 0x00; // all pixels use color 0
+
+        {
+            std::ofstream pack(packPath, std::ios::binary);
+            pack.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> contents = AssetIndex::ParseDxpContents(packPath);
+        ok &= Expect(contents != nullptr, "BC1 TGA export test should parse pack contents");
+        ok &= Expect(contents && contents->error.empty(), "BC1 TGA export test should parse without DXP errors");
+        ok &= Expect(contents && contents->entries.size() == 1, "BC1 TGA export test should expose one texture");
+
+        if (contents && !contents->entries.empty())
+        {
+            DagorAssetsExtractor::Export::TextureExportOptions options;
+            options.outputDir = outputDir;
+            options.gameRoot = tempDir;
+            options.format = "TGA";
+            options.overwrite = false;
+
+            DagorAssetsExtractor::Export::TextureExportResult result =
+                DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
+
+            ok &= Expect(result.success, "TextureExporter should export readable BC1 TGA output");
+            ok &= Expect(result.outputPath.extension() == ".tga", "Readable BC1 TGA export should produce a .tga file");
+            ok &= Expect(fs::exists(result.outputPath), "Readable BC1 TGA export should create the TGA output");
+
+            if (fs::exists(result.outputPath))
+            {
+                std::ifstream tga(result.outputPath, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(tga)), std::istreambuf_iterator<char>());
+                ok &= Expect(bytes.size() == 82, "Readable BC1 TGA export should contain an 18-byte header plus 16 BGRA pixels");
+                ok &= Expect(bytes.size() >= 18 && bytes[2] == 2, "Readable BC1 TGA export should use the true-color image type");
+                ok &= Expect(bytes.size() >= 22 &&
+                    bytes[18] == 0x00 && bytes[19] == 0x00 && bytes[20] == 0xFF && bytes[21] == 0xFF,
+                    "Readable BC1 TGA export should decode the first pixel to opaque red BGRA");
+            }
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    bool TestTextureExporterReadableBc5TgaExport()
+    {
+        bool ok = true;
+
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TextureBc5TgaExportTest_" + std::to_string(stamp));
+        const fs::path packPath = tempDir / "synthetic_textures_bc5_tga.dxp.bin";
+        const fs::path outputDir = tempDir / "out";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp BC5 TGA texture export test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        auto put16 = [](std::vector<uint8_t>& data, size_t offset, uint16_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        };
+        auto put32 = [](std::vector<uint8_t>& data, size_t offset, uint32_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
+
+        std::vector<uint8_t> data(0xD0, 0);
+        data[0] = 'D'; data[1] = 'x'; data[2] = 'P'; data[3] = '2';
+        put16(data, 0x8, 1);
+        put32(data, 0x20, 0x60);
+        put32(data, 0x30, 0x80);
+
+        const std::string textureName = "bc5/readable_tga";
+        std::copy(textureName.begin(), textureName.end(), data.begin() + 0x48);
+
+        data[0x70] = 0x44; data[0x71] = 0x44; data[0x72] = 0x53; data[0x73] = 0x78;
+        put32(data, 0x74, 83); // BC5_UNORM
+        put16(data, 0x7C, 4);
+        put16(data, 0x7E, 4);
+        data[0x80] = 1;
+        put16(data, 0x82, 1);
+        put16(data, 0x84, 16);
+        put32(data, 0x88, 16);
+        put32(data, 0x8C, 0);
+
+        put32(data, 0x9C, 0xB0);
+        put32(data, 0xA0, 16);
+
+        data[0xB0] = 0xFF; data[0xB1] = 0x00; // red channel block endpoints
+        data[0xB8] = 0x80; data[0xB9] = 0x00; // green channel block endpoints
+
+        {
+            std::ofstream pack(packPath, std::ios::binary);
+            pack.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> contents = AssetIndex::ParseDxpContents(packPath);
+        ok &= Expect(contents != nullptr, "BC5 TGA export test should parse pack contents");
+        ok &= Expect(contents && contents->error.empty(), "BC5 TGA export test should parse without DXP errors");
+        ok &= Expect(contents && contents->entries.size() == 1, "BC5 TGA export test should expose one texture");
+
+        if (contents && !contents->entries.empty())
+        {
+            DagorAssetsExtractor::Export::TextureExportOptions options;
+            options.outputDir = outputDir;
+            options.gameRoot = tempDir;
+            options.format = "TGA";
+            options.overwrite = false;
+
+            DagorAssetsExtractor::Export::TextureExportResult result =
+                DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
+
+            ok &= Expect(result.success, "TextureExporter should export readable BC5 TGA output");
+            ok &= Expect(result.outputPath.extension() == ".tga", "Readable BC5 TGA export should produce a .tga file");
+            ok &= Expect(fs::exists(result.outputPath), "Readable BC5 TGA export should create the TGA output");
+
+            if (fs::exists(result.outputPath))
+            {
+                std::ifstream tga(result.outputPath, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(tga)), std::istreambuf_iterator<char>());
+                ok &= Expect(bytes.size() == 82, "Readable BC5 TGA export should contain an 18-byte header plus 16 BGRA pixels");
+                ok &= Expect(bytes.size() >= 22 &&
+                    bytes[18] == 0x00 && bytes[19] == 0x80 && bytes[20] == 0xFF && bytes[21] == 0xFF,
+                    "Readable BC5 TGA export should decode RG data into the first pixel");
+            }
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    bool TestTextureExporterReadableFallbackToDds()
+    {
+        bool ok = true;
+
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TextureFallbackTest_" + std::to_string(stamp));
+        const fs::path packPath = tempDir / "synthetic_textures_fallback.dxp.bin";
+        const fs::path outputDir = tempDir / "out";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp DDS fallback test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        auto put16 = [](std::vector<uint8_t>& data, size_t offset, uint16_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        };
+        auto put32 = [](std::vector<uint8_t>& data, size_t offset, uint32_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
+
+        std::vector<uint8_t> data(0xD0, 0);
+        data[0] = 'D'; data[1] = 'x'; data[2] = 'P'; data[3] = '2';
+        put16(data, 0x8, 1);
+        put32(data, 0x20, 0x60);
+        put32(data, 0x30, 0x80);
+
+        const std::string textureName = "bc7/fallback_tex";
+        std::copy(textureName.begin(), textureName.end(), data.begin() + 0x48);
+
+        data[0x70] = 0x44; data[0x71] = 0x44; data[0x72] = 0x53; data[0x73] = 0x78;
+        put32(data, 0x74, 98); // BC7_UNORM
+        put16(data, 0x7C, 4);
+        put16(data, 0x7E, 4);
+        data[0x80] = 1;
+        put16(data, 0x82, 1);
+        put16(data, 0x84, 8);
+        put32(data, 0x88, 16);
+        put32(data, 0x8C, 0);
+
+        put32(data, 0x9C, 0xB0);
+        put32(data, 0xA0, 16);
+        data[0xB0] = 0x03; data[0xB1] = 0x10; data[0xB2] = 0x77; data[0xB3] = 0xCC;
+        data[0xB4] = 0x55; data[0xB5] = 0xAA; data[0xB6] = 0x11; data[0xB7] = 0x22;
+        data[0xB8] = 0x33; data[0xB9] = 0x44; data[0xBA] = 0x99; data[0xBB] = 0x88;
+        data[0xBC] = 0xFE; data[0xBD] = 0xDC; data[0xBE] = 0xBA; data[0xBF] = 0x98;
+
+        {
+            std::ofstream pack(packPath, std::ios::binary);
+            pack.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> contents = AssetIndex::ParseDxpContents(packPath);
+        ok &= Expect(contents != nullptr, "DDS fallback test should parse pack contents");
+        ok &= Expect(contents && contents->error.empty(), "DDS fallback test should parse without DXP errors");
+        ok &= Expect(contents && contents->entries.size() == 1, "DDS fallback test should expose one texture");
+
+        if (contents && !contents->entries.empty())
+        {
+            DagorAssetsExtractor::Export::TextureExportOptions options;
+            options.outputDir = outputDir;
+            options.gameRoot = tempDir;
+            options.format = "PNG";
+            options.preserveOriginalDDS = true;
+            options.overwrite = false;
+
+            DagorAssetsExtractor::Export::TextureExportResult result =
+                DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
+
+            ok &= Expect(result.success, "TextureExporter should fall back to DDS when readable export is unavailable");
+            ok &= Expect(result.outputPath.extension() == ".dds", "DDS fallback should produce a .dds file");
+            ok &= Expect(fs::exists(result.outputPath), "DDS fallback should create the DDS output");
+
+            bool sawFallbackWarning = false;
+            for (const std::string& warning : result.warnings)
+            {
+                if (warning.find("Falling back to DDS") != std::string::npos)
+                {
+                    sawFallbackWarning = true;
+                    break;
+                }
+            }
+            ok &= Expect(sawFallbackWarning, "DDS fallback should report a fallback warning");
+
+            if (fs::exists(result.outputPath))
+            {
+                std::ifstream dds(result.outputPath, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(dds)), std::istreambuf_iterator<char>());
+                ok &= Expect(bytes.size() >= 4 && bytes[0] == 'D' && bytes[1] == 'D' && bytes[2] == 'S' && bytes[3] == ' ',
+                    "DDS fallback output should start with DDS magic");
+            }
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
     bool TestTextureExporterMissingOodleFallback()
     {
         bool ok = true;
@@ -1764,6 +2246,11 @@ int main(int argc, char** argv)
     ok &= Expect(TestExportManifest(), "ExportManifest tests should pass");
     ok &= Expect(TestTextureExporterDX10(), "TextureExporter DX10 tests should pass");
     ok &= Expect(TestTextureExporterDxpPayloadExport(), "TextureExporter DXP payload export test should pass");
+    ok &= Expect(TestTextureExporterReadablePngExport(), "TextureExporter readable PNG export test should pass");
+    ok &= Expect(TestTextureExporterReadableTgaExport(), "TextureExporter readable TGA export test should pass");
+    ok &= Expect(TestTextureExporterReadableBc1TgaExport(), "TextureExporter readable BC1 TGA export test should pass");
+    ok &= Expect(TestTextureExporterReadableBc5TgaExport(), "TextureExporter readable BC5 TGA export test should pass");
+    ok &= Expect(TestTextureExporterReadableFallbackToDds(), "TextureExporter readable export fallback test should pass");
     ok &= Expect(TestTextureExporterMissingOodleFallback(), "TextureExporter missing-Oodle fallback test should pass");
     ok &= Expect(TestRendInstParsingAndExport(), "RendInst geometry parsing and GLB/OBJ export tests should pass");
     ok &= Expect(TestMultiMaterialModelExport(), "Multi-material model export test should pass");

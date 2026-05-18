@@ -4,6 +4,9 @@
 #include "Export/ExportManifest.h"
 #include "DagorIO/Decompression.h"
 
+#include <objbase.h>
+#include <wincodec.h>
+
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -13,6 +16,9 @@
 #include <iomanip>
 #include <limits>
 #include <string_view>
+
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 namespace DagorAssetsExtractor::Export
 {
@@ -65,8 +71,61 @@ namespace DagorAssetsExtractor::Export
         uint32_t reserved2 = 0;
     };
 
+    enum class RasterPixelFormat
+    {
+        Gray8,
+        Bgra8,
+    };
+
+    struct RasterImage
+    {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t stride = 0;
+        RasterPixelFormat format = RasterPixelFormat::Bgra8;
+        std::vector<uint8_t> pixels;
+    };
+
+    struct BgraColor
+    {
+        uint8_t b = 0;
+        uint8_t g = 0;
+        uint8_t r = 0;
+        uint8_t a = 255;
+    };
+
     namespace
     {
+        class ScopedComInitializer
+        {
+        public:
+            ScopedComInitializer()
+                : m_result(CoInitializeEx(nullptr, COINIT_MULTITHREADED))
+            {
+            }
+
+            ~ScopedComInitializer()
+            {
+                if (SUCCEEDED(m_result))
+                {
+                    CoUninitialize();
+                }
+            }
+
+            [[nodiscard]] bool IsReady() const
+            {
+                return SUCCEEDED(m_result) || m_result == RPC_E_CHANGED_MODE;
+            }
+
+            [[nodiscard]] HRESULT Result() const
+            {
+                return m_result;
+            }
+
+        private:
+            HRESULT m_result = E_FAIL;
+        };
+
         bool IsPathSeparator(char ch)
         {
             return ch == '/' || ch == '\\';
@@ -94,6 +153,456 @@ namespace DagorAssetsExtractor::Export
                 }
             }
             return upper;
+        }
+
+        std::string NormalizeTextureFormat(std::string_view value)
+        {
+            const std::string upper = ToUpperAscii(value);
+            if (upper == "PNG" || upper == "TGA")
+            {
+                return upper;
+            }
+
+            return "DDS";
+        }
+
+        std::string_view TextureFormatExtension(std::string_view normalizedFormat)
+        {
+            if (normalizedFormat == "PNG")
+            {
+                return ".png";
+            }
+
+            if (normalizedFormat == "TGA")
+            {
+                return ".tga";
+            }
+
+            return ".dds";
+        }
+
+        uint16_t ReadUInt16LE(const uint8_t* data)
+        {
+            return static_cast<uint16_t>(data[0]) |
+                (static_cast<uint16_t>(data[1]) << 8);
+        }
+
+        uint32_t ReadUInt32LE(const uint8_t* data)
+        {
+            return static_cast<uint32_t>(data[0]) |
+                (static_cast<uint32_t>(data[1]) << 8) |
+                (static_cast<uint32_t>(data[2]) << 16) |
+                (static_cast<uint32_t>(data[3]) << 24);
+        }
+
+        uint64_t ReadUInt48LE(const uint8_t* data)
+        {
+            uint64_t value = 0;
+            for (size_t i = 0; i < 6; ++i)
+            {
+                value |= static_cast<uint64_t>(data[i]) << (8 * i);
+            }
+            return value;
+        }
+
+        uint8_t Expand5To8(uint32_t value)
+        {
+            return static_cast<uint8_t>((value << 3) | (value >> 2));
+        }
+
+        uint8_t Expand6To8(uint32_t value)
+        {
+            return static_cast<uint8_t>((value << 2) | (value >> 4));
+        }
+
+        uint8_t NormalizeSnorm8ToUnormByte(int value)
+        {
+            const int clamped = std::clamp(value, -127, 127);
+            const int mapped = ((clamped + 127) * 255 + 127) / 254;
+            return static_cast<uint8_t>(std::clamp(mapped, 0, 255));
+        }
+
+        uint8_t InterpolateByte(uint8_t a, uint8_t b, uint32_t aWeight, uint32_t bWeight, uint32_t divisor)
+        {
+            return static_cast<uint8_t>(
+                (static_cast<uint32_t>(a) * aWeight + static_cast<uint32_t>(b) * bWeight) / divisor);
+        }
+
+        int InterpolateSigned(int a, int b, int aWeight, int bWeight, int divisor)
+        {
+            return (a * aWeight + b * bWeight) / divisor;
+        }
+
+        BgraColor DecodeRgb565(uint16_t value)
+        {
+            BgraColor color;
+            color.b = Expand5To8(value & 0x1F);
+            color.g = Expand6To8((value >> 5) & 0x3F);
+            color.r = Expand5To8((value >> 11) & 0x1F);
+            color.a = 255;
+            return color;
+        }
+
+        BgraColor MixColor(const BgraColor& a, const BgraColor& b, uint32_t aWeight, uint32_t bWeight, uint32_t divisor)
+        {
+            return BgraColor{
+                InterpolateByte(a.b, b.b, aWeight, bWeight, divisor),
+                InterpolateByte(a.g, b.g, aWeight, bWeight, divisor),
+                InterpolateByte(a.r, b.r, aWeight, bWeight, divisor),
+                InterpolateByte(a.a, b.a, aWeight, bWeight, divisor)
+            };
+        }
+
+        void WriteBgraPixel(RasterImage& image, uint32_t x, uint32_t y, const BgraColor& color)
+        {
+            const size_t offset = static_cast<size_t>(y) * image.stride + static_cast<size_t>(x) * 4;
+            image.pixels[offset + 0] = color.b;
+            image.pixels[offset + 1] = color.g;
+            image.pixels[offset + 2] = color.r;
+            image.pixels[offset + 3] = color.a;
+        }
+
+        void WriteGrayPixel(RasterImage& image, uint32_t x, uint32_t y, uint8_t value)
+        {
+            const size_t offset = static_cast<size_t>(y) * image.stride + x;
+            image.pixels[offset] = value;
+        }
+
+        void BuildBc1Palette(uint16_t color0, uint16_t color1, bool allowTransparent, BgraColor palette[4])
+        {
+            palette[0] = DecodeRgb565(color0);
+            palette[1] = DecodeRgb565(color1);
+
+            if (allowTransparent && color0 <= color1)
+            {
+                palette[2] = MixColor(palette[0], palette[1], 1, 1, 2);
+                palette[3] = BgraColor{ 0, 0, 0, 0 };
+                return;
+            }
+
+            palette[2] = MixColor(palette[0], palette[1], 2, 1, 3);
+            palette[3] = MixColor(palette[0], palette[1], 1, 2, 3);
+        }
+
+        void DecodeBc4UnormValues(const uint8_t* block, uint8_t values[16])
+        {
+            uint8_t palette[8] = {};
+            palette[0] = block[0];
+            palette[1] = block[1];
+
+            if (palette[0] > palette[1])
+            {
+                for (int i = 1; i <= 6; ++i)
+                {
+                    palette[i + 1] = static_cast<uint8_t>(
+                        ((7 - i) * static_cast<uint32_t>(palette[0]) + i * static_cast<uint32_t>(palette[1])) / 7);
+                }
+            }
+            else
+            {
+                for (int i = 1; i <= 4; ++i)
+                {
+                    palette[i + 1] = static_cast<uint8_t>(
+                        ((5 - i) * static_cast<uint32_t>(palette[0]) + i * static_cast<uint32_t>(palette[1])) / 5);
+                }
+                palette[6] = 0;
+                palette[7] = 255;
+            }
+
+            const uint64_t indices = ReadUInt48LE(block + 2);
+            for (int i = 0; i < 16; ++i)
+            {
+                values[i] = palette[(indices >> (i * 3)) & 0x7];
+            }
+        }
+
+        void DecodeBc4SnormValues(const uint8_t* block, uint8_t values[16])
+        {
+            int palette[8] = {};
+            palette[0] = static_cast<int>(static_cast<int8_t>(block[0]));
+            palette[1] = static_cast<int>(static_cast<int8_t>(block[1]));
+            if (palette[0] == -128) palette[0] = -127;
+            if (palette[1] == -128) palette[1] = -127;
+
+            if (palette[0] > palette[1])
+            {
+                for (int i = 1; i <= 6; ++i)
+                {
+                    palette[i + 1] = InterpolateSigned(palette[0], palette[1], 7 - i, i, 7);
+                }
+            }
+            else
+            {
+                for (int i = 1; i <= 4; ++i)
+                {
+                    palette[i + 1] = InterpolateSigned(palette[0], palette[1], 5 - i, i, 5);
+                }
+                palette[6] = -127;
+                palette[7] = 127;
+            }
+
+            const uint64_t indices = ReadUInt48LE(block + 2);
+            for (int i = 0; i < 16; ++i)
+            {
+                values[i] = NormalizeSnorm8ToUnormByte(palette[(indices >> (i * 3)) & 0x7]);
+            }
+        }
+
+        void DecodeBcColorIndices(
+            const uint8_t* block,
+            RasterImage& image,
+            uint32_t blockX,
+            uint32_t blockY,
+            const BgraColor palette[4],
+            const uint8_t* alphaValues = nullptr)
+        {
+            const uint32_t indices = ReadUInt32LE(block + 4);
+            for (uint32_t py = 0; py < 4; ++py)
+            {
+                const uint32_t y = blockY * 4 + py;
+                if (y >= image.height)
+                {
+                    continue;
+                }
+
+                for (uint32_t px = 0; px < 4; ++px)
+                {
+                    const uint32_t x = blockX * 4 + px;
+                    if (x >= image.width)
+                    {
+                        continue;
+                    }
+
+                    const uint32_t pixelIndex = py * 4 + px;
+                    BgraColor color = palette[(indices >> (pixelIndex * 2)) & 0x3];
+                    if (alphaValues)
+                    {
+                        color.a = alphaValues[pixelIndex];
+                    }
+                    WriteBgraPixel(image, x, y, color);
+                }
+            }
+        }
+
+        bool DecodeBlockCompressedTopMip(
+            const DagorFormats::DdsxHeader& header,
+            std::span<const uint8_t> topMip,
+            RasterImage& image,
+            std::string& error)
+        {
+            enum class BcMode
+            {
+                Bc1,
+                Bc2,
+                Bc3,
+                Bc4Unorm,
+                Bc4Snorm,
+                Bc5Unorm,
+                Bc5Snorm,
+            };
+
+            BcMode mode = BcMode::Bc1;
+            size_t blockBytes = 0;
+            bool grayOutput = false;
+
+            switch (header.d3dFormat)
+            {
+            case 827611204: // DXT1
+            case 71: case 72: // BC1
+                mode = BcMode::Bc1;
+                blockBytes = 8;
+                break;
+
+            case 861165636: // DXT3
+            case 74: case 75: // BC2
+                mode = BcMode::Bc2;
+                blockBytes = 16;
+                break;
+
+            case 894720068: // DXT5
+            case 77: case 78: // BC3
+                mode = BcMode::Bc3;
+                blockBytes = 16;
+                break;
+
+            case 826889281: // ATI1
+            case 80: // BC4_UNORM
+                mode = BcMode::Bc4Unorm;
+                blockBytes = 8;
+                grayOutput = true;
+                break;
+
+            case 81: // BC4_SNORM
+                mode = BcMode::Bc4Snorm;
+                blockBytes = 8;
+                grayOutput = true;
+                break;
+
+            case 843666497: // ATI2
+            case 83: // BC5_UNORM
+                mode = BcMode::Bc5Unorm;
+                blockBytes = 16;
+                break;
+
+            case 84: // BC5_SNORM
+                mode = BcMode::Bc5Snorm;
+                blockBytes = 16;
+                break;
+
+            default:
+                error = "Readable PNG/TGA export does not support DDSx format code " +
+                    std::to_string(header.d3dFormat) + " (" + std::string(header.FormatName()) + ").";
+                return false;
+            }
+
+            const uint32_t blocksWide = std::max<uint32_t>(1, (static_cast<uint32_t>(header.width) + 3) / 4);
+            const uint32_t blocksHigh = std::max<uint32_t>(1, (static_cast<uint32_t>(header.height) + 3) / 4);
+            const size_t expectedBytes = static_cast<size_t>(blocksWide) * static_cast<size_t>(blocksHigh) * blockBytes;
+            if (topMip.size() < expectedBytes)
+            {
+                error = "DDS payload does not contain enough top-mip block data for readable export.";
+                return false;
+            }
+
+            image.format = grayOutput ? RasterPixelFormat::Gray8 : RasterPixelFormat::Bgra8;
+            image.stride = grayOutput ? header.width : header.width * 4;
+            image.pixels.assign(static_cast<size_t>(image.stride) * image.height, 0);
+
+            for (uint32_t blockY = 0; blockY < blocksHigh; ++blockY)
+            {
+                for (uint32_t blockX = 0; blockX < blocksWide; ++blockX)
+                {
+                    const size_t blockIndex = static_cast<size_t>(blockY) * blocksWide + blockX;
+                    const uint8_t* block = topMip.data() + blockIndex * blockBytes;
+
+                    switch (mode)
+                    {
+                    case BcMode::Bc1:
+                    {
+                        BgraColor palette[4] = {};
+                        BuildBc1Palette(ReadUInt16LE(block), ReadUInt16LE(block + 2), true, palette);
+                        DecodeBcColorIndices(block, image, blockX, blockY, palette);
+                        break;
+                    }
+
+                    case BcMode::Bc2:
+                    {
+                        uint8_t alphaValues[16] = {};
+                        const uint64_t alphaBits = static_cast<uint64_t>(ReadUInt32LE(block)) |
+                            (static_cast<uint64_t>(ReadUInt32LE(block + 4)) << 32);
+                        for (int i = 0; i < 16; ++i)
+                        {
+                            alphaValues[i] = static_cast<uint8_t>(((alphaBits >> (i * 4)) & 0xF) * 17);
+                        }
+
+                        BgraColor palette[4] = {};
+                        BuildBc1Palette(ReadUInt16LE(block + 8), ReadUInt16LE(block + 10), false, palette);
+                        DecodeBcColorIndices(block + 8, image, blockX, blockY, palette, alphaValues);
+                        break;
+                    }
+
+                    case BcMode::Bc3:
+                    {
+                        uint8_t alphaValues[16] = {};
+                        DecodeBc4UnormValues(block, alphaValues);
+
+                        BgraColor palette[4] = {};
+                        BuildBc1Palette(ReadUInt16LE(block + 8), ReadUInt16LE(block + 10), false, palette);
+                        DecodeBcColorIndices(block + 8, image, blockX, blockY, palette, alphaValues);
+                        break;
+                    }
+
+                    case BcMode::Bc4Unorm:
+                    case BcMode::Bc4Snorm:
+                    {
+                        uint8_t grayValues[16] = {};
+                        if (mode == BcMode::Bc4Unorm)
+                        {
+                            DecodeBc4UnormValues(block, grayValues);
+                        }
+                        else
+                        {
+                            DecodeBc4SnormValues(block, grayValues);
+                        }
+
+                        for (uint32_t py = 0; py < 4; ++py)
+                        {
+                            const uint32_t y = blockY * 4 + py;
+                            if (y >= image.height)
+                            {
+                                continue;
+                            }
+
+                            for (uint32_t px = 0; px < 4; ++px)
+                            {
+                                const uint32_t x = blockX * 4 + px;
+                                if (x >= image.width)
+                                {
+                                    continue;
+                                }
+
+                                WriteGrayPixel(image, x, y, grayValues[py * 4 + px]);
+                            }
+                        }
+                        break;
+                    }
+
+                    case BcMode::Bc5Unorm:
+                    case BcMode::Bc5Snorm:
+                    {
+                        uint8_t redValues[16] = {};
+                        uint8_t greenValues[16] = {};
+                        if (mode == BcMode::Bc5Unorm)
+                        {
+                            DecodeBc4UnormValues(block, redValues);
+                            DecodeBc4UnormValues(block + 8, greenValues);
+                        }
+                        else
+                        {
+                            DecodeBc4SnormValues(block, redValues);
+                            DecodeBc4SnormValues(block + 8, greenValues);
+                        }
+
+                        for (uint32_t py = 0; py < 4; ++py)
+                        {
+                            const uint32_t y = blockY * 4 + py;
+                            if (y >= image.height)
+                            {
+                                continue;
+                            }
+
+                            for (uint32_t px = 0; px < 4; ++px)
+                            {
+                                const uint32_t x = blockX * 4 + px;
+                                if (x >= image.width)
+                                {
+                                    continue;
+                                }
+
+                                const uint32_t pixelIndex = py * 4 + px;
+                                WriteBgraPixel(image, x, y, BgraColor{
+                                    0,
+                                    greenValues[pixelIndex],
+                                    redValues[pixelIndex],
+                                    255
+                                });
+                            }
+                        }
+                        break;
+                    }
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        std::string FormatHresult(HRESULT value)
+        {
+            std::ostringstream out;
+            out << "0x" << std::uppercase << std::hex << std::setw(8) << std::setfill('0')
+                << static_cast<uint32_t>(value);
+            return out.str();
         }
 
         bool IsReservedWindowsName(std::string_view segment)
@@ -451,6 +960,292 @@ namespace DagorAssetsExtractor::Export
             return out.str();
         }
 
+        bool DecodeTopMipToRaster(
+            const DagorFormats::DdsxHeader& header,
+            const std::vector<uint8_t>& payload,
+            RasterImage& image,
+            std::string& error)
+        {
+            size_t topMipBytes = 0;
+            size_t totalBytes = 0;
+            if (!CalculateDdsPayloadSize(header, totalBytes, &topMipBytes))
+            {
+                error = "Readable PNG/TGA export does not support DDSx format code " +
+                    std::to_string(header.d3dFormat) + " (" + std::string(header.FormatName()) + ").";
+                return false;
+            }
+
+            if (payload.size() < topMipBytes)
+            {
+                error = "DDS payload does not contain the full top mip for readable export.";
+                return false;
+            }
+
+            const size_t pixelCount = static_cast<size_t>(header.width) * static_cast<size_t>(header.height);
+            image.width = header.width;
+            image.height = header.height;
+
+            switch (header.d3dFormat)
+            {
+            case 827611204:
+            case 861165636:
+            case 894720068:
+            case 826889281:
+            case 843666497:
+            case 71: case 72:
+            case 74: case 75:
+            case 77: case 78:
+            case 80: case 81:
+            case 83: case 84:
+                return DecodeBlockCompressedTopMip(
+                    header,
+                    std::span<const uint8_t>(payload.data(), topMipBytes),
+                    image,
+                    error);
+
+            case 28:
+            case 29:
+            {
+                image.format = RasterPixelFormat::Bgra8;
+                image.stride = header.width * 4;
+                image.pixels.resize(pixelCount * 4);
+                for (size_t i = 0; i < pixelCount; ++i)
+                {
+                    const size_t src = i * 4;
+                    image.pixels[src + 0] = payload[src + 2];
+                    image.pixels[src + 1] = payload[src + 1];
+                    image.pixels[src + 2] = payload[src + 0];
+                    image.pixels[src + 3] = payload[src + 3];
+                }
+                return true;
+            }
+
+            case 87:
+            case 91:
+                image.format = RasterPixelFormat::Bgra8;
+                image.stride = header.width * 4;
+                image.pixels.assign(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(topMipBytes));
+                return true;
+
+            case 61:
+                image.format = RasterPixelFormat::Gray8;
+                image.stride = header.width;
+                image.pixels.assign(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(topMipBytes));
+                return true;
+
+            case 49:
+                image.format = RasterPixelFormat::Bgra8;
+                image.stride = header.width * 4;
+                image.pixels.resize(pixelCount * 4);
+                for (size_t i = 0; i < pixelCount; ++i)
+                {
+                    const size_t src = i * 2;
+                    const size_t dst = i * 4;
+                    image.pixels[dst + 0] = 0;
+                    image.pixels[dst + 1] = payload[src + 1];
+                    image.pixels[dst + 2] = payload[src + 0];
+                    image.pixels[dst + 3] = 255;
+                }
+                return true;
+
+            default:
+                error = "Readable PNG/TGA export currently supports BC1-BC5 plus uncompressed R8, R8G8, RGBA8, and BGRA8 DDSx textures only. "
+                    "This texture is " + std::string(header.FormatName()) + " (format code " + std::to_string(header.d3dFormat) + ").";
+                return false;
+            }
+        }
+
+        bool WritePng(const std::filesystem::path& outputPath, const RasterImage& image, std::string& error)
+        {
+            ScopedComInitializer com;
+            if (!com.IsReady())
+            {
+                error = "Could not initialize COM for PNG export (" + FormatHresult(com.Result()) + ").";
+                return false;
+            }
+
+            IWICImagingFactory* factory = nullptr;
+            IWICStream* stream = nullptr;
+            IWICBitmapEncoder* encoder = nullptr;
+            IWICBitmapFrameEncode* frame = nullptr;
+            IPropertyBag2* properties = nullptr;
+
+            auto releaseAll = [&]() {
+                if (properties) properties->Release();
+                if (frame) frame->Release();
+                if (encoder) encoder->Release();
+                if (stream) stream->Release();
+                if (factory) factory->Release();
+            };
+
+            const HRESULT factoryHr = CoCreateInstance(
+                CLSID_WICImagingFactory,
+                nullptr,
+                CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&factory));
+            if (FAILED(factoryHr))
+            {
+                error = "Could not create the WIC imaging factory (" + FormatHresult(factoryHr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            HRESULT hr = factory->CreateStream(&stream);
+            if (FAILED(hr))
+            {
+                error = "Could not create the WIC output stream (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = stream->InitializeFromFilename(outputPath.c_str(), GENERIC_WRITE);
+            if (FAILED(hr))
+            {
+                error = "Could not open the PNG output path (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
+            if (FAILED(hr))
+            {
+                error = "Could not create the PNG encoder (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
+            if (FAILED(hr))
+            {
+                error = "Could not initialize the PNG encoder (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = encoder->CreateNewFrame(&frame, &properties);
+            if (FAILED(hr))
+            {
+                error = "Could not create the PNG frame (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = frame->Initialize(properties);
+            if (FAILED(hr))
+            {
+                error = "Could not initialize the PNG frame (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = frame->SetSize(image.width, image.height);
+            if (FAILED(hr))
+            {
+                error = "Could not set the PNG frame size (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            WICPixelFormatGUID pixelFormat = image.format == RasterPixelFormat::Gray8
+                ? GUID_WICPixelFormat8bppGray
+                : GUID_WICPixelFormat32bppBGRA;
+            const WICPixelFormatGUID expectedPixelFormat = pixelFormat;
+            hr = frame->SetPixelFormat(&pixelFormat);
+            if (FAILED(hr))
+            {
+                error = "Could not set the PNG pixel format (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            if (!IsEqualGUID(pixelFormat, expectedPixelFormat))
+            {
+                error = "The PNG encoder rejected the requested pixel format.";
+                releaseAll();
+                return false;
+            }
+
+            hr = frame->WritePixels(
+                image.height,
+                image.stride,
+                static_cast<UINT>(image.pixels.size()),
+                const_cast<BYTE*>(image.pixels.data()));
+            if (FAILED(hr))
+            {
+                error = "Failed while writing PNG pixels (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = frame->Commit();
+            if (FAILED(hr))
+            {
+                error = "Failed to finalize the PNG frame (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = encoder->Commit();
+            if (FAILED(hr))
+            {
+                error = "Failed to finalize the PNG file (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            releaseAll();
+            return true;
+        }
+
+        bool WriteTga(const std::filesystem::path& outputPath, const RasterImage& image, std::string& error)
+        {
+            std::ofstream out(outputPath, std::ios::binary);
+            if (!out)
+            {
+                error = "Could not open output file for TGA writing.";
+                return false;
+            }
+
+            uint8_t header[18] = {};
+            header[2] = image.format == RasterPixelFormat::Gray8 ? 3 : 2;
+            header[12] = static_cast<uint8_t>(image.width & 0xFF);
+            header[13] = static_cast<uint8_t>((image.width >> 8) & 0xFF);
+            header[14] = static_cast<uint8_t>(image.height & 0xFF);
+            header[15] = static_cast<uint8_t>((image.height >> 8) & 0xFF);
+            header[16] = image.format == RasterPixelFormat::Gray8 ? 8 : 32;
+            header[17] = image.format == RasterPixelFormat::Gray8 ? 0x20 : 0x28;
+
+            out.write(reinterpret_cast<const char*>(header), sizeof(header));
+            out.write(reinterpret_cast<const char*>(image.pixels.data()), static_cast<std::streamsize>(image.pixels.size()));
+            if (!out)
+            {
+                error = "Failed while writing TGA output.";
+                return false;
+            }
+
+            return true;
+        }
+
+        bool WriteReadableImage(
+            const std::filesystem::path& outputPath,
+            const RasterImage& image,
+            std::string_view normalizedFormat,
+            std::string& error)
+        {
+            if (normalizedFormat == "PNG")
+            {
+                return WritePng(outputPath, image, error);
+            }
+
+            if (normalizedFormat == "TGA")
+            {
+                return WriteTga(outputPath, image, error);
+            }
+
+            error = "Unsupported readable image export format: " + std::string(normalizedFormat);
+            return false;
+        }
+
         bool WriteRawDdsx(
             const std::filesystem::path& outputPath,
             std::span<const uint8_t> header,
@@ -754,19 +1549,98 @@ namespace DagorAssetsExtractor::Export
                     std::to_string(header.d3dFormat) + ".");
             }
 
-            // Prepare output path
-            std::filesystem::path outputPath = BuildSafeOutputPath(options.outputDir, entry.name, ".dds");
-            std::error_code ec;
-            std::filesystem::create_directories(outputPath.parent_path(), ec);
-            if (ec)
+            const std::string normalizedFormat = NormalizeTextureFormat(options.format);
+
+            auto prepareOutputPath = [&](std::string_view extension, std::filesystem::path& outputPath) -> bool
             {
-                result.error = "Could not create output directory: " + ec.message();
-                return result;
+                outputPath = BuildSafeOutputPath(options.outputDir, entry.name, extension);
+                std::error_code ec;
+                std::filesystem::create_directories(outputPath.parent_path(), ec);
+                if (ec)
+                {
+                    result.error = "Could not create output directory: " + ec.message();
+                    return false;
+                }
+
+                if (!options.overwrite && std::filesystem::exists(outputPath))
+                {
+                    result.error = "Output file already exists: " + Platform::PathToUtf8(outputPath);
+                    return false;
+                }
+
+                return true;
+            };
+
+            if (normalizedFormat != "DDS")
+            {
+                RasterImage image;
+                std::string readableError;
+                if (DecodeTopMipToRaster(header, payload, image, readableError))
+                {
+                    std::filesystem::path outputPath;
+                    if (!prepareOutputPath(TextureFormatExtension(normalizedFormat), outputPath))
+                    {
+                        return result;
+                    }
+
+                    if (WriteReadableImage(outputPath, image, normalizedFormat, readableError))
+                    {
+                        result.success = true;
+                        result.outputPath = outputPath;
+
+                        if (header.mipCount > 1)
+                        {
+                            result.warnings.push_back(std::string(normalizedFormat) + " export writes only the top mip level.");
+                        }
+
+                        ExportManifest manifest;
+                        manifest.sourcePack = Platform::PathToUtf8(packPath.filename());
+                        manifest.sourceResource = entry.name;
+                        manifest.assetType = "Texture (" + normalizedFormat + ")";
+                        manifest.outputFiles.push_back(Platform::PathToUtf8(outputPath.filename()));
+                        manifest.appVersion = "0.1.0-alpha";
+                        manifest.formatDecoderVersion = "DdsxReader v1.0";
+
+                        for (const std::string& warning : result.warnings)
+                        {
+                            manifest.decodeWarnings.push_back(warning);
+                        }
+
+                        std::filesystem::path manifestPath = outputPath;
+                        manifestPath.replace_extension(".export-manifest.json");
+                        if (!manifest.WriteToFile(manifestPath))
+                        {
+                            result.warnings.push_back("Could not write export manifest.");
+                        }
+
+                        return result;
+                    }
+
+                    if (!options.preserveOriginalDDS)
+                    {
+                        result.error = readableError;
+                        return result;
+                    }
+
+                    result.warnings.push_back(
+                        "Requested " + normalizedFormat + " export failed (" + readableError + "). Falling back to DDS.");
+                }
+                else if (!options.preserveOriginalDDS)
+                {
+                    result.error = readableError;
+                    return result;
+                }
+                else
+                {
+                    result.warnings.push_back(
+                        "Requested " + normalizedFormat + " export is unavailable for this DDSx texture. " +
+                        readableError + " Falling back to DDS.");
+                }
             }
 
-            if (!options.overwrite && std::filesystem::exists(outputPath))
+            std::filesystem::path outputPath;
+            if (!prepareOutputPath(".dds", outputPath))
             {
-                result.error = "Output file already exists: " + Platform::PathToUtf8(outputPath);
                 return result;
             }
 
@@ -843,13 +1717,16 @@ namespace DagorAssetsExtractor::Export
                 continue;
             }
 
-            // Check if output already exists and overwrite is disabled
-            std::filesystem::path outputPath = options.outputDir / (entry.name + ".dds");
-            if (!options.overwrite && std::filesystem::exists(outputPath))
+            const std::string normalizedFormat = NormalizeTextureFormat(options.format);
+            if (!options.overwrite && normalizedFormat == "DDS")
             {
-                ++batch.skipped;
-                batch.warnings.push_back("Skipped existing file: " + entry.name);
-                continue;
+                const std::filesystem::path outputPath = BuildSafeOutputPath(options.outputDir, entry.name, ".dds");
+                if (std::filesystem::exists(outputPath))
+                {
+                    ++batch.skipped;
+                    batch.warnings.push_back("Skipped existing file: " + entry.name);
+                    continue;
+                }
             }
 
             TextureExportResult result = ExportTexture(packPath, entry, options);
