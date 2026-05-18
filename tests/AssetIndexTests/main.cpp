@@ -1,5 +1,6 @@
 #include "AssetIndex/AssetIndex.h"
 #include "AssetIndex/BlkRelationships.h"
+#include "AssetIndex/DependencyGraph.h"
 #include "AssetIndex/PackContents.h"
 #include "DagorIO/BinaryReader.h"
 #include "DagorFormats/VromfsReader.h"
@@ -1389,6 +1390,56 @@ namespace
 
         return ok;
     }
+
+    bool TestUnifiedModelExport()
+    {
+        bool ok = true;
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_UnifiedExportTest_" + std::to_string(stamp));
+        const fs::path glbPath = tempDir / "textured_model.glb";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+
+        // 1. Create a simple mesh
+        DagorFormats::RendInstMesh mesh;
+        mesh.name = "box";
+        mesh.vertices = {
+            { -1,-1,-1, 0,0,0, 0,0 }, { 1,-1,-1, 0,0,0, 1,0 }, { 1, 1,-1, 0,0,0, 1,1 }, { -1, 1,-1, 0,0,0, 0,1 }
+        };
+        mesh.indices = { 0, 1, 2, 0, 2, 3 };
+
+        // 2. Define materials
+        DagorAssetsExtractor::Export::MaterialInfo mat;
+        mat.name = "box_material";
+        mat.diffuseTexturePath = "box_tex.dds";
+        std::vector<DagorAssetsExtractor::Export::MaterialInfo> materials = { mat };
+
+        // 3. Export
+        DagorAssetsExtractor::Export::ExportManifest manifest;
+        manifest.sourcePack = "test.grp";
+        manifest.sourceResource = "box";
+        manifest.assetType = "RendInst Static Model";
+        manifest.textureDependencies = { "box_tex.dds" };
+
+        bool success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(glbPath, { mesh }, manifest, materials);
+        ok &= Expect(success, "Unified ExportToGlb should succeed");
+        ok &= Expect(fs::exists(glbPath), "Textured GLB should exist");
+
+        if (fs::exists(glbPath))
+        {
+            // Simple check: see if texture path is in the GLB (it's in the JSON chunk)
+            std::ifstream file(glbPath, std::ios::binary);
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            ok &= Expect(content.find("box_tex.dds") != std::string::npos, "GLB should contain texture filename");
+            ok &= Expect(content.find("box_material") != std::string::npos, "GLB should contain material name");
+            ok &= Expect(content.find("\"material\": 0") != std::string::npos, "GLB mesh should refer to material 0");
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
 }
 
 int main(int argc, char** argv)
@@ -1412,6 +1463,7 @@ int main(int argc, char** argv)
     ok &= Expect(TestTextureExporterDxpPayloadExport(), "TextureExporter DXP payload export test should pass");
     ok &= Expect(TestTextureExporterMissingOodleFallback(), "TextureExporter missing-Oodle fallback test should pass");
     ok &= Expect(TestRendInstParsingAndExport(), "RendInst geometry parsing and GLB/OBJ export tests should pass");
+    ok &= Expect(TestUnifiedModelExport(), "Unified model export test should pass");
 
     const AssetIndex::ValidationResult validation = AssetIndex::ValidateGameRoot(fixtureRoot);
     ok &= Expect(validation.IsValid(), "synthetic fixture should validate as a plausible install");

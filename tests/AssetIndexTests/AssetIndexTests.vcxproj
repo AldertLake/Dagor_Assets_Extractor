@@ -90,6 +90,7 @@
     <ClCompile Include="..\..\third_party\tinfzlib.c" />
     <ClCompile Include="..\..\third_party\zstddeclib.c" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\BlkRelationships.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\DependencyGraph.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorIO\BinaryReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\VromfsReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DxpReader.cpp" />
@@ -112,6 +113,7 @@
     <ClInclude Include="..\..\third_party\zstd.h" />
     <ClInclude Include="..\..\third_party\zstd_errors.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\BlkRelationships.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\DependencyGraph.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorIO\BinaryReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\VromfsReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DxpReader.h" />

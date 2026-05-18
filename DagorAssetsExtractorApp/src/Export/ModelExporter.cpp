@@ -10,7 +10,8 @@ namespace DagorAssetsExtractor::Export
     bool ModelExporter::ExportToGlb(
         const std::filesystem::path& path,
         const std::vector<DagorFormats::RendInstMesh>& lods,
-        const ExportManifest& manifest)
+        const ExportManifest& manifest,
+        const std::vector<MaterialInfo>& materials)
     {
         if (lods.empty())
         {
@@ -149,6 +150,10 @@ namespace DagorAssetsExtractor::Export
             json << "            \"TEXCOORD_0\": " << (i * 3 + 2) << "\n";
             json << "          },\n";
             json << "          \"indices\": " << (lods.size() * 3 + i) << ",\n";
+            if (!materials.empty())
+            {
+                json << "          \"material\": 0,\n";
+            }
             json << "          \"mode\": 4\n"; // TRIANGLES
             json << "        }\n";
             json << "      ]\n";
@@ -157,6 +162,63 @@ namespace DagorAssetsExtractor::Export
             json << "\n";
         }
         json << "  ],\n";
+
+        if (!materials.empty())
+        {
+            // Materials definition
+            json << "  \"materials\": [\n";
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                json << "    {\n";
+                json << "      \"name\": \"" << materials[i].name << "\",\n";
+                json << "      \"pbrMetallicRoughness\": {\n";
+                json << "        \"baseColorTexture\": {\n";
+                json << "          \"index\": " << i << "\n";
+                json << "        },\n";
+                json << "        \"metallicFactor\": 0.0,\n";
+                json << "        \"roughnessFactor\": 1.0\n";
+                json << "      }\n";
+                json << "    }";
+                if (i + 1 < materials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            // Textures definition
+            json << "  \"textures\": [\n";
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                json << "    {\n";
+                json << "      \"sampler\": 0,\n";
+                json << "      \"source\": " << i << "\n";
+                json << "    }";
+                if (i + 1 < materials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            // Images definition
+            json << "  \"images\": [\n";
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                json << "    {\n";
+                json << "      \"uri\": \"" << materials[i].diffuseTexturePath << "\"\n";
+                json << "    }";
+                if (i + 1 < materials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            // Samplers definition
+            json << "  \"samplers\": [\n";
+            json << "    {\n";
+            json << "      \"magFilter\": 9729,\n"; // LINEAR
+            json << "      \"minFilter\": 9987,\n"; // LINEAR_MIPMAP_LINEAR
+            json << "      \"wrapS\": 10497,\n";    // REPEAT
+            json << "      \"wrapT\": 10497\n";     // REPEAT
+            json << "    }\n";
+            json << "  ],\n";
+        }
 
         // BufferViews definition
         json << "  \"bufferViews\": [\n";

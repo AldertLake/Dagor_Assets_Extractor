@@ -87,6 +87,7 @@
     <ClCompile Include="src\App\AppState.cpp" />
     <ClCompile Include="src\AssetIndex\AssetIndex.cpp" />
     <ClCompile Include="src\AssetIndex\BlkRelationships.cpp" />
+    <ClCompile Include="src\AssetIndex\DependencyGraph.cpp" />
     <ClCompile Include="src\DagorIO\Decompression.cpp" />
     <ClCompile Include="src\DagorIO\BinaryReader.cpp" />
     <ClCompile Include="..\third_party\adler32.c" />
@@ -124,6 +125,7 @@
     <ClInclude Include="..\third_party\zstd_errors.h" />
     <ClInclude Include="src\AssetIndex\AssetIndex.h" />
     <ClInclude Include="src\AssetIndex\BlkRelationships.h" />
+    <ClInclude Include="src\AssetIndex\DependencyGraph.h" />
     <ClInclude Include="src\DagorIO\BinaryReader.h" />
     <ClInclude Include="src\DagorFormats\VromfsReader.h" />
     <ClInclude Include="src\DagorFormats\DxpReader.h" />

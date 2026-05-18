@@ -8,6 +8,12 @@
 
 namespace DagorAssetsExtractor::Export
 {
+    struct MaterialInfo
+    {
+        std::string name;
+        std::string diffuseTexturePath; // Path relative to GLB or empty
+    };
+
     class ModelExporter
     {
     public:
@@ -15,7 +21,8 @@ namespace DagorAssetsExtractor::Export
         static bool ExportToGlb(
             const std::filesystem::path& path,
             const std::vector<DagorFormats::RendInstMesh>& lods,
-            const ExportManifest& manifest);
+            const ExportManifest& manifest,
+            const std::vector<MaterialInfo>& materials = {});
 
         // Export a single LOD to OBJ format
         static bool ExportToObj(

@@ -12,6 +12,7 @@
 
 #include "AssetIndex/AssetIndex.h"
 #include "AssetIndex/BlkRelationships.h"
+#include "AssetIndex/DependencyGraph.h"
 #include "AssetIndex/PackContents.h"
 #include "Jobs/JobSystem.h"
 

@@ -544,8 +544,14 @@ namespace DagorAssetsExtractor::App
 
         std::filesystem::path exportRoot = app.settings.exportRoot;
         std::string format = app.settings.modelExportFormat;
+        bool exportTextures = app.settings.exportTexturesWithModels;
+        
+        auto descriptorLinks = SnapshotDescriptorResourceLinks(app);
+        auto textureExportOptions = GetTextureExportOptions(app);
+        // Use the model export folder as the output folder for textures too
+        textureExportOptions.outputDir = exportRoot;
 
-        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format]() {
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, exportTextures, descriptorLinks, textureExportOptions]() {
             try
             {
                 std::ifstream file(packPath, std::ios::binary);
@@ -581,6 +587,69 @@ namespace DagorAssetsExtractor::App
                 manifest.appVersion = "1.0.0";
                 manifest.formatDecoderVersion = "RendInstReader v1.0";
 
+                std::vector<Export::MaterialInfo> materials;
+                
+                if (exportTextures && descriptorLinks)
+                {
+                    // Find matching descriptor link for this GRP entry
+                    for (const auto& link : *descriptorLinks)
+                    {
+                        // Match by name and by GRP path if available
+                        bool nameMatch = (link.resourceName == entry.name);
+                        bool packMatch = !link.matchedGrpPath || (*link.matchedGrpPath == packPath);
+
+                        if (nameMatch && packMatch)
+                        {
+                            for (const auto& texLink : link.textureLinks)
+                            {
+                                if (texLink.matchedDxpPath && texLink.matchedDxpEntryName)
+                                {
+                                    // Resolve SubAssetRecord for the texture
+                                    auto dxpContents = app.packContentsCache.Get(*texLink.matchedDxpPath);
+                                    if (!dxpContents)
+                                    {
+                                        auto newContents = AssetIndex::ParseDxpContents(*texLink.matchedDxpPath);
+                                        if (newContents)
+                                        {
+                                            app.packContentsCache.Put(*texLink.matchedDxpPath, newContents);
+                                            dxpContents = newContents;
+                                        }
+                                    }
+
+                                    if (dxpContents)
+                                    {
+                                        auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
+                                            return e.name == *texLink.matchedDxpEntryName;
+                                        });
+
+                                        if (it != dxpContents->entries.end())
+                                        {
+                                            auto texResult = Export::TextureExporter::ExportTexture(*texLink.matchedDxpPath, *it, textureExportOptions);
+                                            if (texResult.success)
+                                            {
+                                                Export::MaterialInfo mat;
+                                                mat.name = texLink.textureName;
+                                                mat.diffuseTexturePath = texResult.outputPath.filename().string();
+                                                materials.push_back(mat);
+                                                manifest.textureDependencies.push_back(texResult.outputPath.filename().string());
+                                            }
+                                            else
+                                            {
+                                                manifest.decodeWarnings.push_back("Failed to export texture dependency: " + texLink.textureName + " (" + texResult.error + ")");
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    manifest.decodeWarnings.push_back("Could not find pack for texture dependency: " + texLink.textureName);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
                 bool success = false;
                 fs::path outPath;
 
@@ -588,7 +657,7 @@ namespace DagorAssetsExtractor::App
                 {
                     outPath = exportRoot / (safeName + ".glb");
                     manifest.outputFiles.push_back(outPath.filename().string());
-                    success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest);
+                    success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest, materials);
                 }
                 else
                 {
