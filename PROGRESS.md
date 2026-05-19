@@ -269,4 +269,9 @@ AI models picking up the next coding task should prioritize the following object
 * **Stream-End Loop Guard**: Corrected the packed index decoder to process LEB128/delta compressed index streams up to the calculated boundary of the compressed index block (`streamEnd = blockStartPos + vbSz + gvd.iPackedSz - 4`), matching the Python reference implementation.
 * **Verification**: Rebuilt the solution and successfully ran `scripts/run_tests.ps1` with 0 compiler warnings/errors and all tests passing, verifying correct index counts (e.g. 751,641 indices decoded for `ab_205a_1` instead of 32).
 
+### Day 31: DynModel Rigid Transform and glTF Bounds Repair Slice
+* **Same-Pack Skeleton Resolution**: Updated DynModel export to try `<dynmodel>_skeleton` inside the same GRP before falling back to descriptor/global searches. This resolves cockpit/aircraft skeletons that are packed beside the DynModel but are not discoverable through descriptor metadata.
+* **Rigid Mesh Scene Transforms**: Changed rigid DynModel GLB export so mesh nodes receive their matched `GeomNodeTree` world transform directly. Non-skinned models no longer emit a separate unused skeleton hierarchy, avoiding misplaced split parts when imported into Blender or web glTF viewers.
+* **Exact Accessor Bounds JSON**: Replaced default stream float formatting for accessor min/max and node matrices with exact float32-promoted JSON output. This fixes Khronos validator `ACCESSOR_MAX_MISMATCH` and `ACCESSOR_ELEMENT_OUT_OF_MAX_BOUND` errors caused by rounded JSON values.
+* **Verification**: Rebuilt with `scripts/run_tests.ps1` successfully. Regenerated `f_15c_golden_eagle_cockpit_smoke.glb` from the real War Thunder GRP and verified 673/673 mesh nodes have matrices, 0 position accessor bound mismatches, and 0 index-bound errors with a local GLB JSON/BIN validation script.
 

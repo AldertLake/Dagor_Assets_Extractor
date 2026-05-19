@@ -859,6 +859,37 @@ namespace DagorAssetsExtractor::App
                     // Try to resolve skeleton
                     std::vector<DagorFormats::GeomNodeTreeNode> skeleton;
                     std::string skeletonName;
+                    constexpr uint32_t kGeomNodeTreeClassId = 0x56F81B6Du;
+
+                    auto loadSkeletonEntry = [&](const fs::path& skeletonPackPath,
+                                                 const AssetIndex::SubAssetRecord& skeletonEntry,
+                                                 const std::string& sourceDescription) -> bool
+                    {
+                        std::ifstream skelFile(skeletonPackPath, std::ios::binary);
+                        if (!skelFile)
+                        {
+                            AddLog(app, LogLevel::Warning, "Could not open skeleton pack: " + Platform::PathToUtf8(skeletonPackPath));
+                            return false;
+                        }
+
+                        skelFile.seekg(static_cast<std::streamoff>(skeletonEntry.offset), std::ios::beg);
+                        std::vector<uint8_t> skelPayload(skeletonEntry.size);
+                        if (!skelFile.read(reinterpret_cast<char*>(skelPayload.data()), static_cast<std::streamsize>(skelPayload.size())))
+                        {
+                            AddLog(app, LogLevel::Warning, "Could not read skeleton payload: " + skeletonEntry.name);
+                            return false;
+                        }
+
+                        DagorFormats::GeomNodeTreeReader skelReader(skelPayload);
+                        skelReader.Parse();
+                        skeleton = skelReader.GetNodes();
+                        manifest.decodeWarnings.push_back("Resolved skeleton " + skeletonEntry.name + " from " + sourceDescription);
+                        AddLog(app,
+                            LogLevel::Info,
+                            "Resolved skeleton " + skeletonEntry.name +
+                            " (" + std::to_string(skeleton.size()) + " nodes) from " + sourceDescription);
+                        return true;
+                    };
                     
                     // If we have a descriptor link, it might specify a skeleton
                     // Since I haven't added skeletonName to DescriptorResourceLink yet,
@@ -881,7 +912,47 @@ namespace DagorAssetsExtractor::App
                         }
                     }
 
+                    std::vector<std::string> skeletonCandidates;
                     if (!skeletonName.empty())
+                    {
+                        skeletonCandidates.push_back(skeletonName);
+                    }
+
+                    const std::string sameNameSkeleton = entry.name + "_skeleton";
+                    if (std::find(skeletonCandidates.begin(), skeletonCandidates.end(), sameNameSkeleton) == skeletonCandidates.end())
+                    {
+                        skeletonCandidates.push_back(sameNameSkeleton);
+                    }
+
+                    auto samePackContents = app.packContentsCache.Get(packPath);
+                    if (!samePackContents)
+                    {
+                        auto newContents = AssetIndex::ParseGrpContents(packPath);
+                        if (newContents)
+                        {
+                            app.packContentsCache.Put(packPath, newContents);
+                            samePackContents = newContents;
+                        }
+                    }
+
+                    if (samePackContents)
+                    {
+                        for (const std::string& candidate : skeletonCandidates)
+                        {
+                            auto it = std::find_if(samePackContents->entries.begin(), samePackContents->entries.end(), [&](const auto& e) {
+                                return e.name == candidate && (e.grpClassId == kGeomNodeTreeClassId || e.grpClassId == 0);
+                            });
+
+                            if (it != samePackContents->entries.end() &&
+                                loadSkeletonEntry(packPath, *it, packPath.filename().string()))
+                            {
+                                skeletonName = it->name;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (skeleton.empty() && !skeletonName.empty() && allRecords)
                     {
                         AddLog(app, LogLevel::Info, "Resolving skeleton " + skeletonName + " for " + entry.name + "...");
                         // Find GRP containing this skeleton
@@ -909,19 +980,9 @@ namespace DagorAssetsExtractor::App
 
                                     if (it != grpContents->entries.end())
                                     {
-                                        std::ifstream skelFile(record.path, std::ios::binary);
-                                        if (skelFile)
+                                        if (loadSkeletonEntry(record.path, *it, record.path.filename().string()))
                                         {
-                                            skelFile.seekg(static_cast<std::streamoff>(it->offset), std::ios::beg);
-                                            std::vector<uint8_t> skelPayload(it->size);
-                                            if (skelFile.read(reinterpret_cast<char*>(skelPayload.data()), static_cast<std::streamsize>(skelPayload.size())))
-                                            {
-                                                DagorFormats::GeomNodeTreeReader skelReader(skelPayload);
-                                                skelReader.Parse();
-                                                skeleton = skelReader.GetNodes();
-                                                skeletonFound = true;
-                                                manifest.decodeWarnings.push_back("Resolved skeleton from " + record.path.filename().string());
-                                            }
+                                            skeletonFound = true;
                                         }
                                         break;
                                     }
@@ -933,6 +994,12 @@ namespace DagorAssetsExtractor::App
                         {
                             manifest.decodeWarnings.push_back("Could not resolve skeleton resource: " + skeletonName);
                         }
+                    }
+
+                    if (skeleton.empty())
+                    {
+                        manifest.decodeWarnings.push_back("No skeleton resolved; rigid DynModel parts will not receive scene-node transforms.");
+                        AddLog(app, LogLevel::Warning, "No skeleton resolved for " + entry.name + "; GLB part placement may be incorrect.");
                     }
 
                     if (format == "GLB" || format == "glb")

@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <cctype>
 #include <string_view>
+#include <charconv>
 
 namespace DagorAssetsExtractor::Export
 {
@@ -64,6 +65,30 @@ namespace DagorAssetsExtractor::Export
                 }
             }
             return true;
+        }
+
+        std::string JsonFloat(float value)
+        {
+            // glTF validators compare accessor bounds as JSON doubles against
+            // binary float32 values promoted to double, so write that exact
+            // promoted value instead of the shortest float32 round-trip text.
+            const double exactValue = static_cast<double>(value);
+            char buffer[64] = {};
+            const auto result = std::to_chars(
+                buffer,
+                buffer + sizeof(buffer),
+                exactValue,
+                std::chars_format::general,
+                std::numeric_limits<double>::max_digits10);
+
+            if (result.ec == std::errc())
+            {
+                return std::string(buffer, result.ptr);
+            }
+
+            std::ostringstream fallback;
+            fallback << std::defaultfloat << std::setprecision(std::numeric_limits<double>::max_digits10) << exactValue;
+            return fallback.str();
         }
     }
 
@@ -385,8 +410,8 @@ namespace DagorAssetsExtractor::Export
             json << "      \"componentType\": 5126,\n"; // FLOAT
             json << "      \"count\": " << mesh.vertices.size() << ",\n";
             json << "      \"type\": \"VEC3\",\n";
-            json << "      \"max\": [" << info.maxX << ", " << info.maxY << ", " << info.maxZ << "],\n";
-            json << "      \"min\": [" << info.minX << ", " << info.minY << ", " << info.minZ << "]\n";
+            json << "      \"max\": [" << JsonFloat(info.maxX) << ", " << JsonFloat(info.maxY) << ", " << JsonFloat(info.maxZ) << "],\n";
+            json << "      \"min\": [" << JsonFloat(info.minX) << ", " << JsonFloat(info.minY) << ", " << JsonFloat(info.minZ) << "]\n";
             json << "    },\n";
 
             // NORMAL
@@ -559,16 +584,11 @@ namespace DagorAssetsExtractor::Export
                 return mesh.useSkinning;
             });
 
-        const bool usesSkeletonNodes = !skeleton.empty() &&
-            (useSkinning ||
-             std::any_of(lods.begin(), lods.end(), [](const DagorFormats::DynModelMesh& mesh)
-             {
-                 return !mesh.parentNodeName.empty();
-             }));
+        const bool usesSkeletonNodes = useSkinning;
 
         std::unordered_map<std::string, size_t> skeletonNodeLookup;
         skeletonNodeLookup.reserve(skeleton.size());
-        if (usesSkeletonNodes)
+        if (!skeleton.empty())
         {
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
@@ -576,9 +596,9 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
-        std::vector<std::vector<size_t>> attachedMeshChildren(skeleton.size());
-        std::vector<bool> meshAttachedToSkeleton(lods.size(), false);
-        if (usesSkeletonNodes)
+        std::vector<std::array<float, 16>> meshNodeMatrices(lods.size());
+        std::vector<bool> hasMeshNodeMatrix(lods.size(), false);
+        if (!skeleton.empty())
         {
             for (size_t i = 0; i < lods.size(); ++i)
             {
@@ -593,10 +613,13 @@ namespace DagorAssetsExtractor::Export
                     continue;
                 }
 
-                attachedMeshChildren[it->second].push_back(i);
-                meshAttachedToSkeleton[i] = true;
+                meshNodeMatrices[i] = transposeMatrix(skeleton[it->second].worldTransform);
+                hasMeshNodeMatrix[i] = true;
             }
         }
+
+        std::vector<std::vector<size_t>> attachedMeshChildren(skeleton.size());
+        std::vector<bool> meshAttachedToSkeleton(lods.size(), false);
 
         if (useSkinning)
         {
@@ -792,7 +815,7 @@ namespace DagorAssetsExtractor::Export
                 json << "      \"matrix\": [";
                 for (int m = 0; m < 16; ++m)
                 {
-                    json << std::fixed << std::setprecision(6) << gltfMatrix[m];
+                    json << JsonFloat(gltfMatrix[m]);
                     if (m < 15) json << ", ";
                 }
                 json << "]";
@@ -829,14 +852,21 @@ namespace DagorAssetsExtractor::Export
             json << "    {\n";
             json << "      \"name\": \"" << JsonEscape(lods[i].name) << "\",\n";
             json << "      \"mesh\": " << i;
+            if (hasMeshNodeMatrix[i])
+            {
+                json << ",\n      \"matrix\": [";
+                for (int m = 0; m < 16; ++m)
+                {
+                    json << JsonFloat(meshNodeMatrices[i][m]);
+                    if (m < 15) json << ", ";
+                }
+                json << "]";
+            }
             if (useSkinning && lods[i].useSkinning)
             {
-                json << ",\n      \"skin\": 0\n";
+                json << ",\n      \"skin\": 0";
             }
-            else
-            {
-                json << "\n";
-            }
+            json << "\n";
             json << "    }";
             if (i + 1 < lods.size()) json << ",";
             json << "\n";
@@ -993,7 +1023,7 @@ namespace DagorAssetsExtractor::Export
             const auto& mesh = lods[i];
             const auto& info = binInfos[i];
 
-            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\", \"max\": [" << info.maxX << "," << info.maxY << "," << info.maxZ << "], \"min\": [" << info.minX << "," << info.minY << "," << info.minZ << "] },\n";
+            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\", \"max\": [" << JsonFloat(info.maxX) << "," << JsonFloat(info.maxY) << "," << JsonFloat(info.maxZ) << "], \"min\": [" << JsonFloat(info.minX) << "," << JsonFloat(info.minY) << "," << JsonFloat(info.minZ) << "] },\n";
             json << "    { \"bufferView\": " << i << ", \"byteOffset\": 12, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\" },\n";
             json << "    { \"bufferView\": " << i << ", \"byteOffset\": 24, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC2\" }";
             if (useSkinning)
