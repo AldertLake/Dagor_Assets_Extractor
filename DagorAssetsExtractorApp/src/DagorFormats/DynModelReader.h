@@ -18,6 +18,8 @@ struct SkinnedVertex {
 
 struct DynModelMesh {
     std::string name;
+    std::string parentNodeName;
+    bool useSkinning = false;
     std::vector<SkinnedVertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<RendInstPrimitive> primitives;
@@ -30,6 +32,7 @@ public:
     void Parse();
 
     const std::vector<DynModelMesh>& GetLods() const { return m_lods; }
+    const std::vector<std::string>& GetDiagnostics() const { return m_diagnostics; }
 
     // Returns the size of the container header that was stripped before the mesh data.
     // Only valid after a successful Parse() of a real GRP payload.
@@ -41,10 +44,12 @@ private:
 
     // Parse a real GRP DynModel payload with container/compression wrapper
     void ParseRealGrpPayload();
+    void AddDiagnostic(std::string message);
 
     std::span<const uint8_t> m_data;
     std::vector<DynModelMesh> m_lods;
     std::vector<uint8_t> m_decompressedPayload;
+    std::vector<std::string> m_diagnostics;
     size_t m_containerHeaderSize = 0;
 };
 

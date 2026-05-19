@@ -168,6 +168,12 @@ namespace {
             const size_t end = (textureIndex + 1 < textureNameCount)
                 ? offsets[textureIndex + 1]
                 : stringBlob.size();
+
+            if (begin >= stringBlob.size() || end > stringBlob.size() || begin > end)
+            {
+                textureNames.push_back("");
+                continue;
+            }
             textureNames.push_back(TrimDagorString(stringBlob.subspan(begin, end - begin)));
         }
 
@@ -716,13 +722,14 @@ void RendInstReader::ParseRealGrpPayload() {
         else
         {
             const size_t vbSz = static_cast<size_t>(gvd.vCnt) * gvd.vStride;
-            const size_t streamEnd = blockStartPos + vbSz + gvd.iPackedSz - 4;
+            const size_t streamEnd = blockStartPos + vbSz + (gvd.iPackedSz >= 4 ? gvd.iPackedSz - 4 : 0);
 
             meshReader.Skip(1);
             int32_t stateBuffer[2] = {0, 0};
             std::vector<uint32_t> tempIndices;
+            tempIndices.reserve(gvd.iCnt);
 
-            while (meshReader.GetPosition() < streamEnd)
+            while (meshReader.GetPosition() < streamEnd && tempIndices.size() < gvd.iCnt)
             {
                 uint32_t decodedLeb = 0;
                 uint32_t shift = 0;

@@ -818,7 +818,40 @@ namespace DagorAssetsExtractor::App
                 else if (isDynModel)
                 {
                     DagorFormats::DynModelReader reader(payload);
-                    reader.Parse();
+                    try
+                    {
+                        reader.Parse();
+                    }
+                    catch (...)
+                    {
+                        for (const std::string& diagnostic : reader.GetDiagnostics())
+                        {
+                            AddLog(app, LogLevel::Warning, "DynModel diagnostic for " + entry.name + ": " + diagnostic);
+                        }
+                        throw;
+                    }
+
+                    for (const std::string& diagnostic : reader.GetDiagnostics())
+                    {
+                        AddLog(app, LogLevel::Info, "DynModel diagnostic for " + entry.name + ": " + diagnostic);
+                    }
+
+                    size_t dynVertexCount = 0;
+                    size_t dynIndexCount = 0;
+                    size_t dynPrimitiveCount = 0;
+                    for (const auto& lod : reader.GetLods())
+                    {
+                        dynVertexCount += lod.vertices.size();
+                        dynIndexCount += lod.indices.size();
+                        dynPrimitiveCount += lod.primitives.size();
+                    }
+                    AddLog(app,
+                        LogLevel::Info,
+                        "DynModel export summary for " + entry.name +
+                        ": meshes=" + std::to_string(reader.GetLods().size()) +
+                        ", compactVertices=" + std::to_string(dynVertexCount) +
+                        ", indices=" + std::to_string(dynIndexCount) +
+                        ", primitives=" + std::to_string(dynPrimitiveCount));
 
                     manifest.assetType = "DynModel Skinned Model";
                     manifest.formatDecoderVersion = "DynModelReader v1.0";
@@ -906,6 +939,11 @@ namespace DagorAssetsExtractor::App
                     {
                         outPath = exportRoot / (safeName + ".glb");
                         manifest.outputFiles.push_back(outPath.filename().string());
+                        AddLog(app,
+                            LogLevel::Info,
+                            "Writing DynModel GLB for " + entry.name +
+                            " with skeletonNodes=" + std::to_string(skeleton.size()) +
+                            " to " + Platform::PathToUtf8(outPath));
                         success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), skeleton, manifest, materials);
                     }
                     else

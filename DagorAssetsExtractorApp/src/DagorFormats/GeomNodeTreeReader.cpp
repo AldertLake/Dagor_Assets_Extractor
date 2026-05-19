@@ -46,13 +46,21 @@ namespace DagorFormats
                 throw std::runtime_error("GeomNodeTree matrix is out of bounds");
             }
 
-            std::array<float, 16> matrix = {};
             DagorIO::MemoryReader reader(data.subspan(offset, kMatrixByteSize));
-            for (float& element : matrix)
+            std::array<float, 16> flat = {};
+            for (float& element : flat)
             {
                 element = reader.ReadFloat();
             }
-            return matrix;
+
+            // Dagor stores these matrices transposed relative to the row-major
+            // affine math used elsewhere in the extractor.
+            return {
+                flat[0], flat[4], flat[8],  flat[12],
+                flat[1], flat[5], flat[9],  flat[13],
+                flat[2], flat[6], flat[10], flat[14],
+                flat[3], flat[7], flat[11], flat[15],
+            };
         }
 
         std::string ReadCString(std::span<const uint8_t> data, uint32_t offset)
@@ -135,12 +143,12 @@ namespace DagorFormats
             inverse[10] = c22 * invDet;
             inverse[15] = 1.0f;
 
-            const float tx = matrix[12];
-            const float ty = matrix[13];
-            const float tz = matrix[14];
-            inverse[12] = -((tx * inverse[0]) + (ty * inverse[4]) + (tz * inverse[8]));
-            inverse[13] = -((tx * inverse[1]) + (ty * inverse[5]) + (tz * inverse[9]));
-            inverse[14] = -((tx * inverse[2]) + (ty * inverse[6]) + (tz * inverse[10]));
+            const float tx = matrix[3];
+            const float ty = matrix[7];
+            const float tz = matrix[11];
+            inverse[3] = -((tx * inverse[0]) + (ty * inverse[1]) + (tz * inverse[2]));
+            inverse[7] = -((tx * inverse[4]) + (ty * inverse[5]) + (tz * inverse[6]));
+            inverse[11] = -((tx * inverse[8]) + (ty * inverse[9]) + (tz * inverse[10]));
             return true;
         }
 

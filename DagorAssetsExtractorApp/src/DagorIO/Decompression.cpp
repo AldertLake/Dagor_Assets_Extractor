@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <stdexcept>
 #include <array>
+#include <algorithm>
 #include <filesystem>
 #include <limits>
 #include <sstream>
@@ -85,6 +86,34 @@ std::vector<uint8_t> Decompressor::DecompressZlib(std::span<const uint8_t> compr
     }
 
     return result;
+}
+
+std::vector<uint8_t> Decompressor::DecompressZlib(std::span<const uint8_t> compressedData) {
+    size_t guessSize = std::max<size_t>(1024, compressedData.size() * 4);
+    const size_t maxGuessSize = 256ull * 1024ull * 1024ull;
+
+    while (guessSize <= maxGuessSize) {
+        std::vector<uint8_t> result(guessSize);
+        unsigned int destLen = static_cast<unsigned int>(guessSize);
+        const int status = tinf_zlib_uncompress(
+            result.data(),
+            &destLen,
+            compressedData.data(),
+            static_cast<unsigned int>(compressedData.size()));
+
+        if (status == TINF_OK) {
+            result.resize(destLen);
+            return result;
+        }
+
+        if (status != TINF_BUF_ERROR) {
+            throw std::runtime_error("Zlib decompression (tinf) failed with status " + std::to_string(status));
+        }
+
+        guessSize *= 2;
+    }
+
+    throw std::runtime_error("Zlib decompression failed: output exceeded size guard");
 }
 
 std::vector<uint8_t> Decompressor::DecompressZstd(std::span<const uint8_t> compressedData, size_t uncompressedSize) {

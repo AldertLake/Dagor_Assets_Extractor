@@ -11,6 +11,7 @@ class Decompressor {
 public:
     // Zlib decompression
     static std::vector<uint8_t> DecompressZlib(std::span<const uint8_t> compressedData, size_t uncompressedSize);
+    static std::vector<uint8_t> DecompressZlib(std::span<const uint8_t> compressedData);
 
     // Zstd decompression
     static std::vector<uint8_t> DecompressZstd(std::span<const uint8_t> compressedData, size_t uncompressedSize);
