@@ -32,6 +32,7 @@ namespace DagorAssetsExtractor::AssetIndex
         uint32_t matchedGrpClassId = 0;
         std::string matchedGrpClassName;
         bool matchedGrpEntryCanExportStaticModel = false;
+        bool matchedGrpEntryCanExportSkinnedModel = false;
         std::vector<DescriptorTextureLink> textureLinks;
     };
 

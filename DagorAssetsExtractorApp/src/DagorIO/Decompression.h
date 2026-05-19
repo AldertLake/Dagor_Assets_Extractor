@@ -29,6 +29,9 @@ public:
     // Locate the user-owned Oodle DLL without modifying the game install.
     static std::filesystem::path FindOodleDll(const std::string& gameRoot, const std::string& explicitDllPath = {});
 
+    // Locate the bundled Oodle DLL shipped alongside the app or in the repo's third_party folder.
+    static std::filesystem::path FindBundledOodleDll();
+
     // Human-readable list of paths checked by FindOodleDll().
     static std::string OodleSearchDescription(const std::string& gameRoot, const std::string& explicitDllPath = {});
 };

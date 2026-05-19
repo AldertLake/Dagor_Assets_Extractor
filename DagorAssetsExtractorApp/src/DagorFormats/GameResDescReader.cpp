@@ -360,6 +360,23 @@ namespace {
         entry.name = block.name.empty() ? ("resource_" + std::to_string(resId)) : block.name;
         entry.resId = resId;
 
+        // Read parameters of the resource block itself
+        for (uint32_t i = 0; i < block.paramsCount; ++i)
+        {
+            const BinaryBlkParam param = ReadParam(document, block, i);
+            if (param.stringValue)
+            {
+                if (param.name == "skeleton")
+                {
+                    entry.skeletonName = *param.stringValue;
+                }
+                else if (param.name == "dynmodel")
+                {
+                    entry.dynModelName = *param.stringValue;
+                }
+            }
+        }
+
         for (const size_t childIndex : block.children)
         {
             const BinaryBlkBlock& child = document.blocks[childIndex];

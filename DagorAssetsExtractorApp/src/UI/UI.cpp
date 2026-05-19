@@ -811,7 +811,7 @@ namespace DagorAssetsExtractor::UI
 
                     ImGui::TableSetColumnIndex(5);
                     const bool hasMatchedGrpEntry = link.matchedGrpPath.has_value() && link.matchedGrpEntryName.has_value();
-                    const bool canExportUnifiedModel = hasMatchedGrpEntry && link.matchedGrpEntryCanExportStaticModel;
+                    const bool canExportUnifiedModel = hasMatchedGrpEntry && (link.matchedGrpEntryCanExportStaticModel || link.matchedGrpEntryCanExportSkinnedModel);
                     ImGui::BeginDisabled(!canExportUnifiedModel);
                     if (ImGui::Button("Export Model"))
                     {
@@ -829,12 +829,12 @@ namespace DagorAssetsExtractor::UI
                         }
                         else if (!link.matchedGrpClassName.empty())
                         {
-                            ImGui::SetTooltip("Only RendInst static meshes can be exported right now. This descriptor resolves to %s.",
+                            ImGui::SetTooltip("Only RendInst static meshes and DynModel skinned meshes can be exported right now. This descriptor resolves to %s.",
                                 link.matchedGrpClassName.c_str());
                         }
                         else
                         {
-                            ImGui::SetTooltip("Only RendInst static meshes can be exported right now.");
+                            ImGui::SetTooltip("Only RendInst and DynModel meshes can be exported right now.");
                         }
                     }
                     ImGui::EndDisabled();
@@ -1191,7 +1191,10 @@ namespace DagorAssetsExtractor::UI
                                 {
                                     ImGui::TableSetColumnIndex((isDxp || isGrp) ? 4 : 3);
                                     std::string btnLabel = "Export##" + entry.name;
-                                    const bool canExportModel = !isGrp || AssetIndex::CanExportGrpEntryAsStaticModel(entry);
+                                    const bool canExportStatic = AssetIndex::CanExportGrpEntryAsStaticModel(entry);
+                                    const bool canExportSkinned = AssetIndex::CanExportGrpEntryAsSkinnedModel(entry);
+                                    const bool canExportModel = !isGrp || canExportStatic || canExportSkinned;
+                                    
                                     ImGui::BeginDisabled(isGrp && !canExportModel);
                                     if (ImGui::Button(btnLabel.c_str()))
                                     {
@@ -1208,11 +1211,11 @@ namespace DagorAssetsExtractor::UI
                                     {
                                         if (!entry.formatInfo.empty())
                                         {
-                                            ImGui::SetTooltip("Only RendInst static meshes can be exported right now. This entry is %s.", entry.formatInfo.c_str());
+                                            ImGui::SetTooltip("Only RendInst static meshes and DynModel skinned meshes can be exported right now. This entry is %s.", entry.formatInfo.c_str());
                                         }
                                         else
                                         {
-                                            ImGui::SetTooltip("Only RendInst static meshes can be exported right now.");
+                                            ImGui::SetTooltip("Only RendInst and DynModel meshes can be exported right now.");
                                         }
                                     }
                                     ImGui::EndDisabled();
@@ -1253,12 +1256,12 @@ namespace DagorAssetsExtractor::UI
         }
         if (selected->type == AssetType::Dxp)
         {
-            ImGui::BulletText("DDS texture extraction with reversed-mip reordering, decompression, and readable PNG/TGA export for uncompressed plus BC1-BC5 textures.");
+            ImGui::BulletText("DDS texture extraction with reversed-mip reordering, decompression, and readable PNG/TGA export for BC1-BC5, common uncompressed, and RGBA float textures.");
         }
         if (selected->type == AssetType::Grp)
         {
-            ImGui::BulletText("Binary static model extraction to glTF 2.0 GLB / Wavefront OBJ.");
-            ImGui::BulletText("GeomNodeTree skeleton metadata parsing for GRP inspection.");
+            ImGui::BulletText("Binary static and dynamic model extraction to glTF 2.0 GLB / Wavefront OBJ.");
+            ImGui::BulletText("GeomNodeTree skeleton metadata parsing for GRP inspection and skinned mesh exports.");
         }
     }
 
@@ -1352,17 +1355,6 @@ namespace DagorAssetsExtractor::UI
             }
         }
 
-        ImGui::InputText("Oodle DLL", app.oodleDllPathBuffer.data(), app.oodleDllPathBuffer.size());
-        ImGui::SameLine();
-        if (ImGui::Button("Browse##OodleDll"))
-        {
-            if (const auto selected = Platform::BrowseForFile(static_cast<HWND>(app.hwnd), L"Choose oo2core_6_win64.dll", app.settings.oodleDllPath))
-            {
-                app.settings.oodleDllPath = *selected;
-                App::SyncSettingsBuffers(app);
-            }
-        }
-
         static const char* textureFormats[] = { "DDS", "PNG", "TGA" };
         const std::string textureFormat = AssetIndex::ToLowerAscii(app.settings.textureExportFormat);
         int textureFormatIndex = 0;
@@ -1382,8 +1374,8 @@ namespace DagorAssetsExtractor::UI
 
         ImGui::Checkbox("Export textures with models", &app.settings.exportTexturesWithModels);
         ImGui::Checkbox("Fallback to DDS when PNG/TGA conversion is unavailable", &app.settings.preserveOriginalDDS);
-        ImGui::Checkbox("Use Oodle DLL from game folder if present", &app.settings.useOodleFromGameFolder);
-        ImGui::TextDisabled("PNG/TGA currently exports the top mip for BC1-BC5 plus uncompressed R8, R8G8, RGBA8, and BGRA8 DDSx textures.");
+        ImGui::TextDisabled("Oodle-compressed DDSx textures use the bundled oo2core_6_win64.dll shipped with the app build.");
+        ImGui::TextDisabled("PNG/TGA currently exports the top mip for BC1-BC5 plus R8, R8G8, RGBA8, BGRA8, RGBA16F, and RGBA32F DDSx textures.");
         if (ImGui::Checkbox("Enable index cache", &app.settings.indexCacheEnabled))
         {
             if (app.settings.indexCacheEnabled)
@@ -1400,7 +1392,6 @@ namespace DagorAssetsExtractor::UI
         if (ImGui::Button("Save Settings"))
         {
             app.settings.exportRoot = Platform::Utf8ToPath(app.exportRootBuffer.data());
-            app.settings.oodleDllPath = Platform::Utf8ToPath(app.oodleDllPathBuffer.data());
             App::SetGameRoot(app, Platform::Utf8ToPath(app.gameRootBuffer.data()));
             App::SaveSettingsWithLog(app);
         }

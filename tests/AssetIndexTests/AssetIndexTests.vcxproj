@@ -95,6 +95,7 @@
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\VromfsReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DxpReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GrpReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DynModelReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DdsxReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\BlkReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\PackContents.cpp" />
@@ -119,6 +120,7 @@
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\VromfsReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DxpReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GrpReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DynModelReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DdsxReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\RendInstReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GameResDescReader.h" />

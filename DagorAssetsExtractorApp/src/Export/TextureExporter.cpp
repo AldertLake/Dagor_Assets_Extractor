@@ -12,7 +12,9 @@
 #include <vector>
 #include <sstream>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <limits>
 #include <string_view>
@@ -193,6 +195,58 @@ namespace DagorAssetsExtractor::Export
                 (static_cast<uint32_t>(data[1]) << 8) |
                 (static_cast<uint32_t>(data[2]) << 16) |
                 (static_cast<uint32_t>(data[3]) << 24);
+        }
+
+        float UInt32BitsToFloat(uint32_t bits)
+        {
+            float value = 0.0f;
+            static_assert(sizeof(value) == sizeof(bits));
+            std::memcpy(&value, &bits, sizeof(value));
+            return value;
+        }
+
+        float HalfToFloat(uint16_t bits)
+        {
+            const uint32_t sign = (bits & 0x8000u) != 0 ? 1u : 0u;
+            const uint32_t exponent = (bits >> 10) & 0x1Fu;
+            const uint32_t mantissa = bits & 0x03FFu;
+
+            if (exponent == 0)
+            {
+                if (mantissa == 0)
+                {
+                    return sign != 0 ? -0.0f : 0.0f;
+                }
+
+                const float value = std::ldexp(static_cast<float>(mantissa), -24);
+                return sign != 0 ? -value : value;
+            }
+
+            if (exponent == 0x1Fu)
+            {
+                if (mantissa == 0)
+                {
+                    return sign != 0
+                        ? -std::numeric_limits<float>::infinity()
+                        : std::numeric_limits<float>::infinity();
+                }
+
+                return std::numeric_limits<float>::quiet_NaN();
+            }
+
+            const float value = std::ldexp(1.0f + static_cast<float>(mantissa) / 1024.0f, static_cast<int>(exponent) - 15);
+            return sign != 0 ? -value : value;
+        }
+
+        uint8_t FloatToUnormByte(float value)
+        {
+            if (!std::isfinite(value))
+            {
+                value = 0.0f;
+            }
+
+            value = std::clamp(value, 0.0f, 1.0f);
+            return static_cast<uint8_t>(value * 255.0f + 0.5f);
         }
 
         uint64_t ReadUInt48LE(const uint8_t* data)
@@ -595,6 +649,69 @@ namespace DagorAssetsExtractor::Export
             }
 
             return true;
+        }
+
+        bool DecodeFloatTopMip(
+            const DagorFormats::DdsxHeader& header,
+            std::span<const uint8_t> topMip,
+            RasterImage& image,
+            std::string& error)
+        {
+            const size_t pixelCount = static_cast<size_t>(header.width) * static_cast<size_t>(header.height);
+            image.format = RasterPixelFormat::Bgra8;
+            image.stride = header.width * 4;
+            image.pixels.resize(pixelCount * 4);
+
+            switch (header.d3dFormat)
+            {
+            case 10: // R16G16B16A16_FLOAT
+                if (topMip.size() < pixelCount * 8)
+                {
+                    error = "DDS payload does not contain enough half-float top-mip data for readable export.";
+                    return false;
+                }
+
+                for (size_t i = 0; i < pixelCount; ++i)
+                {
+                    const size_t src = i * 8;
+                    const size_t dst = i * 4;
+                    const float r = HalfToFloat(ReadUInt16LE(topMip.data() + src + 0));
+                    const float g = HalfToFloat(ReadUInt16LE(topMip.data() + src + 2));
+                    const float b = HalfToFloat(ReadUInt16LE(topMip.data() + src + 4));
+                    const float a = HalfToFloat(ReadUInt16LE(topMip.data() + src + 6));
+                    image.pixels[dst + 0] = FloatToUnormByte(b);
+                    image.pixels[dst + 1] = FloatToUnormByte(g);
+                    image.pixels[dst + 2] = FloatToUnormByte(r);
+                    image.pixels[dst + 3] = FloatToUnormByte(a);
+                }
+                return true;
+
+            case 2: // R32G32B32A32_FLOAT
+                if (topMip.size() < pixelCount * 16)
+                {
+                    error = "DDS payload does not contain enough float32 top-mip data for readable export.";
+                    return false;
+                }
+
+                for (size_t i = 0; i < pixelCount; ++i)
+                {
+                    const size_t src = i * 16;
+                    const size_t dst = i * 4;
+                    const float r = UInt32BitsToFloat(ReadUInt32LE(topMip.data() + src + 0));
+                    const float g = UInt32BitsToFloat(ReadUInt32LE(topMip.data() + src + 4));
+                    const float b = UInt32BitsToFloat(ReadUInt32LE(topMip.data() + src + 8));
+                    const float a = UInt32BitsToFloat(ReadUInt32LE(topMip.data() + src + 12));
+                    image.pixels[dst + 0] = FloatToUnormByte(b);
+                    image.pixels[dst + 1] = FloatToUnormByte(g);
+                    image.pixels[dst + 2] = FloatToUnormByte(r);
+                    image.pixels[dst + 3] = FloatToUnormByte(a);
+                }
+                return true;
+
+            default:
+                error = "Readable PNG/TGA export does not support this float DDSx format.";
+                return false;
+            }
         }
 
         std::string FormatHresult(HRESULT value)
@@ -1048,8 +1165,16 @@ namespace DagorAssetsExtractor::Export
                 }
                 return true;
 
+            case 10:
+            case 2:
+                return DecodeFloatTopMip(
+                    header,
+                    std::span<const uint8_t>(payload.data(), topMipBytes),
+                    image,
+                    error);
+
             default:
-                error = "Readable PNG/TGA export currently supports BC1-BC5 plus uncompressed R8, R8G8, RGBA8, and BGRA8 DDSx textures only. "
+                error = "Readable PNG/TGA export currently supports BC1-BC5 plus uncompressed R8, R8G8, RGBA8, BGRA8, and RGBA float DDSx textures only. "
                     "This texture is " + std::string(header.FormatName()) + " (format code " + std::to_string(header.d3dFormat) + ").";
                 return false;
             }
@@ -1480,6 +1605,14 @@ namespace DagorAssetsExtractor::Export
                         }
                         payload = DagorIO::Decompressor::DecompressOodle(compressedData, header.memorySize, gameRoot, oodleDllPath);
                     }
+                    else if (header.compressionType == 4) // LZMA/7zip
+                    {
+                        const std::string reason =
+                            "LZMA/7zip DDSx decompression is not supported yet. " +
+                            BuildDdsxDiagnostic(header, packPayload.size());
+                        ExportRawDdsxFallback(result, packPath, entry, options, header, packPayload, reason);
+                        return result;
+                    }
                     else
                     {
                         result.error = "Unsupported DDSx compression: " + std::string(header.CompressionName()) +
@@ -1764,6 +1897,11 @@ namespace DagorAssetsExtractor::Export
             if (result.success)
             {
                 ++batch.succeeded;
+            }
+            else if (result.error.rfind("Output file already exists:", 0) == 0)
+            {
+                ++batch.skipped;
+                batch.warnings.push_back("Skipped existing file: " + entry.name);
             }
             else
             {

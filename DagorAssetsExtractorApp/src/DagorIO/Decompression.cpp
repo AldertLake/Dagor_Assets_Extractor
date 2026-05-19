@@ -45,6 +45,25 @@ namespace {
 
         return paths;
     }
+
+    std::vector<std::filesystem::path> BuildBundledOodleSearchPaths() {
+        const std::filesystem::path exeDir = GetExecutableDirectory();
+        std::vector<std::filesystem::path> paths;
+
+        if (exeDir.empty()) {
+            return paths;
+        }
+
+        paths.push_back(exeDir / "oo2core_6_win64.dll");
+
+        std::filesystem::path current = exeDir;
+        for (int depth = 0; depth < 4 && !current.empty(); ++depth) {
+            paths.push_back(current / "third_party" / "oo2core_6_win64.dll");
+            current = current.parent_path();
+        }
+
+        return paths;
+    }
 }
 
 // Note: Some versions of Oodle have a simpler signature or different parameter counts.
@@ -100,6 +119,16 @@ std::vector<uint8_t> Decompressor::DecompressZstd(std::span<const uint8_t> compr
 
 std::filesystem::path Decompressor::FindOodleDll(const std::string& gameRoot, const std::string& explicitDllPath) {
     for (const std::filesystem::path& dllPath : BuildOodleSearchPaths(gameRoot, explicitDllPath)) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(dllPath, ec)) {
+            return dllPath;
+        }
+    }
+    return {};
+}
+
+std::filesystem::path Decompressor::FindBundledOodleDll() {
+    for (const std::filesystem::path& dllPath : BuildBundledOodleSearchPaths()) {
         std::error_code ec;
         if (std::filesystem::is_regular_file(dllPath, ec)) {
             return dllPath;

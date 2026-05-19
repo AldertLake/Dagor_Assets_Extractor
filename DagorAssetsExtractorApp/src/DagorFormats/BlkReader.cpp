@@ -1,8 +1,13 @@
 #include "BlkReader.h"
 
+#include "DagorIO/BinaryReader.h"
+#include "DagorIO/Decompression.h"
+
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
+#include <span>
+#include <sstream>
 
 namespace DagorFormats
 {
@@ -24,6 +29,224 @@ namespace DagorFormats
             value.erase(value.begin(), std::find_if(value.begin(), value.end(), isNotSpace));
             value.erase(std::find_if(value.rbegin(), value.rend(), isNotSpace).base(), value.end());
         }
+
+        uint32_t ReadVlq(DagorIO::MemoryReader& reader)
+        {
+            uint32_t result = 0;
+            int bitShift = 0;
+            while (bitShift < 35)
+            {
+                const uint8_t raw = reader.ReadUInt8();
+                result |= (static_cast<uint32_t>(raw & 0x7F) << bitShift);
+                if ((raw & 0x80) == 0)
+                {
+                    return result;
+                }
+                bitShift += 7;
+            }
+            throw std::runtime_error("BLK VLQ is too long");
+        }
+
+        std::vector<std::string> ParseBlkNameMap(std::span<const uint8_t> bytes, uint32_t expectedCount)
+        {
+            if (bytes.size() < 2)
+            {
+                return {};
+            }
+
+            std::vector<std::string> names;
+            size_t start = 2; // Dagor binary BLK name maps carry a two-byte prefix.
+            for (size_t i = start; i < bytes.size(); ++i)
+            {
+                if (bytes[i] != 0)
+                {
+                    continue;
+                }
+
+                if (i > start)
+                {
+                    names.emplace_back(reinterpret_cast<const char*>(bytes.data() + start), i - start);
+                }
+                start = i + 1;
+            }
+
+            return names;
+        }
+
+        std::string ResolveBlkName(const std::vector<std::string>& names, uint32_t encodedNameId, bool isBlock)
+        {
+            const size_t offset = isBlock ? 2 : 1;
+            if (encodedNameId >= offset)
+            {
+                const size_t index = static_cast<size_t>(encodedNameId - offset);
+                if (index < names.size())
+                {
+                    return names[index];
+                }
+            }
+            return {};
+        }
+
+        float ReadFloat(std::span<const uint8_t> data, size_t offset)
+        {
+            if (offset + 4 > data.size()) return 0.0f;
+            uint32_t raw = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8) |
+                           (static_cast<uint32_t>(data[offset + 2]) << 16) | (static_cast<uint32_t>(data[offset + 3]) << 24);
+            float f;
+            std::memcpy(&f, &raw, sizeof(float));
+            return f;
+        }
+
+        int32_t ReadInt32(std::span<const uint8_t> data, size_t offset)
+        {
+            if (offset + 4 > data.size()) return 0;
+            return static_cast<int32_t>(data[offset]) | (static_cast<int32_t>(data[offset + 1]) << 8) |
+                   (static_cast<int32_t>(data[offset + 2]) << 16) | (static_cast<int32_t>(data[offset + 3]) << 24);
+        }
+
+        uint32_t ReadUInt32(std::span<const uint8_t> data, size_t offset)
+        {
+            if (offset + 4 > data.size()) return 0;
+            return static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8) |
+                   (static_cast<uint32_t>(data[offset + 2]) << 16) | (static_cast<uint32_t>(data[offset + 3]) << 24);
+        }
+
+        int64_t ReadInt64(std::span<const uint8_t> data, size_t offset)
+        {
+            if (offset + 8 > data.size()) return 0;
+            uint64_t low = ReadUInt32(data, offset);
+            uint64_t high = ReadUInt32(data, offset + 4);
+            return static_cast<int64_t>(low | (high << 32));
+        }
+
+        struct BinBlockMeta
+        {
+            std::string name;
+            uint32_t paramsCount = 0;
+            uint32_t childCount = 0;
+            uint32_t firstChild = 0;
+            size_t paramsOffset = 0;
+            std::vector<size_t> children;
+        };
+
+        void BuildBlkBlockTree(BlkBlock& outBlock, const std::vector<BinBlockMeta>& allBlocks, size_t currentIdx, 
+                               const std::vector<std::string>& names, std::span<const uint8_t> paramsData, std::span<const uint8_t> paramsTable)
+        {
+            const BinBlockMeta& meta = allBlocks[currentIdx];
+            outBlock.name = meta.name;
+            outBlock.line = static_cast<uint32_t>(currentIdx + 1);
+
+            for (uint32_t i = 0; i < meta.paramsCount; ++i)
+            {
+                const size_t pOff = meta.paramsOffset + static_cast<size_t>(i) * 8;
+                if (pOff + 8 > paramsTable.size()) continue;
+
+                const uint32_t flags = ReadUInt32(paramsTable, pOff);
+                const uint32_t rawValue = ReadUInt32(paramsTable, pOff + 4);
+                
+                const uint32_t encodedNameId = flags & 0x00FFFFFFu;
+                const uint8_t valueType = static_cast<uint8_t>(flags >> 24);
+                
+                BlkProperty prop;
+                prop.name = ResolveBlkName(names, encodedNameId, false);
+                prop.line = outBlock.line;
+
+                std::ostringstream valStr;
+                switch (valueType)
+                {
+                case 0x01: // String
+                    prop.type = "t";
+                    prop.quoted = true;
+                    if (rawValue < paramsData.size())
+                    {
+                        size_t len = 0;
+                        while (rawValue + len < paramsData.size() && paramsData[rawValue + len] != 0) len++;
+                        valStr << std::string(reinterpret_cast<const char*>(paramsData.data() + rawValue), len);
+                    }
+                    break;
+                case 0x02: // Int
+                    prop.type = "i";
+                    valStr << static_cast<int32_t>(rawValue);
+                    break;
+                case 0x03: // Float
+                {
+                    prop.type = "r";
+                    float f;
+                    std::memcpy(&f, &rawValue, sizeof(float));
+                    valStr << f;
+                    break;
+                }
+                case 0x04: // Float2
+                    prop.type = "p2";
+                    valStr << ReadFloat(paramsData, rawValue) << ", " << ReadFloat(paramsData, rawValue + 4);
+                    break;
+                case 0x05: // Float3
+                    prop.type = "p3";
+                    valStr << ReadFloat(paramsData, rawValue) << ", " << ReadFloat(paramsData, rawValue + 4) << ", " << ReadFloat(paramsData, rawValue + 8);
+                    break;
+                case 0x06: // Float4
+                    prop.type = "p4";
+                    valStr << ReadFloat(paramsData, rawValue) << ", " << ReadFloat(paramsData, rawValue + 4) << ", " 
+                           << ReadFloat(paramsData, rawValue + 8) << ", " << ReadFloat(paramsData, rawValue + 12);
+                    break;
+                case 0x07: // Int2
+                    prop.type = "ip2";
+                    valStr << ReadInt32(paramsData, rawValue) << ", " << ReadInt32(paramsData, rawValue + 4);
+                    break;
+                case 0x08: // Int3
+                    prop.type = "ip3";
+                    valStr << ReadInt32(paramsData, rawValue) << ", " << ReadInt32(paramsData, rawValue + 4) << ", " << ReadInt32(paramsData, rawValue + 8);
+                    break;
+                case 0x09: // Bool
+                    prop.type = "b";
+                    valStr << (rawValue ? "yes" : "no");
+                    break;
+                case 0x0A: // Color
+                {
+                    prop.type = "c";
+                    uint8_t a = static_cast<uint8_t>(rawValue >> 24);
+                    uint8_t r = static_cast<uint8_t>((rawValue >> 16) & 0xFF);
+                    uint8_t g = static_cast<uint8_t>((rawValue >> 8) & 0xFF);
+                    uint8_t b = static_cast<uint8_t>(rawValue & 0xFF);
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "#%02X%02X%02X%02X", a, r, g, b);
+                    valStr << buf;
+                    break;
+                }
+                case 0x0B: // Float12
+                    prop.type = "m";
+                    valStr << "[";
+                    for (int v = 0; v < 4; ++v)
+                    {
+                        valStr << "[" << ReadFloat(paramsData, rawValue + v * 12) << ", " 
+                               << ReadFloat(paramsData, rawValue + v * 12 + 4) << ", " 
+                               << ReadFloat(paramsData, rawValue + v * 12 + 8) << "]";
+                        if (v < 3) valStr << " ";
+                    }
+                    valStr << "]";
+                    break;
+                case 0x0C: // Long
+                    prop.type = "i64";
+                    valStr << ReadInt64(paramsData, rawValue);
+                    break;
+                default:
+                    prop.type = "unknown";
+                    valStr << "0";
+                    break;
+                }
+
+                prop.value = valStr.str();
+                outBlock.properties.push_back(std::move(prop));
+            }
+
+            outBlock.children.reserve(meta.children.size());
+            for (const size_t childIdx : meta.children)
+            {
+                BlkBlock childBlock;
+                BuildBlkBlockTree(childBlock, allBlocks, childIdx, names, paramsData, paramsTable);
+                outBlock.children.push_back(std::move(childBlock));
+            }
+        }
     }
 
     BlkReader::BlkReader(std::string_view text)
@@ -40,7 +263,132 @@ namespace DagorFormats
         m_root.name = "<root>";
         m_root.line = 1;
 
-        ParseBlockContents(m_root, false);
+        if (IsBinaryBlk(m_text))
+        {
+            ParseBinary();
+        }
+        else
+        {
+            ParseBlockContents(m_root, false);
+        }
+    }
+
+    void BlkReader::ParseBinary()
+    {
+        std::span<const uint8_t> data(reinterpret_cast<const uint8_t*>(m_text.data()), m_text.size());
+        std::vector<uint8_t> decompressedData;
+
+        if (data.empty())
+        {
+            return; // Empty file
+        }
+
+        // Handle Zstd envelope if present
+        if (data.size() >= 4)
+        {
+            uint32_t magic = ReadUInt32(data, 0);
+            if (magic == 0xFD2FB528)
+            {
+                decompressedData = DagorIO::Decompressor::DecompressZstd(data);
+                data = decompressedData;
+            }
+        }
+        else if (data[0] == 0x02) // Alternate Zstd envelope?
+        {
+            // GameResDesc uses 0x02 + 24-bit size, but standard BLK does not usually.
+            // But just in case, we can handle it if we ever encounter it, or ignore.
+        }
+
+        if (data.empty()) return;
+
+        DagorIO::MemoryReader reader(data);
+        const uint8_t magic = reader.ReadUInt8();
+        if (magic != 0x00 && magic != 0x01)
+        {
+            throw std::runtime_error("Unsupported binary BLK magic: " + std::to_string(magic));
+        }
+
+        const uint32_t namesCount = ReadVlq(reader);
+        const uint32_t namesSize = ReadVlq(reader);
+        if (reader.GetRemaining() < namesSize)
+        {
+            throw std::runtime_error("BLK name map extends past end of payload");
+        }
+
+        const std::span<const uint8_t> nameBytes = reader.ReadSpan(namesSize);
+        std::vector<std::string> names = ParseBlkNameMap(nameBytes, namesCount);
+
+        const uint32_t blocksCount = ReadVlq(reader);
+        const uint32_t paramsCount = ReadVlq(reader);
+        const uint32_t paramsDataSize = ReadVlq(reader);
+        
+        if (blocksCount == 0)
+        {
+            return;
+        }
+
+        if (reader.GetRemaining() < paramsDataSize)
+        {
+            throw std::runtime_error("BLK parameter data extends past end of payload");
+        }
+        std::span<const uint8_t> paramsData = reader.ReadSpan(paramsDataSize);
+
+        const size_t paramsBytes = static_cast<size_t>(paramsCount) * 8;
+        if (reader.GetRemaining() < paramsBytes)
+        {
+            throw std::runtime_error("BLK parameter table extends past end of payload");
+        }
+        std::span<const uint8_t> paramsTable = reader.ReadSpan(paramsBytes);
+
+        std::vector<BinBlockMeta> blocks;
+        blocks.reserve(blocksCount);
+        size_t nextParamsOffset = 0;
+        
+        for (uint32_t i = 0; i < blocksCount; ++i)
+        {
+            const uint32_t encodedNameId = ReadVlq(reader);
+            BinBlockMeta block;
+            block.name = ResolveBlkName(names, encodedNameId, true);
+            block.paramsCount = ReadVlq(reader);
+            block.childCount = ReadVlq(reader);
+            if (block.childCount != 0)
+            {
+                block.firstChild = ReadVlq(reader);
+            }
+            block.paramsOffset = nextParamsOffset;
+
+            const size_t blockParamsBytes = static_cast<size_t>(block.paramsCount) * 8;
+            if (nextParamsOffset + blockParamsBytes > paramsTable.size())
+            {
+                throw std::runtime_error("BLK block parameter range is invalid");
+            }
+            nextParamsOffset += blockParamsBytes;
+
+            blocks.push_back(std::move(block));
+        }
+
+        for (size_t i = 0; i < blocks.size(); ++i)
+        {
+            BinBlockMeta& block = blocks[i];
+            if (block.childCount == 0) continue;
+            
+            if (static_cast<size_t>(block.firstChild) + block.childCount > blocks.size())
+            {
+                throw std::runtime_error("BLK child block range is invalid");
+            }
+            
+            block.children.reserve(block.childCount);
+            for (uint32_t c = 0; c < block.childCount; ++c)
+            {
+                block.children.push_back(static_cast<size_t>(block.firstChild + c));
+            }
+        }
+
+        if (!blocks.empty())
+        {
+            // Root block is always blocks[0]
+            BuildBlkBlockTree(m_root, blocks, 0, names, paramsData, paramsTable);
+        }
     }
 
     void BlkReader::ParseBlockContents(BlkBlock& block, bool stopAtClosingBrace)
@@ -382,4 +730,3 @@ namespace DagorFormats
         return false;
     }
 }
-

@@ -62,6 +62,9 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(ProjectDir)..\third_party\oo2core_6_win64.dll" copy /Y "$(ProjectDir)..\third_party\oo2core_6_win64.dll" "$(OutDir)oo2core_6_win64.dll" &gt;nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -81,6 +84,9 @@
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(ProjectDir)..\third_party\oo2core_6_win64.dll" copy /Y "$(ProjectDir)..\third_party\oo2core_6_win64.dll" "$(OutDir)oo2core_6_win64.dll" &gt;nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
@@ -98,6 +104,7 @@
     <ClCompile Include="src\DagorFormats\VromfsReader.cpp" />
     <ClCompile Include="src\DagorFormats\DxpReader.cpp" />
     <ClCompile Include="src\DagorFormats\GrpReader.cpp" />
+    <ClCompile Include="src\DagorFormats\DynModelReader.cpp" />
     <ClCompile Include="src\DagorFormats\GameResDescReader.cpp" />
     <ClCompile Include="src\DagorFormats\GeomNodeTreeReader.cpp" />
     <ClCompile Include="src\DagorFormats\RendInstReader.cpp" />
@@ -131,6 +138,7 @@
     <ClInclude Include="src\DagorFormats\VromfsReader.h" />
     <ClInclude Include="src\DagorFormats\DxpReader.h" />
     <ClInclude Include="src\DagorFormats\GrpReader.h" />
+    <ClInclude Include="src\DagorFormats\DynModelReader.h" />
     <ClInclude Include="src\DagorFormats\GameResDescReader.h" />
     <ClInclude Include="src\DagorFormats\GeomNodeTreeReader.h" />
     <ClInclude Include="src\DagorFormats\RendInstReader.h" />

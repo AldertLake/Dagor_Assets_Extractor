@@ -38,6 +38,7 @@ namespace DagorFormats
 
     private:
         void ParseBlockContents(BlkBlock& block, bool stopAtClosingBrace);
+        void ParseBinary();
         BlkProperty ParseProperty(std::string name, std::string type, uint32_t line);
         BlkBlock ParseChildBlock(std::string name, std::string type, uint32_t line);
 

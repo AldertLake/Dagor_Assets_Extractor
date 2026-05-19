@@ -25,12 +25,10 @@ namespace DagorAssetsExtractor::App
     {
         std::filesystem::path gameRoot;
         std::filesystem::path exportRoot;
-        std::filesystem::path oodleDllPath;
         std::string textureExportFormat = "DDS";
         std::string modelExportFormat = "GLB";
         bool exportTexturesWithModels = true;
         bool preserveOriginalDDS = true;
-        bool useOodleFromGameFolder = true;
         bool indexCacheEnabled = true;
         std::string lastOpenedPackFilters;
     };
@@ -115,7 +113,6 @@ namespace DagorAssetsExtractor::App
 
         std::array<char, PathBufferSize> gameRootBuffer = {};
         std::array<char, PathBufferSize> exportRootBuffer = {};
-        std::array<char, PathBufferSize> oodleDllPathBuffer = {};
         std::array<char, SearchBufferSize> searchBuffer = {};
         std::wstring selectedPath;
 

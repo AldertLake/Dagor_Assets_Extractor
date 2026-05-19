@@ -420,6 +420,400 @@ namespace DagorAssetsExtractor::Export
         return true;
     }
 
+    bool ModelExporter::ExportToGlb(
+        const std::filesystem::path& path,
+        const std::vector<DagorFormats::DynModelMesh>& lods_in,
+        const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
+        const ExportManifest& manifest,
+        const std::vector<MaterialInfo>& materials)
+    {
+        std::vector<DagorFormats::DynModelMesh> lods;
+        for (const auto& lod_in : lods_in)
+        {
+            if (lod_in.vertices.empty() || lod_in.indices.empty())
+                continue;
+
+            DagorFormats::DynModelMesh validLod = lod_in;
+            validLod.primitives.erase(
+                std::remove_if(validLod.primitives.begin(), validLod.primitives.end(),
+                    [](const DagorFormats::RendInstPrimitive& p) { return p.indexCount == 0; }),
+                validLod.primitives.end());
+
+            if (validLod.primitives.empty())
+            {
+                validLod.primitives.push_back({ 0, 0, static_cast<uint32_t>(validLod.indices.size()) });
+            }
+
+            lods.push_back(std::move(validLod));
+        }
+
+        if (lods.empty())
+        {
+            return false;
+        }
+
+        struct LodBinInfo
+        {
+            size_t vertByteOffset;
+            size_t vertByteLength;
+            size_t indexByteOffset;
+            size_t indexByteLength;
+
+            float minX = std::numeric_limits<float>::max();
+            float minY = std::numeric_limits<float>::max();
+            float minZ = std::numeric_limits<float>::max();
+            float maxX = -std::numeric_limits<float>::max();
+            float maxY = -std::numeric_limits<float>::max();
+            float maxZ = -std::numeric_limits<float>::max();
+        };
+
+        std::vector<LodBinInfo> binInfos;
+        binInfos.reserve(lods.size());
+
+        std::vector<uint8_t> binBuffer;
+        
+        for (const auto& mesh : lods)
+        {
+            LodBinInfo info;
+            info.vertByteOffset = binBuffer.size();
+            info.vertByteLength = mesh.vertices.size() * sizeof(DagorFormats::SkinnedVertex);
+
+            if (!mesh.vertices.empty())
+            {
+                const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(mesh.vertices.data());
+                binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
+
+                for (const auto& v : mesh.vertices)
+                {
+                    info.minX = std::min(info.minX, v.x);
+                    info.minY = std::min(info.minY, v.y);
+                    info.minZ = std::min(info.minZ, v.z);
+                    info.maxX = std::max(info.maxX, v.x);
+                    info.maxY = std::max(info.maxY, v.y);
+                    info.maxZ = std::max(info.maxZ, v.z);
+                }
+            }
+            else
+            {
+                info.minX = info.minY = info.minZ = 0.0f;
+                info.maxX = info.maxY = info.maxZ = 0.0f;
+            }
+
+            while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
+
+            info.indexByteOffset = binBuffer.size();
+            info.indexByteLength = mesh.indices.size() * sizeof(uint32_t);
+
+            if (!mesh.indices.empty())
+            {
+                const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(mesh.indices.data());
+                binBuffer.insert(binBuffer.end(), indexBytes, indexBytes + info.indexByteLength);
+            }
+
+            binInfos.push_back(info);
+            while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
+        }
+
+        // Add Inverse Bind Matrices to BIN buffer
+        size_t ibmByteOffset = binBuffer.size();
+        size_t ibmByteLength = skeleton.size() * 16 * sizeof(float);
+        for (const auto& node : skeleton)
+        {
+            const uint8_t* matrixBytes = reinterpret_cast<const uint8_t*>(node.inverseBindTransform.data());
+            binBuffer.insert(binBuffer.end(), matrixBytes, matrixBytes + 16 * sizeof(float));
+        }
+        while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
+
+        // Generate JSON
+        std::stringstream json;
+        json << "{\n";
+        json << "  \"asset\": {\n";
+        json << "    \"version\": \"2.0\",\n";
+        json << "    \"generator\": \"DagorAssetsExtractor\"\n";
+        json << "  },\n";
+
+        json << "  \"scene\": 0,\n";
+        json << "  \"scenes\": [\n";
+        json << "    {\n";
+        json << "      \"nodes\": [0]\n"; // Root of everything (skeleton root + meshes)
+        json << "    }\n";
+        json << "  ],\n";
+
+        // Nodes definition
+        json << "  \"nodes\": [\n";
+        // Node 0: Global root
+        json << "    {\n";
+        json << "      \"name\": \"Root\",\n";
+        json << "      \"children\": [";
+        // Skeleton roots (nodes with no parent)
+        bool first = true;
+        for (size_t i = 0; i < skeleton.size(); ++i)
+        {
+            if (skeleton[i].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex)
+            {
+                if (!first) json << ", ";
+                json << (i + 1);
+                first = false;
+            }
+        }
+        // Mesh nodes
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            if (!first) json << ", ";
+            json << (skeleton.size() + 1 + i);
+            first = false;
+        }
+        json << "]\n";
+        json << "    },\n";
+
+        // Skeleton nodes (1 to skeleton.size())
+        for (size_t i = 0; i < skeleton.size(); ++i)
+        {
+            const auto& node = skeleton[i];
+            json << "    {\n";
+            json << "      \"name\": \"" << node.name << "\",\n";
+            
+            // localTransform is 4x4 matrix
+            json << "      \"matrix\": [";
+            for (int m = 0; m < 16; ++m)
+            {
+                json << std::fixed << std::setprecision(6) << node.localTransform[m];
+                if (m < 15) json << ", ";
+            }
+            json << "],\n";
+
+            if (!node.childIndices.empty())
+            {
+                json << "      \"children\": [";
+                for (size_t c = 0; c < node.childIndices.size(); ++c)
+                {
+                    json << (node.childIndices[c] + 1);
+                    if (c + 1 < node.childIndices.size()) json << ", ";
+                }
+                json << "]\n";
+            }
+            else
+            {
+                // Remove trailing comma if no children
+                json.seekp(-2, std::ios_base::end);
+                json << "\n";
+            }
+            json << "    },\n";
+        }
+
+        // Mesh nodes
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            json << "    {\n";
+            json << "      \"name\": \"" << lods[i].name << "\",\n";
+            json << "      \"mesh\": " << i << ",\n";
+            json << "      \"skin\": 0\n";
+            json << "    }";
+            if (i + 1 < lods.size()) json << ",";
+            json << "\n";
+        }
+        json << "  ],\n";
+
+        // Skin definition
+        json << "  \"skins\": [\n";
+        json << "    {\n";
+        json << "      \"inverseBindMatrices\": " << (lods.size() * 5 + lods.size()) << ",\n"; // Accessor index
+        json << "      \"joints\": [";
+        for (size_t i = 0; i < skeleton.size(); ++i)
+        {
+            json << (i + 1);
+            if (i + 1 < skeleton.size()) json << ", ";
+        }
+        json << "]\n";
+        json << "    }\n";
+        json << "  ],\n";
+
+        // Meshes definition
+        json << "  \"meshes\": [\n";
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            const auto& mesh = lods[i];
+            json << "    {\n";
+            json << "      \"name\": \"" << mesh.name << "\",\n";
+            json << "      \"primitives\": [\n";
+            
+            for (size_t p = 0; p < mesh.primitives.size(); ++p)
+            {
+                const auto& prim = mesh.primitives[p];
+                json << "        {\n";
+                json << "          \"attributes\": {\n";
+                json << "            \"POSITION\": " << (i * 5) << ",\n";
+                json << "            \"NORMAL\": " << (i * 5 + 1) << ",\n";
+                json << "            \"TEXCOORD_0\": " << (i * 5 + 2) << ",\n";
+                json << "            \"JOINTS_0\": " << (i * 5 + 3) << ",\n";
+                json << "            \"WEIGHTS_0\": " << (i * 5 + 4) << "\n";
+                json << "          },\n";
+                json << "          \"indices\": " << (lods.size() * 5 + p) << ",\n";
+                
+                if (!materials.empty())
+                {
+                    size_t matIdx = static_cast<size_t>(prim.materialIndex);
+                    if (matIdx >= materials.size()) matIdx = 0;
+                    json << "          \"material\": " << matIdx << ",\n";
+                }
+                
+                json << "          \"mode\": 4\n";
+                json << "        }";
+                if (p + 1 < mesh.primitives.size()) json << ",";
+                json << "\n";
+            }
+            json << "      ]\n";
+            json << "    }";
+            if (i + 1 < lods.size()) json << ",";
+            json << "\n";
+        }
+        json << "  ],\n";
+
+        if (!materials.empty())
+        {
+            // Materials definition (same as static)
+            json << "  \"materials\": [\n";
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                json << "    {\n";
+                json << "      \"name\": \"" << materials[i].name << "\",\n";
+                json << "      \"pbrMetallicRoughness\": {\n";
+                json << "        \"baseColorTexture\": { \"index\": " << i << " },\n";
+                json << "        \"metallicFactor\": 0.0,\n";
+                json << "        \"roughnessFactor\": 1.0\n";
+                json << "      }\n";
+                json << "    }";
+                if (i + 1 < materials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            json << "  \"textures\": [\n";
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                json << "    { \"sampler\": 0, \"source\": " << i << " }";
+                if (i + 1 < materials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            json << "  \"images\": [\n";
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                json << "    { \"uri\": \"" << materials[i].diffuseTexturePath << "\" }";
+                if (i + 1 < materials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            json << "  \"samplers\": [\n";
+            json << "    { \"magFilter\": 9729, \"minFilter\": 9987, \"wrapS\": 10497, \"wrapT\": 10497 }\n";
+            json << "  ],\n";
+        }
+
+        // BufferViews
+        json << "  \"bufferViews\": [\n";
+        // Vertex bufferViews
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            json << "    {\n";
+            json << "      \"buffer\": 0,\n";
+            json << "      \"byteOffset\": " << binInfos[i].vertByteOffset << ",\n";
+            json << "      \"byteLength\": " << binInfos[i].vertByteLength << ",\n";
+            json << "      \"byteStride\": " << sizeof(DagorFormats::SkinnedVertex) << ",\n";
+            json << "      \"target\": 34962\n";
+            json << "    },\n";
+        }
+        // Index bufferViews
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            json << "    {\n";
+            json << "      \"buffer\": 0,\n";
+            json << "      \"byteOffset\": " << binInfos[i].indexByteOffset << ",\n";
+            json << "      \"byteLength\": " << binInfos[i].indexByteLength << ",\n";
+            json << "      \"target\": 34963\n";
+            json << "    },\n";
+        }
+        // IBM bufferView
+        json << "    {\n";
+        json << "      \"buffer\": 0,\n";
+        json << "      \"byteOffset\": " << ibmByteOffset << ",\n";
+        json << "      \"byteLength\": " << ibmByteLength << "\n";
+        json << "    }\n";
+        json << "  ],\n";
+
+        // Accessors
+        json << "  \"accessors\": [\n";
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            const auto& mesh = lods[i];
+            const auto& info = binInfos[i];
+
+            // POSITION
+            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\", \"max\": [" << info.maxX << "," << info.maxY << "," << info.maxZ << "], \"min\": [" << info.minX << "," << info.minY << "," << info.minZ << "] },\n";
+            // NORMAL
+            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 12, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\" },\n";
+            // TEXCOORD_0
+            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 24, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC2\" },\n";
+            // JOINTS_0
+            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 32, \"componentType\": 5121, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC4\" },\n";
+            // WEIGHTS_0
+            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 36, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC4\" },\n";
+        }
+
+        // Index accessors
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            const auto& mesh = lods[i];
+            for (size_t p = 0; p < mesh.primitives.size(); ++p)
+            {
+                const auto& prim = mesh.primitives[p];
+                json << "    { \"bufferView\": " << (lods.size() + i) << ", \"byteOffset\": " << (prim.firstIndex * sizeof(uint32_t)) << ", \"componentType\": 5125, \"count\": " << prim.indexCount << ", \"type\": \"SCALAR\" },\n";
+            }
+        }
+
+        // IBM accessor
+        json << "    { \"bufferView\": " << (lods.size() * 2) << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }\n";
+        json << "  ],\n";
+
+        json << "  \"buffers\": [ { \"byteLength\": " << binBuffer.size() << " } ]\n";
+        json << "}\n";
+
+        std::string jsonStr = json.str();
+        while (jsonStr.size() % 4 != 0) jsonStr.push_back(' ');
+
+        std::ofstream out(path, std::ios::binary);
+        if (!out) return false;
+
+        uint32_t magic = 0x46546C67;
+        uint32_t version = 2;
+        uint32_t totalLength = 12 + 8 + static_cast<uint32_t>(jsonStr.size()) + 8 + static_cast<uint32_t>(binBuffer.size());
+
+        out.write(reinterpret_cast<const char*>(&magic), 4);
+        out.write(reinterpret_cast<const char*>(&version), 4);
+        out.write(reinterpret_cast<const char*>(&totalLength), 4);
+
+        uint32_t jsonChunkLen = static_cast<uint32_t>(jsonStr.size());
+        uint32_t jsonChunkType = 0x4E4F534A;
+        out.write(reinterpret_cast<const char*>(&jsonChunkLen), 4);
+        out.write(reinterpret_cast<const char*>(&jsonChunkType), 4);
+        out.write(jsonStr.data(), jsonStr.size());
+
+        uint32_t binChunkLen = static_cast<uint32_t>(binBuffer.size());
+        uint32_t binChunkType = 0x004E4942;
+        out.write(reinterpret_cast<const char*>(&binChunkLen), 4);
+        out.write(reinterpret_cast<const char*>(&binChunkType), 4);
+        out.write(reinterpret_cast<const char*>(binBuffer.data()), binBuffer.size());
+
+        out.close();
+
+        std::filesystem::path manifestPath = path;
+        manifestPath.replace_extension(".export-manifest.json");
+        manifest.WriteToFile(manifestPath);
+
+        return true;
+    }
+
     bool ModelExporter::ExportToObj(
         const std::filesystem::path& path,
         const DagorFormats::RendInstMesh& mesh,

@@ -5,6 +5,8 @@
 #include "Export/ModelExporter.h"
 #include "DagorFormats/BlkReader.h"
 #include "DagorFormats/RendInstReader.h"
+#include "DagorFormats/DynModelReader.h"
+#include "DagorFormats/GeomNodeTreeReader.h"
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -57,6 +59,18 @@ namespace DagorAssetsExtractor::App
     bool HasRendInstMagic(const std::vector<uint8_t>& payload)
     {
         return payload.size() >= 4 && std::memcmp(payload.data(), "RIND", 4) == 0;
+    }
+
+    bool HasDynModelMagic(const std::vector<uint8_t>& payload)
+    {
+        return payload.size() >= 4 && (std::memcmp(payload.data(), "DYN3", 4) == 0 || std::memcmp(payload.data(), "DYN2", 4) == 0);
+    }
+
+    bool HasGeomNodeTreeMagic(const std::vector<uint8_t>& payload)
+    {
+        // GeomNodeTree often has no magic, or starts with zstd/oodle frame.
+        // We'll trust the classId or caller.
+        return !payload.empty();
     }
 
     std::string FormatPayloadMagic(const std::vector<uint8_t>& payload)
@@ -190,10 +204,6 @@ namespace DagorAssetsExtractor::App
             {
                 settings.exportRoot = Platform::Utf8ToPath(value);
             }
-            else if (key == "oodleDllPath")
-            {
-                settings.oodleDllPath = Platform::Utf8ToPath(value);
-            }
             else if (key == "textureExportFormat")
             {
                 settings.textureExportFormat = value;
@@ -209,10 +219,6 @@ namespace DagorAssetsExtractor::App
             else if (key == "preserveOriginalDDS")
             {
                 settings.preserveOriginalDDS = ParseBool(value, settings.preserveOriginalDDS);
-            }
-            else if (key == "useOodleFromGameFolder")
-            {
-                settings.useOodleFromGameFolder = ParseBool(value, settings.useOodleFromGameFolder);
             }
             else if (key == "indexCacheEnabled")
             {
@@ -244,12 +250,10 @@ namespace DagorAssetsExtractor::App
 
         file << "gameRoot=" << Platform::PathToUtf8(settings.gameRoot) << '\n';
         file << "exportRoot=" << Platform::PathToUtf8(settings.exportRoot) << '\n';
-        file << "oodleDllPath=" << Platform::PathToUtf8(settings.oodleDllPath) << '\n';
         file << "textureExportFormat=" << settings.textureExportFormat << '\n';
         file << "modelExportFormat=" << settings.modelExportFormat << '\n';
         file << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
         file << "preserveOriginalDDS=" << (settings.preserveOriginalDDS ? "true" : "false") << '\n';
-        file << "useOodleFromGameFolder=" << (settings.useOodleFromGameFolder ? "true" : "false") << '\n';
         file << "indexCacheEnabled=" << (settings.indexCacheEnabled ? "true" : "false") << '\n';
         file << "lastOpenedPackFilters=" << settings.lastOpenedPackFilters << '\n';
         return true;
@@ -259,7 +263,6 @@ namespace DagorAssetsExtractor::App
     {
         CopyToBuffer(app.gameRootBuffer, Platform::PathToUtf8(app.settings.gameRoot));
         CopyToBuffer(app.exportRootBuffer, Platform::PathToUtf8(app.settings.exportRoot));
-        CopyToBuffer(app.oodleDllPathBuffer, Platform::PathToUtf8(app.settings.oodleDllPath));
     }
 
     void StopScan(AppState& app)
@@ -563,11 +566,11 @@ namespace DagorAssetsExtractor::App
         Export::TextureExportOptions options;
         options.outputDir = app.settings.exportRoot;
         options.gameRoot = app.settings.gameRoot;
-        options.oodleDllPath = app.settings.oodleDllPath;
+        options.oodleDllPath = DagorIO::Decompressor::FindBundledOodleDll();
         options.format = app.settings.textureExportFormat;
         options.preserveOriginalDDS = app.settings.preserveOriginalDDS;
         options.overwrite = true;
-        options.useOodleFromGameFolder = app.settings.useOodleFromGameFolder;
+        options.useOodleFromGameFolder = false;
         return options;
     }
 
@@ -591,13 +594,15 @@ namespace DagorAssetsExtractor::App
 
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
     {
-        if (entry.grpClassId != 0 && !AssetIndex::CanExportGrpEntryAsStaticModel(entry))
+        if (entry.grpClassId != 0 && 
+            !AssetIndex::CanExportGrpEntryAsStaticModel(entry) && 
+            !AssetIndex::CanExportGrpEntryAsSkinnedModel(entry))
         {
             const std::string className = AssetIndex::DescribeGrpClassId(entry.grpClassId);
             AddLog(app, LogLevel::Warning,
                 "Skipped export for " + entry.name + ": " +
                 (className.empty() ? std::string("unsupported GRP entry type") : className) +
-                ". Only RendInst static meshes can be exported right now.");
+                ". Only RendInst and DynModel meshes can be exported right now.");
             return;
         }
 
@@ -608,11 +613,11 @@ namespace DagorAssetsExtractor::App
         bool exportTextures = app.settings.exportTexturesWithModels;
         
         auto descriptorLinks = SnapshotDescriptorResourceLinks(app);
+        auto allRecords = SnapshotRecords(app.scan);
         auto textureExportOptions = GetTextureExportOptions(app);
-        // Use the model export folder as the output folder for textures too
         textureExportOptions.outputDir = exportRoot;
 
-        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, exportTextures, descriptorLinks, textureExportOptions]() {
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, exportTextures, descriptorLinks, allRecords, textureExportOptions]() {
             try
             {
                 std::ifstream file(packPath, std::ios::binary);
@@ -630,26 +635,6 @@ namespace DagorAssetsExtractor::App
                     return;
                 }
 
-                if (!HasRendInstMagic(payload))
-                {
-                    std::string message = "Skipped export for " + entry.name + ": ";
-                    const std::string className = AssetIndex::DescribeGrpClassId(entry.grpClassId);
-                    if (!className.empty())
-                    {
-                        message += className + " entry";
-                    }
-                    else
-                    {
-                        message += "unsupported GRP payload";
-                    }
-                    message += " (magic " + FormatPayloadMagic(payload) + "). Only RendInst static meshes can be exported right now.";
-                    AddLog(app, LogLevel::Warning, std::move(message));
-                    return;
-                }
-
-                DagorFormats::RendInstReader reader(payload);
-                reader.Parse();
-
                 std::string safeName = entry.name;
                 std::replace(safeName.begin(), safeName.end(), '/', '_');
                 std::replace(safeName.begin(), safeName.end(), '\\', '_');
@@ -661,77 +646,66 @@ namespace DagorAssetsExtractor::App
                 DagorAssetsExtractor::Export::ExportManifest manifest;
                 manifest.sourcePack = packPath.filename().string();
                 manifest.sourceResource = entry.name;
-                manifest.assetType = "RendInst Static Model";
                 manifest.appVersion = "1.0.0";
-                manifest.formatDecoderVersion = "RendInstReader v1.0";
 
                 std::vector<Export::MaterialInfo> materials;
                 
-                if (exportTextures && descriptorLinks)
+                // Find matching descriptor link for dependencies
+                const AssetIndex::DescriptorResourceLink* matchedLink = nullptr;
+                if (descriptorLinks)
                 {
-                    // Find matching descriptor link for this GRP entry
                     for (const auto& link : *descriptorLinks)
                     {
-                        // Match by name and by GRP path if available
-                        bool nameMatch = false;
-                        if (link.matchedGrpEntryName)
-                        {
-                            nameMatch = (*link.matchedGrpEntryName == entry.name);
-                        }
-                        else
-                        {
-                            nameMatch = (link.resourceName == entry.name);
-                        }
+                        bool nameMatch = (link.matchedGrpEntryName && *link.matchedGrpEntryName == entry.name) || (link.resourceName == entry.name);
                         bool packMatch = !link.matchedGrpPath || (*link.matchedGrpPath == packPath);
-
                         if (nameMatch && packMatch)
                         {
-                            for (const auto& texLink : link.textureLinks)
+                            matchedLink = &link;
+                            break;
+                        }
+                    }
+                }
+
+                if (matchedLink && exportTextures)
+                {
+                    for (const auto& texLink : matchedLink->textureLinks)
+                    {
+                        if (texLink.matchedDxpPath && texLink.matchedDxpEntryName)
+                        {
+                            auto dxpContents = app.packContentsCache.Get(*texLink.matchedDxpPath);
+                            if (!dxpContents)
                             {
-                                if (texLink.matchedDxpPath && texLink.matchedDxpEntryName)
+                                auto newContents = AssetIndex::ParseDxpContents(*texLink.matchedDxpPath);
+                                if (newContents)
                                 {
-                                    // Resolve SubAssetRecord for the texture
-                                    auto dxpContents = app.packContentsCache.Get(*texLink.matchedDxpPath);
-                                    if (!dxpContents)
-                                    {
-                                        auto newContents = AssetIndex::ParseDxpContents(*texLink.matchedDxpPath);
-                                        if (newContents)
-                                        {
-                                            app.packContentsCache.Put(*texLink.matchedDxpPath, newContents);
-                                            dxpContents = newContents;
-                                        }
-                                    }
-
-                                    if (dxpContents)
-                                    {
-                                        auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
-                                            return e.name == *texLink.matchedDxpEntryName;
-                                        });
-
-                                        if (it != dxpContents->entries.end())
-                                        {
-                                            auto texResult = Export::TextureExporter::ExportTexture(*texLink.matchedDxpPath, *it, textureExportOptions);
-                                            if (texResult.success)
-                                            {
-                                                Export::MaterialInfo mat;
-                                                mat.name = texLink.textureName;
-                                                mat.diffuseTexturePath = texResult.outputPath.filename().string();
-                                                materials.push_back(mat);
-                                                manifest.textureDependencies.push_back(texResult.outputPath.filename().string());
-                                            }
-                                            else
-                                            {
-                                                manifest.decodeWarnings.push_back("Failed to export texture dependency: " + texLink.textureName + " (" + texResult.error + ")");
-                                            }
-                                        }
-                                    }
-                                }
-                                else
-                                {
-                                    manifest.decodeWarnings.push_back("Could not find pack for texture dependency: " + texLink.textureName);
+                                    app.packContentsCache.Put(*texLink.matchedDxpPath, newContents);
+                                    dxpContents = newContents;
                                 }
                             }
-                            break;
+
+                            if (dxpContents)
+                            {
+                                auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
+                                    return e.name == *texLink.matchedDxpEntryName;
+                                });
+
+                                if (it != dxpContents->entries.end())
+                                {
+                                    auto texResult = Export::TextureExporter::ExportTexture(*texLink.matchedDxpPath, *it, textureExportOptions);
+                                    if (texResult.success)
+                                    {
+                                        Export::MaterialInfo mat;
+                                        mat.name = texLink.textureName;
+                                        mat.diffuseTexturePath = texResult.outputPath.filename().string();
+                                        materials.push_back(mat);
+                                        manifest.textureDependencies.push_back(texResult.outputPath.filename().string());
+                                    }
+                                    else
+                                    {
+                                        manifest.decodeWarnings.push_back("Failed to export texture dependency: " + texLink.textureName + " (" + texResult.error + ")");
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -739,25 +713,143 @@ namespace DagorAssetsExtractor::App
                 bool success = false;
                 fs::path outPath;
 
-                if (format == "GLB" || format == "glb")
+                if (HasRendInstMagic(payload))
                 {
-                    outPath = exportRoot / (safeName + ".glb");
-                    manifest.outputFiles.push_back(outPath.filename().string());
-                    success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest, materials);
-                }
-                else
-                {
-                    outPath = exportRoot / (safeName + ".obj");
-                    manifest.outputFiles.push_back(outPath.filename().string());
-                    if (!reader.GetLods().empty())
+                    DagorFormats::RendInstReader reader(payload);
+                    reader.Parse();
+
+                    manifest.assetType = "RendInst Static Model";
+                    manifest.formatDecoderVersion = "RendInstReader v1.0";
+
+                    if (format == "GLB" || format == "glb")
                     {
-                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToObj(outPath, reader.GetLods()[0], manifest);
+                        outPath = exportRoot / (safeName + ".glb");
+                        manifest.outputFiles.push_back(outPath.filename().string());
+                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest, materials);
                     }
                     else
                     {
-                        AddLog(app, LogLevel::Error, "No LODs available to export as OBJ.");
-                        return;
+                        outPath = exportRoot / (safeName + ".obj");
+                        manifest.outputFiles.push_back(outPath.filename().string());
+                        if (!reader.GetLods().empty())
+                        {
+                            success = DagorAssetsExtractor::Export::ModelExporter::ExportToObj(outPath, reader.GetLods()[0], manifest);
+                        }
                     }
+                }
+                else if (HasDynModelMagic(payload))
+                {
+                    DagorFormats::DynModelReader reader(payload);
+                    reader.Parse();
+
+                    manifest.assetType = "DynModel Skinned Model";
+                    manifest.formatDecoderVersion = "DynModelReader v1.0";
+
+                    // Try to resolve skeleton
+                    std::vector<DagorFormats::GeomNodeTreeNode> skeleton;
+                    std::string skeletonName;
+                    
+                    // If we have a descriptor link, it might specify a skeleton
+                    // Since I haven't added skeletonName to DescriptorResourceLink yet,
+                    // I'll try to find it from the descriptor directly if available.
+                    if (matchedLink)
+                    {
+                        // We need to re-parse the descriptor to get skeletonName
+                        // or better, use the name of the resource itself as a hint.
+                        auto descContents = AssetIndex::ParseDescriptorContents(matchedLink->descriptorPath);
+                        if (descContents)
+                        {
+                            for (const auto& descEntry : descContents->entries)
+                            {
+                                if (descEntry.name == matchedLink->resourceName)
+                                {
+                                    skeletonName = descEntry.skeletonName;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!skeletonName.empty())
+                    {
+                        AddLog(app, LogLevel::Info, "Resolving skeleton " + skeletonName + " for " + entry.name + "...");
+                        // Find GRP containing this skeleton
+                        bool skeletonFound = false;
+                        for (const auto& record : *allRecords)
+                        {
+                            if (record.type == AssetIndex::AssetType::Grp)
+                            {
+                                auto grpContents = app.packContentsCache.Get(record.path);
+                                if (!grpContents)
+                                {
+                                    auto newContents = AssetIndex::ParseGrpContents(record.path);
+                                    if (newContents)
+                                    {
+                                        app.packContentsCache.Put(record.path, newContents);
+                                        grpContents = newContents;
+                                    }
+                                }
+
+                                if (grpContents)
+                                {
+                                    auto it = std::find_if(grpContents->entries.begin(), grpContents->entries.end(), [&](const auto& e) {
+                                        return e.name == skeletonName;
+                                    });
+
+                                    if (it != grpContents->entries.end())
+                                    {
+                                        std::ifstream skelFile(record.path, std::ios::binary);
+                                        if (skelFile)
+                                        {
+                                            skelFile.seekg(static_cast<std::streamoff>(it->offset), std::ios::beg);
+                                            std::vector<uint8_t> skelPayload(it->size);
+                                            if (skelFile.read(reinterpret_cast<char*>(skelPayload.data()), static_cast<std::streamsize>(skelPayload.size())))
+                                            {
+                                                DagorFormats::GeomNodeTreeReader skelReader(skelPayload);
+                                                skelReader.Parse();
+                                                skeleton = skelReader.GetNodes();
+                                                skeletonFound = true;
+                                                manifest.decodeWarnings.push_back("Resolved skeleton from " + record.path.filename().string());
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!skeletonFound)
+                        {
+                            manifest.decodeWarnings.push_back("Could not resolve skeleton resource: " + skeletonName);
+                        }
+                    }
+
+                    if (format == "GLB" || format == "glb")
+                    {
+                        outPath = exportRoot / (safeName + ".glb");
+                        manifest.outputFiles.push_back(outPath.filename().string());
+                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), skeleton, manifest, materials);
+                    }
+                    else
+                    {
+                        AddLog(app, LogLevel::Warning, "OBJ export is not supported for skinned models. Use GLB instead.");
+                    }
+                }
+                else
+                {
+                    std::string message = "Skipped export for " + entry.name + ": ";
+                    const std::string className = AssetIndex::DescribeGrpClassId(entry.grpClassId);
+                    if (!className.empty())
+                    {
+                        message += className + " entry";
+                    }
+                    else
+                    {
+                        message += "unsupported GRP payload";
+                    }
+                    message += " (magic " + FormatPayloadMagic(payload) + "). Only RendInst and DynModel meshes can be exported right now.";
+                    AddLog(app, LogLevel::Warning, std::move(message));
+                    return;
                 }
 
                 if (success)
@@ -841,11 +933,8 @@ namespace DagorAssetsExtractor::App
 
     bool IsOodleAvailable(const AppState& app)
     {
-        std::string gameRoot = app.settings.useOodleFromGameFolder
-            ? Platform::PathToUtf8(app.settings.gameRoot)
-            : std::string();
-        std::string oodleDllPath = Platform::PathToUtf8(app.settings.oodleDllPath);
-        return DagorIO::Decompressor::IsOodleAvailable(gameRoot, oodleDllPath);
+        (void)app;
+        return !DagorIO::Decompressor::FindBundledOodleDll().empty();
     }
 
     size_t CountBlkPropertiesRecursive(const DagorFormats::BlkBlock& block)

@@ -75,7 +75,12 @@ namespace DagorAssetsExtractor::AssetIndex
 
     bool CanExportGrpEntryAsStaticModel(const SubAssetRecord& entry)
     {
-        return entry.grpClassId == 0 || entry.grpClassId == kRendInstGameResClassId;
+        return entry.grpClassId == 0 || entry.grpClassId == kRendInstGameResClassId || entry.grpClassId == kDynModelGameResClassId;
+    }
+
+    bool CanExportGrpEntryAsSkinnedModel(const SubAssetRecord& entry)
+    {
+        return entry.grpClassId == kDynModelGameResClassId;
     }
 
     // -- PackContentsCache ----------------------------------------------------
@@ -365,6 +370,8 @@ namespace DagorAssetsExtractor::AssetIndex
                 sub.dependencyIds = entry.dependencyIds;
                 sub.textureNames = entry.textures;
                 sub.materialNames = entry.materials;
+                sub.skeletonName = entry.skeletonName;
+                sub.dynModelName = entry.dynModelName;
                 contents->entries.push_back(std::move(sub));
             }
         }

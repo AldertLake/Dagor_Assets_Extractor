@@ -16,6 +16,8 @@ struct GameResDescEntry {
     std::vector<std::string> textures;
     std::vector<std::string> materials;
     std::vector<std::string> shaders;
+    std::string skeletonName;
+    std::string dynModelName;
 };
 
 class GameResDescReader {

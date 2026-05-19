@@ -36,6 +36,8 @@ namespace DagorAssetsExtractor::AssetIndex
         std::vector<uint32_t> dependencyIds;
         std::vector<std::string> textureNames;
         std::vector<std::string> materialNames;
+        std::string skeletonName;
+        std::string dynModelName;
     };
 
     // Parsed contents of a single container pack, loaded on demand.
@@ -91,6 +93,9 @@ namespace DagorAssetsExtractor::AssetIndex
 
     // Whether the current tool can export this GRP entry as a static model.
     bool CanExportGrpEntryAsStaticModel(const SubAssetRecord& entry);
+
+    // Whether the current tool can export this GRP entry as a skinned model.
+    bool CanExportGrpEntryAsSkinnedModel(const SubAssetRecord& entry);
 
     // Parse the contents of a GameRes descriptor file (.bin) from disk.
     // Returns a PackContents with entries populated, or with error set.
