@@ -693,16 +693,19 @@ void DynModelReader::ParseRealGrpPayload() {
         }
         else
         {
+            const size_t vbSz = static_cast<size_t>(gvd.vCnt) * gvd.vStride;
+            const size_t streamEnd = blockStartPos + vbSz + gvd.iPackedSz - 4;
+
             meshReader.Skip(1);
             int32_t stateBuffer[2] = {0, 0};
             std::vector<uint32_t> tempIndices;
-            tempIndices.reserve(gvd.iCnt);
 
-            for (uint32_t iIdx = 0; iIdx < gvd.iCnt; ++iIdx)
+            while (meshReader.GetPosition() < streamEnd)
             {
                 uint32_t decodedLeb = 0;
                 uint32_t shift = 0;
                 while (true) {
+                    if (meshReader.GetPosition() >= streamEnd) break;
                     uint8_t byte = meshReader.ReadUInt8();
                     decodedLeb |= (static_cast<uint32_t>(byte & 0x7F) << shift);
                     shift += 7;
