@@ -29,7 +29,7 @@ namespace DagorAssetsExtractor::Export
                 case '\r': escaped << "\\r"; break;
                 case '\t': escaped << "\\t"; break;
                 default:
-                    if (c < 0x20)
+                    if (c < 0x20 || c >= 0x80)
                     {
                         escaped << "\\u" << std::setw(4) << static_cast<unsigned int>(c);
                     }
@@ -220,7 +220,7 @@ namespace DagorAssetsExtractor::Export
         for (size_t i = 0; i < lods.size(); ++i)
         {
             json << "    {\n";
-            json << "      \"name\": \"" << lods[i].name << "\",\n";
+            json << "      \"name\": \"" << JsonEscape(lods[i].name) << "\",\n";
             json << "      \"mesh\": " << i << "\n";
             json << "    }";
             if (i + 1 < lods.size()) json << ",";
@@ -247,7 +247,7 @@ namespace DagorAssetsExtractor::Export
         {
             const auto& mesh = lods[i];
             json << "    {\n";
-            json << "      \"name\": \"" << mesh.name << "\",\n";
+            json << "      \"name\": \"" << JsonEscape(mesh.name) << "\",\n";
             json << "      \"primitives\": [\n";
             
             auto prims = mesh.primitives;
@@ -293,7 +293,7 @@ namespace DagorAssetsExtractor::Export
             for (size_t i = 0; i < materials.size(); ++i)
             {
                 json << "    {\n";
-                json << "      \"name\": \"" << materials[i].name << "\",\n";
+                json << "      \"name\": \"" << JsonEscape(materials[i].name) << "\",\n";
                 json << "      \"pbrMetallicRoughness\": {\n";
                 json << "        \"baseColorTexture\": {\n";
                 json << "          \"index\": " << i << "\n";
@@ -325,7 +325,7 @@ namespace DagorAssetsExtractor::Export
             for (size_t i = 0; i < materials.size(); ++i)
             {
                 json << "    {\n";
-                json << "      \"uri\": \"" << materials[i].diffuseTexturePath << "\"\n";
+                json << "      \"uri\": \"" << JsonEscape(materials[i].diffuseTexturePath) << "\"\n";
                 json << "    }";
                 if (i + 1 < materials.size()) json << ",";
                 json << "\n";
