@@ -13,11 +13,17 @@ namespace DagorAssetsExtractor::Export
         const ExportManifest& manifest,
         const std::vector<MaterialInfo>& materials)
     {
+        std::ofstream debugLog("scratch/export_debug.txt", std::ios::app);
+        debugLog << "[ExportToGlb] Exporting to " << path.string() << std::endl;
+
         std::vector<DagorFormats::RendInstMesh> lods;
         for (const auto& lod_in : lods_in)
         {
             if (lod_in.vertices.empty() || lod_in.indices.empty())
+            {
+                debugLog << "  LOD " << lod_in.name << " skipped: verts=" << lod_in.vertices.size() << ", indices=" << lod_in.indices.size() << std::endl;
                 continue;
+            }
 
             DagorFormats::RendInstMesh validLod = lod_in;
             // Remove primitives with 0 indices
@@ -28,6 +34,7 @@ namespace DagorAssetsExtractor::Export
 
             if (validLod.primitives.empty())
             {
+                debugLog << "  LOD " << lod_in.name << " had empty primitives, creating default." << std::endl;
                 // Create a default primitive if all were empty or none existed
                 validLod.primitives.push_back({ 0, 0, static_cast<uint32_t>(validLod.indices.size()) });
             }
@@ -37,8 +44,11 @@ namespace DagorAssetsExtractor::Export
 
         if (lods.empty())
         {
+            debugLog << "[ExportToGlb] Failed: no valid LODs after filtering. Total input LODs: " << lods_in.size() << std::endl;
             return false;
         }
+
+        // ... rest of code (I will keep my previous instrumentation of std::cout as well if possible, or just replace it)
 
         // We will store all vertex buffers and index buffers in one continuous BIN chunk.
         // For each LOD, we will have:
@@ -427,11 +437,17 @@ namespace DagorAssetsExtractor::Export
         const ExportManifest& manifest,
         const std::vector<MaterialInfo>& materials)
     {
+        std::ofstream debugLog("scratch/export_debug.txt", std::ios::app);
+        debugLog << "[ExportToGlb DynModel] Exporting to " << path.string() << std::endl;
+
         std::vector<DagorFormats::DynModelMesh> lods;
         for (const auto& lod_in : lods_in)
         {
             if (lod_in.vertices.empty() || lod_in.indices.empty())
+            {
+                debugLog << "  LOD " << lod_in.name << " skipped: verts=" << lod_in.vertices.size() << ", indices=" << lod_in.indices.size() << std::endl;
                 continue;
+            }
 
             DagorFormats::DynModelMesh validLod = lod_in;
             validLod.primitives.erase(
@@ -441,6 +457,7 @@ namespace DagorAssetsExtractor::Export
 
             if (validLod.primitives.empty())
             {
+                debugLog << "  LOD " << lod_in.name << " had empty primitives, creating default." << std::endl;
                 validLod.primitives.push_back({ 0, 0, static_cast<uint32_t>(validLod.indices.size()) });
             }
 
@@ -449,6 +466,7 @@ namespace DagorAssetsExtractor::Export
 
         if (lods.empty())
         {
+            debugLog << "[ExportToGlb DynModel] Failed: no valid LODs after filtering. Total input LODs: " << lods_in.size() << std::endl;
             return false;
         }
 
@@ -514,15 +532,35 @@ namespace DagorAssetsExtractor::Export
             while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
         }
 
-        // Add Inverse Bind Matrices to BIN buffer
-        size_t ibmByteOffset = binBuffer.size();
-        size_t ibmByteLength = skeleton.size() * 16 * sizeof(float);
-        for (const auto& node : skeleton)
+        // Add Inverse Bind Matrices to BIN buffer if skinning is enabled
+        bool useSkinning = !skeleton.empty();
+        size_t ibmByteOffset = 0;
+        size_t ibmByteLength = 0;
+        if (useSkinning)
         {
-            const uint8_t* matrixBytes = reinterpret_cast<const uint8_t*>(node.inverseBindTransform.data());
-            binBuffer.insert(binBuffer.end(), matrixBytes, matrixBytes + 16 * sizeof(float));
+            ibmByteOffset = binBuffer.size();
+            ibmByteLength = skeleton.size() * 16 * sizeof(float);
+            for (const auto& node : skeleton)
+            {
+                const uint8_t* matrixBytes = reinterpret_cast<const uint8_t*>(node.inverseBindTransform.data());
+                binBuffer.insert(binBuffer.end(), matrixBytes, matrixBytes + 16 * sizeof(float));
+            }
+            while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
         }
-        while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
+
+        // Pre-calculate accessor indices for indices
+        std::vector<std::vector<size_t>> indexAccessorIndices(lods.size());
+        size_t currentAccessor = lods.size() * 5;
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            size_t primCount = lods[i].primitives.size();
+            if (primCount == 0) primCount = 1; // Default primitive
+            for (size_t p = 0; p < primCount; ++p)
+            {
+                indexAccessorIndices[i].push_back(currentAccessor++);
+            }
+        }
+        size_t ibmAccessorIndex = currentAccessor;
 
         // Generate JSON
         std::stringstream json;
@@ -545,60 +583,75 @@ namespace DagorAssetsExtractor::Export
         json << "    {\n";
         json << "      \"name\": \"Root\",\n";
         json << "      \"children\": [";
-        // Skeleton roots (nodes with no parent)
-        bool first = true;
-        for (size_t i = 0; i < skeleton.size(); ++i)
+        if (useSkinning)
         {
-            if (skeleton[i].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex)
+            // Skeleton roots (nodes with no parent)
+            bool first = true;
+            for (size_t i = 0; i < skeleton.size(); ++i)
+            {
+                if (skeleton[i].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex)
+                {
+                    if (!first) json << ", ";
+                    json << (i + 1);
+                    first = false;
+                }
+            }
+            // Mesh nodes
+            for (size_t i = 0; i < lods.size(); ++i)
             {
                 if (!first) json << ", ";
-                json << (i + 1);
+                json << (skeleton.size() + 1 + i);
                 first = false;
             }
         }
-        // Mesh nodes
-        for (size_t i = 0; i < lods.size(); ++i)
+        else
         {
-            if (!first) json << ", ";
-            json << (skeleton.size() + 1 + i);
-            first = false;
+            // Mesh nodes only
+            for (size_t i = 0; i < lods.size(); ++i)
+            {
+                json << (i + 1);
+                if (i + 1 < lods.size()) json << ", ";
+            }
         }
         json << "]\n";
         json << "    },\n";
 
-        // Skeleton nodes (1 to skeleton.size())
-        for (size_t i = 0; i < skeleton.size(); ++i)
+        if (useSkinning)
         {
-            const auto& node = skeleton[i];
-            json << "    {\n";
-            json << "      \"name\": \"" << node.name << "\",\n";
-            
-            // localTransform is 4x4 matrix
-            json << "      \"matrix\": [";
-            for (int m = 0; m < 16; ++m)
+            // Skeleton nodes (1 to skeleton.size())
+            for (size_t i = 0; i < skeleton.size(); ++i)
             {
-                json << std::fixed << std::setprecision(6) << node.localTransform[m];
-                if (m < 15) json << ", ";
-            }
-            json << "],\n";
-
-            if (!node.childIndices.empty())
-            {
-                json << "      \"children\": [";
-                for (size_t c = 0; c < node.childIndices.size(); ++c)
+                const auto& node = skeleton[i];
+                json << "    {\n";
+                json << "      \"name\": \"" << node.name << "\",\n";
+                
+                // localTransform is 4x4 matrix
+                json << "      \"matrix\": [";
+                for (int m = 0; m < 16; ++m)
                 {
-                    json << (node.childIndices[c] + 1);
-                    if (c + 1 < node.childIndices.size()) json << ", ";
+                    json << std::fixed << std::setprecision(6) << node.localTransform[m];
+                    if (m < 15) json << ", ";
                 }
-                json << "]\n";
+                json << "],\n";
+
+                if (!node.childIndices.empty())
+                {
+                    json << "      \"children\": [";
+                    for (size_t c = 0; c < node.childIndices.size(); ++c)
+                    {
+                        json << (node.childIndices[c] + 1);
+                        if (c + 1 < node.childIndices.size()) json << ", ";
+                    }
+                    json << "]\n";
+                }
+                else
+                {
+                    // Remove trailing comma if no children
+                    json.seekp(-2, std::ios_base::end);
+                    json << "\n";
+                }
+                json << "    },\n";
             }
-            else
-            {
-                // Remove trailing comma if no children
-                json.seekp(-2, std::ios_base::end);
-                json << "\n";
-            }
-            json << "    },\n";
         }
 
         // Mesh nodes
@@ -606,27 +659,37 @@ namespace DagorAssetsExtractor::Export
         {
             json << "    {\n";
             json << "      \"name\": \"" << lods[i].name << "\",\n";
-            json << "      \"mesh\": " << i << ",\n";
-            json << "      \"skin\": 0\n";
+            json << "      \"mesh\": " << i;
+            if (useSkinning)
+            {
+                json << ",\n      \"skin\": 0\n";
+            }
+            else
+            {
+                json << "\n";
+            }
             json << "    }";
             if (i + 1 < lods.size()) json << ",";
             json << "\n";
         }
         json << "  ],\n";
 
-        // Skin definition
-        json << "  \"skins\": [\n";
-        json << "    {\n";
-        json << "      \"inverseBindMatrices\": " << (lods.size() * 5 + lods.size()) << ",\n"; // Accessor index
-        json << "      \"joints\": [";
-        for (size_t i = 0; i < skeleton.size(); ++i)
+        if (useSkinning)
         {
-            json << (i + 1);
-            if (i + 1 < skeleton.size()) json << ", ";
+            // Skin definition
+            json << "  \"skins\": [\n";
+            json << "    {\n";
+            json << "      \"inverseBindMatrices\": " << ibmAccessorIndex << ",\n"; // Accessor index
+            json << "      \"joints\": [";
+            for (size_t i = 0; i < skeleton.size(); ++i)
+            {
+                json << (i + 1);
+                if (i + 1 < skeleton.size()) json << ", ";
+            }
+            json << "]\n";
+            json << "    }\n";
+            json << "  ],\n";
         }
-        json << "]\n";
-        json << "    }\n";
-        json << "  ],\n";
 
         // Meshes definition
         json << "  \"meshes\": [\n";
@@ -644,11 +707,18 @@ namespace DagorAssetsExtractor::Export
                 json << "          \"attributes\": {\n";
                 json << "            \"POSITION\": " << (i * 5) << ",\n";
                 json << "            \"NORMAL\": " << (i * 5 + 1) << ",\n";
-                json << "            \"TEXCOORD_0\": " << (i * 5 + 2) << ",\n";
-                json << "            \"JOINTS_0\": " << (i * 5 + 3) << ",\n";
-                json << "            \"WEIGHTS_0\": " << (i * 5 + 4) << "\n";
+                json << "            \"TEXCOORD_0\": " << (i * 5 + 2) << "";
+                if (useSkinning)
+                {
+                    json << ",\n            \"JOINTS_0\": " << (i * 5 + 3) << ",\n";
+                    json << "            \"WEIGHTS_0\": " << (i * 5 + 4) << "\n";
+                }
+                else
+                {
+                    json << "\n";
+                }
                 json << "          },\n";
-                json << "          \"indices\": " << (lods.size() * 5 + p) << ",\n";
+                json << "          \"indices\": " << indexAccessorIndices[i][p] << ",\n";
                 
                 if (!materials.empty())
                 {
@@ -732,14 +802,19 @@ namespace DagorAssetsExtractor::Export
             json << "      \"byteOffset\": " << binInfos[i].indexByteOffset << ",\n";
             json << "      \"byteLength\": " << binInfos[i].indexByteLength << ",\n";
             json << "      \"target\": 34963\n";
-            json << "    },\n";
+            json << "    }";
+            if (i + 1 < lods.size() || useSkinning) json << ",\n";
+            else json << "\n";
         }
-        // IBM bufferView
-        json << "    {\n";
-        json << "      \"buffer\": 0,\n";
-        json << "      \"byteOffset\": " << ibmByteOffset << ",\n";
-        json << "      \"byteLength\": " << ibmByteLength << "\n";
-        json << "    }\n";
+        if (useSkinning)
+        {
+            // IBM bufferView
+            json << "    {\n";
+            json << "      \"buffer\": 0,\n";
+            json << "      \"byteOffset\": " << ibmByteOffset << ",\n";
+            json << "      \"byteLength\": " << ibmByteLength << "\n";
+            json << "    }\n";
+        }
         json << "  ],\n";
 
         // Accessors
@@ -768,12 +843,17 @@ namespace DagorAssetsExtractor::Export
             for (size_t p = 0; p < mesh.primitives.size(); ++p)
             {
                 const auto& prim = mesh.primitives[p];
-                json << "    { \"bufferView\": " << (lods.size() + i) << ", \"byteOffset\": " << (prim.firstIndex * sizeof(uint32_t)) << ", \"componentType\": 5125, \"count\": " << prim.indexCount << ", \"type\": \"SCALAR\" },\n";
+                json << "    { \"bufferView\": " << (lods.size() + i) << ", \"byteOffset\": " << (prim.firstIndex * sizeof(uint32_t)) << ", \"componentType\": 5125, \"count\": " << prim.indexCount << ", \"type\": \"SCALAR\" }";
+                if (i + 1 < lods.size() || p + 1 < mesh.primitives.size() || useSkinning) json << ",\n";
+                else json << "\n";
             }
         }
 
-        // IBM accessor
-        json << "    { \"bufferView\": " << (lods.size() * 2) << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }\n";
+        if (useSkinning)
+        {
+            // IBM accessor
+            json << "    { \"bufferView\": " << (lods.size() * 2) << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }\n";
+        }
         json << "  ],\n";
 
         json << "  \"buffers\": [ { \"byteLength\": " << binBuffer.size() << " } ]\n";
@@ -783,7 +863,11 @@ namespace DagorAssetsExtractor::Export
         while (jsonStr.size() % 4 != 0) jsonStr.push_back(' ');
 
         std::ofstream out(path, std::ios::binary);
-        if (!out) return false;
+        if (!out)
+        {
+            debugLog << "[ExportToGlb] Failed: could not open output file: " << path.string() << std::endl;
+            return false;
+        }
 
         uint32_t magic = 0x46546C67;
         uint32_t version = 2;

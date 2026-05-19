@@ -15,6 +15,7 @@
 #include "Export/TextureExporter.h"
 #include "Export/ModelExporter.h"
 #include "DagorFormats/RendInstReader.h"
+#include "DagorFormats/DynModelReader.h"
 
 #include "DagorIO/Decompression.h"
 #include <array>
@@ -3258,5 +3259,130 @@ int main(int argc, char** argv)
     }
 
     std::cout << "AssetIndexTests passed\n";
+
+    // ----- TEST 10: Model Diagnostics -----
+    {
+        std::cout << "\nRunning Test 10: Model Diagnostics" << std::endl;
+        std::vector<std::pair<std::string, std::string>> filesToTest = {
+            { "D:\\SteamLibrary\\steamapps\\common\\War Thunder\\content\\base\\res\\abandoned_factory.grp", "af_chimney_metal_a" },
+            { "D:\\SteamLibrary\\steamapps\\common\\War Thunder\\content\\base\\res\\abandoned_coal_cart.grp", "coal_cart" }
+        };
+
+        for (const auto& testCase : filesToTest)
+        {
+            std::filesystem::path grpPath = testCase.first;
+            std::string assetName = testCase.second;
+
+            if (std::filesystem::exists(grpPath))
+            {
+                std::cout << "\n----------------------------------------\n";
+                std::cout << "Testing file: " << grpPath.filename().string() << " for asset: " << assetName << std::endl;
+
+                auto contents = DagorAssetsExtractor::AssetIndex::ParseGrpContents(grpPath);
+                if (contents && contents->error.empty())
+                {
+                    std::cout << "GRP contains " << contents->entries.size() << " entries:" << std::endl;
+                    for (const auto& entry : contents->entries)
+                    {
+                        std::cout << "  - Name: " << entry.name 
+                                  << ", ClassID: 0x" << std::hex << entry.grpClassId << std::dec
+                                  << ", Offset: " << entry.offset 
+                                  << ", Size: " << entry.size 
+                                  << std::endl;
+                    }
+
+                    for (const auto& entry : contents->entries)
+                    {
+                        if (entry.name == assetName)
+                        {
+                            std::ifstream file(grpPath, std::ios::binary);
+                            file.seekg(entry.offset);
+                            std::vector<uint8_t> payload(entry.size);
+                            file.read(reinterpret_cast<char*>(payload.data()), entry.size);
+
+                            std::cout << "\nPayload first 32 bytes (raw): ";
+                            for (size_t i = 0; i < std::min<size_t>(32, payload.size()); ++i)
+                            {
+                                printf("%02X ", payload[i]);
+                            }
+                            std::cout << std::endl;
+
+                            // Let's print the raw Phase 1 header details from raw payload:
+                            uint32_t lodHdrInfo = *reinterpret_cast<const uint32_t*>(payload.data());
+                            uint32_t lodHdrSize = lodHdrInfo & 0x00FFFFFFu;
+                            std::cout << "Raw lodHdrInfo: 0x" << std::hex << lodHdrInfo << std::dec << ", lodHdrSize: " << lodHdrSize << std::endl;
+
+                            // Let's try to parse as RendInst
+                            std::cout << "--- Parsing as RendInst ---" << std::endl;
+                            DagorFormats::RendInstReader riReader(payload);
+                            try {
+                                riReader.Parse();
+                                std::cout << "RendInst Parse SUCCESS! LODs: " << riReader.GetLods().size() << std::endl;
+                            } catch (const std::exception& e) {
+                                std::cout << "RendInst Parse failed: " << e.what() << std::endl;
+                            }
+
+                            // Let's get the decompressed payload by replicating ParseRealGrpPayload logic:
+                            // We know m_decompressedPayload has been extracted by readers.
+                            // Let's print decompressed payload bytes around lodHdrSize.
+                            // We can get it from dynReader if we Parse, or we can just run the decompression helper here.
+                            std::vector<uint8_t> decomp;
+                            const uint8_t zstdMagic[] = { 0x28, 0xB5, 0x2F, 0xFD };
+                            bool decompressed = false;
+                            for (size_t headerOfs = 0; headerOfs + 24 <= payload.size(); headerOfs += 4) {
+                                uint32_t blockHeader = *reinterpret_cast<const uint32_t*>(payload.data() + headerOfs);
+                                unsigned blockFlags = blockHeader >> 30;
+                                size_t blockSize = blockHeader & 0x3FFFFFFF;
+                                if (blockFlags == 2 && blockSize > 8 && blockSize + headerOfs + 4 <= payload.size()) {
+                                    auto blockData = std::span<const uint8_t>(payload.data() + headerOfs + 4, blockSize);
+                                    uint32_t decompSz = *reinterpret_cast<const uint32_t*>(blockData.data());
+                                    decomp = DagorIO::Decompressor::DecompressOodle(
+                                        blockData.subspan(4), decompSz, "", "");
+                                    decompressed = true;
+                                    break;
+                                }
+                            }
+                            if (decompressed) {
+                                std::cout << "Decompressed payload size: " << decomp.size() << std::endl;
+                                std::cout << "First 64 bytes of decompressed payload: ";
+                                for (size_t i = 0; i < std::min<size_t>(64, decomp.size()); ++i) {
+                                    printf("%02X ", decomp[i]);
+                                }
+                                std::cout << std::endl;
+
+                                if (lodHdrSize < decomp.size()) {
+                                    size_t startPrint = (lodHdrSize >= 16) ? (lodHdrSize - 16) : 0;
+                                    std::cout << "Decompressed payload at lodHdrSize - 16 (" << startPrint << "): ";
+                                    for (size_t i = startPrint; i < std::min<size_t>(lodHdrSize + 80, decomp.size()); ++i) {
+                                        printf("%02X ", decomp[i]);
+                                    }
+                                    std::cout << std::endl;
+                                }
+                            }
+
+                            // Let's try to parse as DynModel
+                            std::cout << "--- Parsing as DynModel ---" << std::endl;
+                            DagorFormats::DynModelReader dynReader(payload);
+                            try {
+                                dynReader.Parse();
+                                std::cout << "DynModel Parse SUCCESS! LODs: " << dynReader.GetLods().size() << std::endl;
+                            } catch (const std::exception& e) {
+                                std::cout << "DynModel Parse failed: " << e.what() << std::endl;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    std::cout << "Failed to parse GRP: " << (contents ? contents->error : "null") << std::endl;
+                }
+            }
+            else
+            {
+                std::cout << "File does not exist: " << grpPath.string() << std::endl;
+            }
+        }
+    }
+
     return 0;
 }

@@ -109,10 +109,77 @@ namespace DagorAssetsExtractor::App
         return stream.str();
     }
 
+    std::string FormatPayloadHeader(const std::vector<uint8_t>& payload, size_t count = 64)
+    {
+        if (payload.empty())
+        {
+            return "  <empty>";
+        }
+
+        std::ostringstream stream;
+        stream << std::hex << std::uppercase << std::setfill('0');
+        size_t actualCount = std::min(count, payload.size());
+        
+        for (size_t i = 0; i < actualCount; i += 16)
+        {
+            if (i > 0)
+            {
+                stream << "\n";
+            }
+            stream << "  " << std::setw(4) << static_cast<unsigned int>(i) << ": ";
+            
+            // Hex values
+            for (size_t j = 0; j < 16; ++j)
+            {
+                if (i + j < actualCount)
+                {
+                    stream << std::setw(2) << static_cast<unsigned int>(payload[i + j]) << " ";
+                }
+                else
+                {
+                    stream << "   ";
+                }
+            }
+            
+            stream << " | ";
+            
+            // ASCII values
+            for (size_t j = 0; j < 16; ++j)
+            {
+                if (i + j < actualCount)
+                {
+                    unsigned char c = payload[i + j];
+                    if (std::isprint(c) != 0)
+                    {
+                        stream << static_cast<char>(c);
+                    }
+                    else
+                    {
+                        stream << ".";
+                    }
+                }
+            }
+        }
+        
+        return stream.str();
+    }
+
     void AddLog(AppState& app, LogLevel level, std::string message)
     {
         std::lock_guard<std::mutex> lock(app.logMutex);
-        app.logs.push_back(LogEntry{ NowString(), level, std::move(message) });
+        app.logs.push_back(LogEntry{ NowString(), level, message });
+        
+        // Format for OutputDebugStringA
+        std::string debugMsg = "[DagorExtractor] ";
+        switch (level)
+        {
+        case LogLevel::Info:    debugMsg += "[INFO] "; break;
+        case LogLevel::Warning: debugMsg += "[WARN] "; break;
+        case LogLevel::Error:   debugMsg += "[ERR]  "; break;
+        }
+        debugMsg += message + "\n";
+        ::OutputDebugStringA(debugMsg.c_str());
+
         if (app.logs.size() > 1000)
         {
             app.logs.erase(app.logs.begin(), app.logs.begin() + 250);
@@ -713,7 +780,18 @@ namespace DagorAssetsExtractor::App
                 bool success = false;
                 fs::path outPath;
 
-                if (HasRendInstMagic(payload))
+                // Determine asset type using the GRP classId first (reliable),
+                // then fall back to payload magic bytes for legacy GRP entries.
+                constexpr uint32_t kDynModelClassId = 0xB4B7D9C4u;
+                constexpr uint32_t kRendInstClassId = 0x77F8232Fu;
+
+                const bool isDynModel = (entry.grpClassId == kDynModelClassId) || 
+                                        (entry.grpClassId == 0 && HasDynModelMagic(payload));
+                const bool isRendInst = !isDynModel && 
+                                        (entry.grpClassId == kRendInstClassId || 
+                                         entry.grpClassId == 0 && HasRendInstMagic(payload));
+
+                if (isRendInst || (!isDynModel && HasRendInstMagic(payload)))
                 {
                     DagorFormats::RendInstReader reader(payload);
                     reader.Parse();
@@ -737,7 +815,7 @@ namespace DagorAssetsExtractor::App
                         }
                     }
                 }
-                else if (HasDynModelMagic(payload))
+                else if (isDynModel)
                 {
                     DagorFormats::DynModelReader reader(payload);
                     reader.Parse();
@@ -848,7 +926,16 @@ namespace DagorAssetsExtractor::App
                         message += "unsupported GRP payload";
                     }
                     message += " (magic " + FormatPayloadMagic(payload) + "). Only RendInst and DynModel meshes can be exported right now.";
-                    AddLog(app, LogLevel::Warning, std::move(message));
+                    AddLog(app, LogLevel::Warning, message);
+
+                    // Add detailed diagnostics dump
+                    std::string detailMessage = "Payload details for skipped asset " + entry.name + ":\n" +
+                        "  GRP Pack: " + packPath.filename().string() + "\n" +
+                        "  Offset: " + std::to_string(entry.offset) + "\n" +
+                        "  Size: " + std::to_string(entry.size) + "\n" +
+                        "  First 64 bytes hex/ASCII dump:\n" +
+                        FormatPayloadHeader(payload, 64);
+                    AddLog(app, LogLevel::Warning, detailMessage);
                     return;
                 }
 

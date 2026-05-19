@@ -34,9 +34,18 @@ public:
 
     const std::vector<RendInstMesh>& GetLods() const { return m_lods; }
 
+    // Returns the size of the container header that was stripped before the mesh data.
+    // Only valid after a successful Parse() of a real GRP payload.
+    size_t GetContainerHeaderSize() const { return m_containerHeaderSize; }
+
 private:
+    // Parse a real GRP RendInst payload with container/compression wrapper
+    void ParseRealGrpPayload();
+
     std::span<const uint8_t> m_data;
     std::vector<RendInstMesh> m_lods;
+    std::vector<uint8_t> m_decompressedPayload;
+    size_t m_containerHeaderSize = 0;
 };
 
 } // namespace DagorFormats

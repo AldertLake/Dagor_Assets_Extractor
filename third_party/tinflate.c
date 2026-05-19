@@ -610,7 +610,7 @@ int tinf_uncompress(void *dest, unsigned int *destLen,
 		return TINF_DATA_ERROR;
 	}
 
-	*destLen = d.dest - d.dest_start;
+	*destLen = (unsigned int)(d.dest - d.dest_start);
 
 	return TINF_OK;
 }
