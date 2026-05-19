@@ -4,10 +4,12 @@
 #include "DagorFormats/DdsxReader.h"
 #include "DagorFormats/GrpReader.h"
 #include "DagorFormats/GameResDescReader.h"
+#include "DagorFormats/GeomNodeTreeReader.h"
 
 #include <fstream>
 #include <algorithm>
 #include <cstdio>
+#include <sstream>
 
 namespace DagorAssetsExtractor::AssetIndex
 {
@@ -284,6 +286,45 @@ namespace DagorAssetsExtractor::AssetIndex
                 entry.size   = file.size;
                 entry.grpClassId = file.classId;
                 entry.formatInfo = DescribeGrpClassId(file.classId);
+
+                if (file.classId == kGeomNodeTreeGameResClassId)
+                {
+                    try
+                    {
+                        DagorFormats::GeomNodeTreeReader skeletonReader(reader.GetFileData(file));
+                        skeletonReader.Parse();
+
+                        entry.skeletonNodeCount = static_cast<uint32_t>(skeletonReader.GetNodes().size());
+                        entry.skeletonImportantNodeCount = skeletonReader.GetImportantNodeCount();
+                        if (!skeletonReader.GetNodes().empty())
+                        {
+                            entry.skeletonRootName = skeletonReader.GetNodes().front().name;
+                        }
+
+                        std::ostringstream summary;
+                        summary << "GeomNodeTree " << entry.skeletonNodeCount << " node";
+                        if (entry.skeletonNodeCount != 1)
+                        {
+                            summary << "s";
+                        }
+                        if (entry.skeletonImportantNodeCount > 0 &&
+                            entry.skeletonImportantNodeCount != entry.skeletonNodeCount)
+                        {
+                            summary << " (" << entry.skeletonImportantNodeCount << " important)";
+                        }
+                        if (!entry.skeletonRootName.empty())
+                        {
+                            summary << ", root=" << entry.skeletonRootName;
+                        }
+
+                        entry.formatInfo = summary.str();
+                    }
+                    catch (const std::exception&)
+                    {
+                        entry.formatInfo = "GeomNodeTree (metadata unavailable)";
+                    }
+                }
+
                 contents->entries.push_back(std::move(entry));
             }
         }

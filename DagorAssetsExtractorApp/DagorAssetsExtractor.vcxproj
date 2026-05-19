@@ -99,6 +99,7 @@
     <ClCompile Include="src\DagorFormats\DxpReader.cpp" />
     <ClCompile Include="src\DagorFormats\GrpReader.cpp" />
     <ClCompile Include="src\DagorFormats\GameResDescReader.cpp" />
+    <ClCompile Include="src\DagorFormats\GeomNodeTreeReader.cpp" />
     <ClCompile Include="src\DagorFormats\RendInstReader.cpp" />
     <ClCompile Include="src\DagorFormats\DdsxReader.cpp" />
     <ClCompile Include="src\DagorFormats\BlkReader.cpp" />
@@ -131,6 +132,7 @@
     <ClInclude Include="src\DagorFormats\DxpReader.h" />
     <ClInclude Include="src\DagorFormats\GrpReader.h" />
     <ClInclude Include="src\DagorFormats\GameResDescReader.h" />
+    <ClInclude Include="src\DagorFormats\GeomNodeTreeReader.h" />
     <ClInclude Include="src\DagorFormats\RendInstReader.h" />
     <ClInclude Include="src\DagorFormats\DdsxReader.h" />
     <ClInclude Include="src\DagorFormats\BlkReader.h" />

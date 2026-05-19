@@ -1258,6 +1258,7 @@ namespace DagorAssetsExtractor::UI
         if (selected->type == AssetType::Grp)
         {
             ImGui::BulletText("Binary static model extraction to glTF 2.0 GLB / Wavefront OBJ.");
+            ImGui::BulletText("GeomNodeTree skeleton metadata parsing for GRP inspection.");
         }
     }
 

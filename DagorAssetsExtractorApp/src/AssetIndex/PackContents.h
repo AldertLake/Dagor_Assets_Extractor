@@ -19,6 +19,9 @@ namespace DagorAssetsExtractor::AssetIndex
         uint32_t    size    = 0;   // Size in bytes
         std::string formatInfo;    // For textures: format string; for descriptors: class; for others: empty
         uint32_t    grpClassId = 0; // GRP resource class id when available
+        uint32_t    skeletonNodeCount = 0;
+        uint32_t    skeletonImportantNodeCount = 0;
+        std::string skeletonRootName;
 
         // DDSx-specific fields (only populated for DXP texture sub-assets)
         uint16_t    texWidth   = 0;

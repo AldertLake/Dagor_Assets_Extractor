@@ -99,6 +99,7 @@
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\BlkReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\PackContents.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GameResDescReader.cpp" />
+    <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GeomNodeTreeReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\RendInstReader.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\Export\ExportManifest.cpp" />
     <ClCompile Include="..\..\DagorAssetsExtractorApp\src\Export\TextureExporter.cpp" />
@@ -121,6 +122,7 @@
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\DdsxReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\RendInstReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GameResDescReader.h" />
+    <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\GeomNodeTreeReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\DagorFormats\BlkReader.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\AssetIndex\PackContents.h" />
     <ClInclude Include="..\..\DagorAssetsExtractorApp\src\Export\ExportManifest.h" />

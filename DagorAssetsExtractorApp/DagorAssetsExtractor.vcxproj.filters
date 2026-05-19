@@ -116,6 +116,9 @@
     <ClCompile Include="src\DagorFormats\GameResDescReader.cpp">
       <Filter>Source Files\DagorFormats</Filter>
     </ClCompile>
+    <ClCompile Include="src\DagorFormats\GeomNodeTreeReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
     <ClCompile Include="src\DagorFormats\RendInstReader.cpp">
       <Filter>Source Files\DagorFormats</Filter>
     </ClCompile>
@@ -203,6 +206,9 @@
       <Filter>Header Files\DagorFormats</Filter>
     </ClInclude>
     <ClInclude Include="src\DagorFormats\GameResDescReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DagorFormats\GeomNodeTreeReader.h">
       <Filter>Header Files\DagorFormats</Filter>
     </ClInclude>
     <ClInclude Include="src\DagorFormats\RendInstReader.h">

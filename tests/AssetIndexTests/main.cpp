@@ -9,6 +9,7 @@
 #include "DagorFormats/BlkReader.h"
 #include "DagorFormats/GrpReader.h"
 #include "DagorFormats/GameResDescReader.h"
+#include "DagorFormats/GeomNodeTreeReader.h"
 #include "Jobs/JobSystem.h"
 #include "Export/ExportManifest.h"
 #include "Export/TextureExporter.h"
@@ -19,6 +20,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -56,6 +58,16 @@ namespace
             }
         }
         return count;
+    }
+
+    bool ExpectNear(float actual, float expected, float epsilon, const char* message)
+    {
+        if (std::fabs(actual - expected) > epsilon)
+        {
+            std::cerr << "FAIL: " << message << " (expected " << expected << ", got " << actual << ")\n";
+            return false;
+        }
+        return true;
     }
 
     bool TestBinaryReader()
@@ -726,10 +738,66 @@ namespace
         return ok;
     }
 
-    std::vector<uint8_t> MakeSyntheticModernGrpPack(std::string_view entryName, uint32_t classId, std::string_view payloadMagic)
+    std::array<float, 16> MakeAffineTranslationMatrix(float tx, float ty, float tz)
+    {
+        return {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            tx,   ty,   tz,   1.0f,
+        };
+    }
+
+    void WriteMatrix(std::vector<uint8_t>& data, size_t offset, const std::array<float, 16>& matrix)
+    {
+        std::memcpy(data.data() + offset, matrix.data(), sizeof(float) * matrix.size());
+    }
+
+    std::vector<uint8_t> MakeSyntheticGeomNodeTreePayload()
+    {
+        constexpr size_t nodeCount = 2;
+        constexpr size_t oldNodeSize = 160;
+        constexpr uint32_t lastUnimportantCount = 1;
+        constexpr size_t namesOffset = nodeCount * oldNodeSize;
+        constexpr char names[] = "root\0child\0";
+        const size_t rawDataSize = (namesOffset + sizeof(names) + 3) & ~size_t(3);
+
+        std::vector<uint8_t> data(8 + rawDataSize, 0);
+        SetU32(data, 0, static_cast<uint32_t>(rawDataSize) | (lastUnimportantCount << 20));
+        SetU32(data, 4, static_cast<uint32_t>(nodeCount));
+
+        const size_t base = 8;
+        const std::array<float, 16> rootLocal = MakeAffineTranslationMatrix(10.0f, 0.0f, 0.0f);
+        const std::array<float, 16> childLocal = MakeAffineTranslationMatrix(0.0f, 2.0f, 0.0f);
+        const std::array<float, 16> childWorld = MakeAffineTranslationMatrix(10.0f, 2.0f, 0.0f);
+
+        WriteMatrix(data, base + 0, rootLocal);
+        WriteMatrix(data, base + 64, rootLocal);
+        SetU32(data, base + 128, static_cast<uint32_t>(oldNodeSize));
+        SetU32(data, base + 132, 1);
+        SetU32(data, base + 144, 0xFFFFFFFFu);
+        SetU32(data, base + 148, 0);
+        SetU32(data, base + 152, static_cast<uint32_t>(namesOffset));
+        SetU32(data, base + 156, 0);
+
+        const size_t childBase = base + oldNodeSize;
+        WriteMatrix(data, childBase + 0, childLocal);
+        WriteMatrix(data, childBase + 64, childWorld);
+        SetU32(data, childBase + 128, 0);
+        SetU32(data, childBase + 132, 0);
+        SetU32(data, childBase + 144, 0);
+        SetU32(data, childBase + 148, 0);
+        SetU32(data, childBase + 152, static_cast<uint32_t>(namesOffset + 5));
+        SetU32(data, childBase + 156, 0);
+
+        std::memcpy(data.data() + base + namesOffset, names, sizeof(names));
+        return data;
+    }
+
+    std::vector<uint8_t> MakeSyntheticModernGrpPack(std::string_view entryName, uint32_t classId, const std::vector<uint8_t>& payload)
     {
         constexpr size_t payloadOffset = 0x80;
-        std::vector<uint8_t> data(payloadOffset + payloadMagic.size(), 0);
+        std::vector<uint8_t> data(payloadOffset + payload.size(), 0);
         data[0] = 'G';
         data[1] = 'R';
         data[2] = 'P';
@@ -750,8 +818,53 @@ namespace
 
         std::copy(entryName.begin(), entryName.end(), data.begin() + 0x60);
         data[0x60 + entryName.size()] = 0;
-        std::copy(payloadMagic.begin(), payloadMagic.end(), data.begin() + payloadOffset);
+        std::copy(payload.begin(), payload.end(), data.begin() + payloadOffset);
         return data;
+    }
+
+    std::vector<uint8_t> MakeSyntheticModernGrpPack(std::string_view entryName, uint32_t classId, std::string_view payloadMagic)
+    {
+        return MakeSyntheticModernGrpPack(
+            entryName,
+            classId,
+            std::vector<uint8_t>(payloadMagic.begin(), payloadMagic.end()));
+    }
+
+    bool TestGeomNodeTreeReader()
+    {
+        bool ok = true;
+        const std::vector<uint8_t> payload = MakeSyntheticGeomNodeTreePayload();
+        DagorFormats::GeomNodeTreeReader reader(payload);
+        reader.Parse();
+
+        const auto& nodes = reader.GetNodes();
+        ok &= Expect(nodes.size() == 2, "GeomNodeTreeReader should parse two nodes");
+        ok &= Expect(reader.GetImportantNodeCount() == 1, "GeomNodeTreeReader should preserve important node count");
+        ok &= Expect(!reader.HasCompressedPayload(), "GeomNodeTreeReader synthetic payload should be uncompressed");
+
+        if (nodes.size() == 2)
+        {
+            ok &= Expect(nodes[0].name == "root", "GeomNodeTreeReader should preserve root name");
+            ok &= Expect(nodes[0].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex,
+                "GeomNodeTreeReader should mark the root parent as invalid");
+            ok &= Expect(nodes[0].childIndices.size() == 1 && nodes[0].childIndices[0] == 1,
+                "GeomNodeTreeReader should preserve child ranges");
+            ok &= Expect(nodes[1].name == "child", "GeomNodeTreeReader should preserve child name");
+            ok &= Expect(nodes[1].parentIndex == 0, "GeomNodeTreeReader should preserve parent indices");
+
+            ok &= ExpectNear(nodes[0].worldTransform[12], 10.0f, 0.0001f,
+                "GeomNodeTreeReader should preserve root world X translation");
+            ok &= ExpectNear(nodes[1].worldTransform[12], 10.0f, 0.0001f,
+                "GeomNodeTreeReader should accumulate child world X translation");
+            ok &= ExpectNear(nodes[1].worldTransform[13], 2.0f, 0.0001f,
+                "GeomNodeTreeReader should accumulate child world Y translation");
+            ok &= ExpectNear(nodes[1].inverseBindTransform[12], -10.0f, 0.0001f,
+                "GeomNodeTreeReader should compute inverse bind X translation");
+            ok &= ExpectNear(nodes[1].inverseBindTransform[13], -2.0f, 0.0001f,
+                "GeomNodeTreeReader should compute inverse bind Y translation");
+        }
+
+        return ok;
     }
 
     bool TestGrpPackContentsMetadata()
@@ -761,6 +874,7 @@ namespace
         const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_GrpPackTest_" + std::to_string(stamp));
         const fs::path rendInstPath = tempDir / "static_mesh.grp";
         const fs::path animPath = tempDir / "animation.grp";
+        const fs::path skeletonPath = tempDir / "skeleton.grp";
         std::error_code ec;
         fs::remove_all(tempDir, ec);
         fs::create_directories(tempDir, ec);
@@ -776,6 +890,9 @@ namespace
         ok &= Expect(
             WriteBinaryFile(animPath, MakeSyntheticModernGrpPack("anim_tree", 0x40C586F9u, "A2D!")),
             "Modern Anim2Data GRP fixture should be written");
+        ok &= Expect(
+            WriteBinaryFile(skeletonPath, MakeSyntheticModernGrpPack("tank_skeleton", 0x56F81B6Du, MakeSyntheticGeomNodeTreePayload())),
+            "Modern GeomNodeTree GRP fixture should be written");
 
         const std::shared_ptr<AssetIndex::PackContents> rendInstContents = AssetIndex::ParseGrpContents(rendInstPath);
         ok &= Expect(rendInstContents != nullptr, "Modern RendInst GRP PackContents should be returned");
@@ -804,6 +921,29 @@ namespace
                 ok &= Expect(entry.grpClassId == 0x40C586F9u, "Modern Anim2Data GRP should preserve class id");
                 ok &= Expect(entry.formatInfo == "Anim2Data", "Modern Anim2Data GRP should label class name");
                 ok &= Expect(!AssetIndex::CanExportGrpEntryAsStaticModel(entry), "Anim2Data GRP entry should not be exportable as a static model");
+            }
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> skeletonContents = AssetIndex::ParseGrpContents(skeletonPath);
+        ok &= Expect(skeletonContents != nullptr, "Modern GeomNodeTree GRP PackContents should be returned");
+        if (skeletonContents)
+        {
+            ok &= Expect(skeletonContents->error.empty(), "Modern GeomNodeTree GRP PackContents should parse without error");
+            ok &= Expect(skeletonContents->entries.size() == 1, "Modern GeomNodeTree GRP should expose one entry");
+            if (!skeletonContents->entries.empty())
+            {
+                const AssetIndex::SubAssetRecord& entry = skeletonContents->entries[0];
+                ok &= Expect(entry.grpClassId == 0x56F81B6Du, "Modern GeomNodeTree GRP should preserve class id");
+                ok &= Expect(entry.skeletonNodeCount == 2, "Modern GeomNodeTree GRP should expose skeleton node count");
+                ok &= Expect(entry.skeletonImportantNodeCount == 1,
+                    "Modern GeomNodeTree GRP should expose important node count");
+                ok &= Expect(entry.skeletonRootName == "root", "Modern GeomNodeTree GRP should expose the root node name");
+                ok &= Expect(entry.formatInfo.find("GeomNodeTree 2 nodes") != std::string::npos,
+                    "Modern GeomNodeTree GRP should summarize skeleton node metadata");
+                ok &= Expect(entry.formatInfo.find("root=root") != std::string::npos,
+                    "Modern GeomNodeTree GRP should summarize the skeleton root name");
+                ok &= Expect(!AssetIndex::CanExportGrpEntryAsStaticModel(entry),
+                    "GeomNodeTree GRP entry should not be exportable as a static model");
             }
         }
 
@@ -2240,6 +2380,7 @@ int main(int argc, char** argv)
     ok &= Expect(TestDdsxReader(), "DdsxReader tests should pass");
     ok &= Expect(TestBlkReader(), "BlkReader tests should pass");
     ok &= Expect(TestGameResDescReader(), "GameResDescReader tests should pass");
+    ok &= Expect(TestGeomNodeTreeReader(), "GeomNodeTreeReader tests should pass");
     ok &= Expect(TestGrpPackContentsMetadata(), "GRP PackContents metadata tests should pass");
     ok &= Expect(TestJobSystem(), "JobSystem tests should pass");
     ok &= Expect(TestDecompression(), "Decompression tests should pass");
