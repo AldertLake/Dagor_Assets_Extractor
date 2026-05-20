@@ -103,9 +103,11 @@ namespace DagorAssetsExtractor::App
     {
         std::mutex mutex;
         bool loading = false;
+        bool cacheLoading = false;
         std::string status = "Not built";
         std::atomic_bool cancelRequested = false;
         std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> loadingRecords;
+        std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> cacheLoadingRecords;
         std::shared_ptr<const std::vector<AssetIndex::BlkResourceLink>> loadingBlkLinks;
         std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> links;
         bool globalLinks = false;

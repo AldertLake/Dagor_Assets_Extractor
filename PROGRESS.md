@@ -339,3 +339,11 @@ AI models picking up the next coding task should prioritize the following object
 * **GLB Texture Compatibility**: Model exports to GLB now force material dependency textures to PNG and disable DDS fallback for linked GLB material images. DDS/TGA remain available for standalone texture export, but are no longer emitted as GLB material image URIs.
 * **GLB Material Image Deduplication**: `ModelExporter` now deduplicates identical material texture paths into one glTF image/texture entry, reducing duplicated GPU resources in Blender material preview.
 * **Diagnostics**: Added export log warnings when a material texture dependency cannot be converted/exported, so PNG compatibility failures are visible in the Visual Studio debug/app log.
+
+### Day 40: Descriptor Cache Startup and Format Repair Slice
+* **Startup Freeze Fix**: Moved descriptor-link cache loading off the startup/UI thread. After an index cache is loaded, descriptor links now load through the background job system, with cache-loading state exposed to prevent overlapping rebuilds.
+* **Fast Stale Cache Rejection**: Reordered descriptor-link cache loading so game root, linker limits, and source record freshness are validated before parsing any link payload. Old or stale caches now stop after the header/source table instead of parsing hundreds of MB of link rows.
+* **Compact Cache Format v4**: Replaced the expanded line-per-texture/material cache with path references, vector rows, material binding rows, and texture-link rows. The old v3 cache is intentionally invalidated because it produced a 317 MB text file and blocked restart.
+* **Safer Cache Writes**: Cache saves now write a temp file first, flush/close it, then replace the target using the Windows replace path. Successful saves log link count, elapsed time, and final cache size.
+* **Reference Alignment**: Rechecked `Dagor-Asset-Explorer` behavior: it keeps descriptor data lazy/in-memory per loaded descriptor instead of startup-loading a global expanded graph. The C++ cache now follows the same principle by keeping startup responsive and avoiding redundant persisted rows.
+* **Verification**: Rebuilt with `powershell -ExecutionPolicy Bypass -File scripts\run_tests.ps1`; result: 0 build warnings/errors and all tests passing.

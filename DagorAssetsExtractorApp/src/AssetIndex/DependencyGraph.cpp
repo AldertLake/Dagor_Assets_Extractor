@@ -29,7 +29,7 @@ namespace DagorAssetsExtractor::AssetIndex
         constexpr size_t MaxWarnings = 12;
         constexpr size_t MaxDescriptorIndexThreads = 8;
         constexpr int DescriptorLinkerVersion = 6;
-        constexpr int DescriptorLinkCacheVersion = 3;
+        constexpr int DescriptorLinkCacheVersion = 4;
 
         std::string Trim(std::string value)
         {
@@ -1545,20 +1545,133 @@ namespace DagorAssetsExtractor::AssetIndex
             return true;
         }
 
-        void WriteOptionalPath(std::ostream& stream, std::string_view tag, const std::optional<fs::path>& path)
-        {
-            if (path)
-            {
-                stream << tag << ' ' << std::quoted(Platform::PathToUtf8(*path)) << '\n';
-            }
-        }
-
         void WriteOptionalString(std::ostream& stream, std::string_view tag, const std::optional<std::string>& value)
         {
             if (value)
             {
                 stream << tag << ' ' << std::quoted(*value) << '\n';
             }
+        }
+
+        size_t AddCachePathRef(
+            std::vector<fs::path>& paths,
+            std::unordered_map<std::wstring, size_t>& index,
+            const fs::path& path)
+        {
+            const std::wstring key = PathKey(path);
+            if (const auto it = index.find(key); it != index.end())
+            {
+                return it->second;
+            }
+
+            const size_t id = paths.size();
+            paths.push_back(path);
+            index.emplace(key, id);
+            return id;
+        }
+
+        std::optional<size_t> FindCachePathRef(
+            const std::unordered_map<std::wstring, size_t>& index,
+            const std::optional<fs::path>& path)
+        {
+            if (!path)
+            {
+                return std::nullopt;
+            }
+
+            const auto it = index.find(PathKey(*path));
+            if (it == index.end())
+            {
+                return std::nullopt;
+            }
+            return it->second;
+        }
+
+        void WriteStringVectorRow(
+            std::ostream& stream,
+            std::string_view tag,
+            const std::vector<std::string>& values)
+        {
+            stream << tag << ' ' << values.size();
+            for (const std::string& value : values)
+            {
+                stream << ' ' << std::quoted(value);
+            }
+            stream << '\n';
+        }
+
+        bool ReadStringVectorRow(std::stringstream& stream, std::vector<std::string>& values)
+        {
+            size_t count = 0;
+            if (!(stream >> count))
+            {
+                return false;
+            }
+
+            values.clear();
+            values.reserve(count);
+            for (size_t i = 0; i < count; ++i)
+            {
+                std::string value;
+                if (!(stream >> std::quoted(value)))
+                {
+                    return false;
+                }
+                values.push_back(std::move(value));
+            }
+            return true;
+        }
+
+        bool ResolveCachePathRef(
+            long long id,
+            const std::vector<fs::path>& paths,
+            std::optional<fs::path>& outPath)
+        {
+            if (id < 0)
+            {
+                outPath.reset();
+                return true;
+            }
+            if (static_cast<uint64_t>(id) >= paths.size())
+            {
+                return false;
+            }
+            outPath = paths[static_cast<size_t>(id)];
+            return true;
+        }
+
+        bool ReplaceCacheFileWithTemp(const fs::path& tempPath, const fs::path& cachePath, std::string& error)
+        {
+#if defined(_WIN32)
+            if (MoveFileExW(
+                    tempPath.wstring().c_str(),
+                    cachePath.wstring().c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0)
+            {
+                return true;
+            }
+
+            const std::error_code ec(static_cast<int>(GetLastError()), std::system_category());
+            error = "Could not replace descriptor-link cache: " + ec.message();
+            return false;
+#else
+            std::error_code ec;
+            fs::rename(tempPath, cachePath, ec);
+            if (!ec)
+            {
+                return true;
+            }
+
+            fs::remove(cachePath, ec);
+            ec.clear();
+            fs::rename(tempPath, cachePath, ec);
+            if (ec)
+            {
+                error = "Could not replace descriptor-link cache: " + ec.message();
+                return false;
+            }
+            return true;
+#endif
         }
     }
 
@@ -1919,7 +2032,10 @@ namespace DagorAssetsExtractor::AssetIndex
             return false;
         }
 
-        std::ofstream file(cachePath, std::ios::trunc);
+        fs::path tempPath = cachePath;
+        tempPath += ".tmp";
+
+        std::ofstream file(tempPath, std::ios::trunc);
         if (!file)
         {
             error = "Could not open descriptor-link cache for writing.";
@@ -1943,55 +2059,68 @@ namespace DagorAssetsExtractor::AssetIndex
                  << source.lastWriteTicks << '\n';
         }
 
+        std::vector<fs::path> pathRefs;
+        std::unordered_map<std::wstring, size_t> pathRefIndex;
+        for (const DescriptorResourceLink& link : links)
+        {
+            AddCachePathRef(pathRefs, pathRefIndex, link.descriptorPath);
+            if (link.matchedGrpPath)
+            {
+                AddCachePathRef(pathRefs, pathRefIndex, *link.matchedGrpPath);
+            }
+            for (const DescriptorTextureLink& textureLink : link.textureLinks)
+            {
+                if (textureLink.matchedDxpPath)
+                {
+                    AddCachePathRef(pathRefs, pathRefIndex, *textureLink.matchedDxpPath);
+                }
+            }
+        }
+
+        file << "pathRefCount " << pathRefs.size() << '\n';
+        for (size_t i = 0; i < pathRefs.size(); ++i)
+        {
+            file << "pathRef " << i << ' ' << std::quoted(Platform::PathToUtf8(pathRefs[i])) << '\n';
+        }
+
         file << "linkCount " << links.size() << '\n';
         for (const DescriptorResourceLink& link : links)
         {
             file << "beginLink\n";
-            file << "descriptorPath " << std::quoted(Platform::PathToUtf8(link.descriptorPath)) << '\n';
+            file << "descriptorPathRef " << AddCachePathRef(pathRefs, pathRefIndex, link.descriptorPath) << '\n';
             file << "resourceName " << std::quoted(link.resourceName) << '\n';
             file << "resId " << link.resId << '\n';
-            for (const std::string& textureName : link.textureNames)
+            WriteStringVectorRow(file, "materialNames", link.materialNames);
+            WriteStringVectorRow(file, "materialDomains", link.materialDomains);
+            WriteStringVectorRow(file, "materialShaderClasses", link.materialShaderClasses);
+            file << "materialTextureBindings " << link.materialTextureBindings.size();
+            for (const DescriptorMaterialTextureRef& binding : link.materialTextureBindings)
             {
-                file << "textureName " << std::quoted(textureName) << '\n';
+                file << ' ' << binding.materialIndex
+                     << ' ' << binding.textureIndex
+                     << ' ' << std::quoted(binding.slotName);
             }
-            for (const std::string& materialName : link.materialNames)
-            {
-                file << "materialName " << std::quoted(materialName) << '\n';
-            }
-            for (const std::string& materialDomain : link.materialDomains)
-            {
-                file << "materialDomain " << std::quoted(materialDomain) << '\n';
-            }
-            for (const std::string& materialShaderClass : link.materialShaderClasses)
-            {
-                file << "materialShaderClass " << std::quoted(materialShaderClass) << '\n';
-            }
-            for (const uint32_t materialTextureRef : link.materialTextureRefs)
-            {
-                file << "materialTextureRef " << materialTextureRef << '\n';
-            }
-            for (const DescriptorMaterialTextureRef& materialTextureBinding : link.materialTextureBindings)
-            {
-                file << "materialTextureBinding "
-                     << materialTextureBinding.materialIndex << ' '
-                     << materialTextureBinding.textureIndex << ' '
-                     << std::quoted(materialTextureBinding.slotName) << '\n';
-            }
-            WriteOptionalPath(file, "matchedGrpPath", link.matchedGrpPath);
+            file << '\n';
+            const std::optional<size_t> matchedGrpPathRef = FindCachePathRef(pathRefIndex, link.matchedGrpPath);
+            file << "matchedGrpPathRef "
+                 << (matchedGrpPathRef ? std::to_string(*matchedGrpPathRef) : std::string("-1"))
+                 << '\n';
             WriteOptionalString(file, "matchedGrpEntryName", link.matchedGrpEntryName);
             file << "matchedGrpClassId " << link.matchedGrpClassId << '\n';
             file << "matchedGrpClassName " << std::quoted(link.matchedGrpClassName) << '\n';
             file << "matchedGrpCanExportStatic " << (link.matchedGrpEntryCanExportStaticModel ? 1 : 0) << '\n';
             file << "matchedGrpCanExportSkinned " << (link.matchedGrpEntryCanExportSkinnedModel ? 1 : 0) << '\n';
 
+            file << "textureLinks " << link.textureLinks.size();
             for (const DescriptorTextureLink& textureLink : link.textureLinks)
             {
-                file << "textureLink "
-                     << textureLink.textureIndex << ' '
-                     << std::quoted(textureLink.textureName) << ' '
-                     << std::quoted(textureLink.matchedDxpPath ? Platform::PathToUtf8(*textureLink.matchedDxpPath) : std::string()) << ' '
-                     << std::quoted(textureLink.matchedDxpEntryName.value_or(std::string())) << '\n';
+                const std::optional<size_t> dxpPathRef = FindCachePathRef(pathRefIndex, textureLink.matchedDxpPath);
+                file << ' ' << textureLink.textureIndex
+                     << ' ' << std::quoted(textureLink.textureName)
+                     << ' ' << (dxpPathRef ? std::to_string(*dxpPathRef) : std::string("-1"))
+                     << ' ' << std::quoted(textureLink.matchedDxpEntryName.value_or(std::string()));
             }
+            file << '\n';
 
             file << "endLink\n";
         }
@@ -1999,6 +2128,13 @@ namespace DagorAssetsExtractor::AssetIndex
         if (!file)
         {
             error = "Could not finish writing descriptor-link cache.";
+            return false;
+        }
+
+        file.close();
+
+        if (!ReplaceCacheFileWithTemp(tempPath, cachePath, error))
+        {
             return false;
         }
 
@@ -2038,6 +2174,7 @@ namespace DagorAssetsExtractor::AssetIndex
         size_t expectedSourceCount = 0;
         size_t expectedLinkCount = 0;
         std::vector<ResourceRecord> cachedSources;
+        std::vector<fs::path> pathRefs;
         std::vector<DescriptorResourceLink> loadedLinks;
 
         std::string line;
@@ -2078,6 +2215,7 @@ namespace DagorAssetsExtractor::AssetIndex
             else if (tag == "sourceCount")
             {
                 stream >> expectedSourceCount;
+                cachedSources.reserve(expectedSourceCount);
             }
             else if (tag == "source")
             {
@@ -2101,174 +2239,39 @@ namespace DagorAssetsExtractor::AssetIndex
                 source.type = *type;
                 cachedSources.push_back(std::move(source));
             }
+            else if (tag == "pathRefCount")
+            {
+                size_t pathRefCount = 0;
+                stream >> pathRefCount;
+                pathRefs.reserve(pathRefCount);
+            }
+            else if (tag == "pathRef")
+            {
+                size_t id = 0;
+                fs::path path;
+                if (!(stream >> id) || !ReadQuotedPath(stream, path))
+                {
+                    result.message = "Descriptor-link cache path-ref row is malformed.";
+                    return result;
+                }
+                if (id > pathRefs.size())
+                {
+                    result.message = "Descriptor-link cache path-ref table is sparse.";
+                    return result;
+                }
+                if (id == pathRefs.size())
+                {
+                    pathRefs.push_back(std::move(path));
+                }
+                else
+                {
+                    pathRefs[id] = std::move(path);
+                }
+            }
             else if (tag == "linkCount")
             {
                 stream >> expectedLinkCount;
-            }
-            else if (tag == "beginLink")
-            {
-                DescriptorResourceLink link;
-                bool ended = false;
-                while (std::getline(file, line))
-                {
-                    if (line.empty())
-                    {
-                        continue;
-                    }
-
-                    std::stringstream linkStream(line);
-                    std::string linkTag;
-                    if (!(linkStream >> linkTag))
-                    {
-                        continue;
-                    }
-
-                    if (linkTag == "endLink")
-                    {
-                        ended = true;
-                        break;
-                    }
-                    if (linkTag == "descriptorPath")
-                    {
-                        if (!ReadQuotedPath(linkStream, link.descriptorPath))
-                        {
-                            result.message = "Descriptor-link cache link descriptor path is malformed.";
-                            return result;
-                        }
-                    }
-                    else if (linkTag == "resourceName")
-                    {
-                        linkStream >> std::quoted(link.resourceName);
-                    }
-                    else if (linkTag == "resId")
-                    {
-                        linkStream >> link.resId;
-                    }
-                    else if (linkTag == "textureName")
-                    {
-                        std::string value;
-                        if (linkStream >> std::quoted(value))
-                        {
-                            link.textureNames.push_back(std::move(value));
-                        }
-                    }
-                    else if (linkTag == "materialName")
-                    {
-                        std::string value;
-                        if (linkStream >> std::quoted(value))
-                        {
-                            link.materialNames.push_back(std::move(value));
-                        }
-                    }
-                    else if (linkTag == "materialDomain")
-                    {
-                        std::string value;
-                        if (linkStream >> std::quoted(value))
-                        {
-                            link.materialDomains.push_back(std::move(value));
-                        }
-                    }
-                    else if (linkTag == "materialShaderClass")
-                    {
-                        std::string value;
-                        if (linkStream >> std::quoted(value))
-                        {
-                            link.materialShaderClasses.push_back(std::move(value));
-                        }
-                    }
-                    else if (linkTag == "materialTextureRef")
-                    {
-                        uint32_t value = 0;
-                        if (linkStream >> value)
-                        {
-                            link.materialTextureRefs.push_back(value);
-                        }
-                    }
-                    else if (linkTag == "materialTextureBinding")
-                    {
-                        DescriptorMaterialTextureRef ref;
-                        if (!(linkStream >> ref.materialIndex >> ref.textureIndex >> std::quoted(ref.slotName)))
-                        {
-                            result.message = "Descriptor-link cache material texture binding row is malformed.";
-                            return result;
-                        }
-                        link.materialTextureBindings.push_back(std::move(ref));
-                    }
-                    else if (linkTag == "matchedGrpPath")
-                    {
-                        fs::path value;
-                        if (!ReadQuotedPath(linkStream, value))
-                        {
-                            result.message = "Descriptor-link cache matched GRP path is malformed.";
-                            return result;
-                        }
-                        link.matchedGrpPath = std::move(value);
-                    }
-                    else if (linkTag == "matchedGrpEntryName")
-                    {
-                        std::string value;
-                        if (linkStream >> std::quoted(value))
-                        {
-                            link.matchedGrpEntryName = std::move(value);
-                        }
-                    }
-                    else if (linkTag == "matchedGrpClassId")
-                    {
-                        linkStream >> link.matchedGrpClassId;
-                    }
-                    else if (linkTag == "matchedGrpClassName")
-                    {
-                        linkStream >> std::quoted(link.matchedGrpClassName);
-                    }
-                    else if (linkTag == "matchedGrpCanExportStatic")
-                    {
-                        int value = 0;
-                        linkStream >> value;
-                        link.matchedGrpEntryCanExportStaticModel = value != 0;
-                    }
-                    else if (linkTag == "matchedGrpCanExportSkinned")
-                    {
-                        int value = 0;
-                        linkStream >> value;
-                        link.matchedGrpEntryCanExportSkinnedModel = value != 0;
-                    }
-                    else if (linkTag == "textureLink")
-                    {
-                        DescriptorTextureLink textureLink;
-                        std::string textureName;
-                        std::string dxpPath;
-                        std::string dxpEntryName;
-                        if (!(linkStream >> textureLink.textureIndex >> std::quoted(textureName) >> std::quoted(dxpPath) >> std::quoted(dxpEntryName)))
-                        {
-                            result.message = "Descriptor-link cache texture link row is malformed.";
-                            return result;
-                        }
-
-                        textureLink.textureName = std::move(textureName);
-                        if (!dxpPath.empty())
-                        {
-                            textureLink.matchedDxpPath = Platform::Utf8ToPath(dxpPath);
-                        }
-                        if (!dxpEntryName.empty())
-                        {
-                            textureLink.matchedDxpEntryName = std::move(dxpEntryName);
-                        }
-                        link.textureLinks.push_back(std::move(textureLink));
-                    }
-                }
-
-                if (!ended)
-                {
-                    result.message = "Descriptor-link cache link block is truncated.";
-                    return result;
-                }
-                if (link.descriptorPath.empty() || link.resourceName.empty())
-                {
-                    result.message = "Descriptor-link cache link block is missing required fields.";
-                    return result;
-                }
-
-                loadedLinks.push_back(std::move(link));
+                break;
             }
         }
 
@@ -2300,11 +2303,6 @@ namespace DagorAssetsExtractor::AssetIndex
             result.message = "Descriptor-link cache source table is truncated.";
             return result;
         }
-        if (expectedLinkCount != loadedLinks.size())
-        {
-            result.message = "Descriptor-link cache link table is truncated.";
-            return result;
-        }
 
         const std::vector<ResourceRecord> expectedSources = BuildDescriptorCacheSourceRecords(records);
         std::sort(cachedSources.begin(), cachedSources.end(), [](const ResourceRecord& left, const ResourceRecord& right) {
@@ -2321,6 +2319,209 @@ namespace DagorAssetsExtractor::AssetIndex
         if (!result.sourcesMatched)
         {
             result.message = "Descriptor-link cache is stale because resource records changed.";
+            return result;
+        }
+
+        loadedLinks.reserve(expectedLinkCount);
+
+        while (loadedLinks.size() < expectedLinkCount && std::getline(file, line))
+        {
+            if (line.empty())
+            {
+                continue;
+            }
+
+            std::stringstream stream(line);
+            std::string tag;
+            if (!(stream >> tag))
+            {
+                continue;
+            }
+
+            if (tag == "beginLink")
+            {
+                DescriptorResourceLink link;
+                bool ended = false;
+                while (std::getline(file, line))
+                {
+                    if (line.empty())
+                    {
+                        continue;
+                    }
+
+                    std::stringstream linkStream(line);
+                    std::string linkTag;
+                    if (!(linkStream >> linkTag))
+                    {
+                        continue;
+                    }
+
+                    if (linkTag == "endLink")
+                    {
+                        ended = true;
+                        break;
+                    }
+                    if (linkTag == "descriptorPathRef")
+                    {
+                        long long pathRef = -1;
+                        std::optional<fs::path> descriptorPath;
+                        if (!(linkStream >> pathRef) ||
+                            !ResolveCachePathRef(pathRef, pathRefs, descriptorPath) ||
+                            !descriptorPath)
+                        {
+                            result.message = "Descriptor-link cache link descriptor path is malformed.";
+                            return result;
+                        }
+                        link.descriptorPath = std::move(*descriptorPath);
+                    }
+                    else if (linkTag == "resourceName")
+                    {
+                        linkStream >> std::quoted(link.resourceName);
+                    }
+                    else if (linkTag == "resId")
+                    {
+                        linkStream >> link.resId;
+                    }
+                    else if (linkTag == "materialNames")
+                    {
+                        if (!ReadStringVectorRow(linkStream, link.materialNames))
+                        {
+                            result.message = "Descriptor-link cache material name row is malformed.";
+                            return result;
+                        }
+                    }
+                    else if (linkTag == "materialDomains")
+                    {
+                        if (!ReadStringVectorRow(linkStream, link.materialDomains))
+                        {
+                            result.message = "Descriptor-link cache material domain row is malformed.";
+                            return result;
+                        }
+                    }
+                    else if (linkTag == "materialShaderClasses")
+                    {
+                        if (!ReadStringVectorRow(linkStream, link.materialShaderClasses))
+                        {
+                            result.message = "Descriptor-link cache material shader-class row is malformed.";
+                            return result;
+                        }
+                    }
+                    else if (linkTag == "materialTextureBindings")
+                    {
+                        size_t bindingCount = 0;
+                        if (!(linkStream >> bindingCount))
+                        {
+                            result.message = "Descriptor-link cache material texture binding row is malformed.";
+                            return result;
+                        }
+                        link.materialTextureBindings.reserve(bindingCount);
+                        for (size_t i = 0; i < bindingCount; ++i)
+                        {
+                            DescriptorMaterialTextureRef ref;
+                            if (!(linkStream >> ref.materialIndex >> ref.textureIndex >> std::quoted(ref.slotName)))
+                            {
+                                result.message = "Descriptor-link cache material texture binding row is malformed.";
+                                return result;
+                            }
+                            link.materialTextureBindings.push_back(std::move(ref));
+                        }
+                    }
+                    else if (linkTag == "matchedGrpPathRef")
+                    {
+                        long long pathRef = -1;
+                        if (!(linkStream >> pathRef) ||
+                            !ResolveCachePathRef(pathRef, pathRefs, link.matchedGrpPath))
+                        {
+                            result.message = "Descriptor-link cache matched GRP path is malformed.";
+                            return result;
+                        }
+                    }
+                    else if (linkTag == "matchedGrpEntryName")
+                    {
+                        std::string value;
+                        if (linkStream >> std::quoted(value))
+                        {
+                            link.matchedGrpEntryName = std::move(value);
+                        }
+                    }
+                    else if (linkTag == "matchedGrpClassId")
+                    {
+                        linkStream >> link.matchedGrpClassId;
+                    }
+                    else if (linkTag == "matchedGrpClassName")
+                    {
+                        linkStream >> std::quoted(link.matchedGrpClassName);
+                    }
+                    else if (linkTag == "matchedGrpCanExportStatic")
+                    {
+                        int value = 0;
+                        linkStream >> value;
+                        link.matchedGrpEntryCanExportStaticModel = value != 0;
+                    }
+                    else if (linkTag == "matchedGrpCanExportSkinned")
+                    {
+                        int value = 0;
+                        linkStream >> value;
+                        link.matchedGrpEntryCanExportSkinnedModel = value != 0;
+                    }
+                    else if (linkTag == "textureLinks")
+                    {
+                        size_t textureLinkCount = 0;
+                        if (!(linkStream >> textureLinkCount))
+                        {
+                            result.message = "Descriptor-link cache texture link row is malformed.";
+                            return result;
+                        }
+                        link.textureLinks.reserve(textureLinkCount);
+                        for (size_t i = 0; i < textureLinkCount; ++i)
+                        {
+                            DescriptorTextureLink textureLink;
+                            long long dxpPathRef = -1;
+                            std::string dxpEntryName;
+                            if (!(linkStream >> textureLink.textureIndex >>
+                                      std::quoted(textureLink.textureName) >>
+                                      dxpPathRef >>
+                                      std::quoted(dxpEntryName)) ||
+                                !ResolveCachePathRef(dxpPathRef, pathRefs, textureLink.matchedDxpPath))
+                            {
+                                result.message = "Descriptor-link cache texture link row is malformed.";
+                                return result;
+                            }
+
+                            if (!dxpEntryName.empty())
+                            {
+                                textureLink.matchedDxpEntryName = std::move(dxpEntryName);
+                            }
+                            if (textureLink.textureIndex < 100000)
+                            {
+                                if (textureLink.textureIndex >= link.textureNames.size())
+                                {
+                                    link.textureNames.resize(static_cast<size_t>(textureLink.textureIndex) + 1);
+                                }
+                                link.textureNames[textureLink.textureIndex] = textureLink.textureName;
+                            }
+                            link.textureLinks.push_back(std::move(textureLink));
+                        }
+                    }
+                }
+
+                if (!ended)
+                {
+                    result.message = "Descriptor-link cache link block is truncated.";
+                    return result;
+                }
+                if (link.descriptorPath.empty() || link.resourceName.empty())
+                {
+                    result.message = "Descriptor-link cache link block is missing required fields.";
+                    return result;
+                }
+
+                loadedLinks.push_back(std::move(link));
+            }
+        }
+        if (expectedLinkCount != loadedLinks.size())
+        {
+            result.message = "Descriptor-link cache link table is truncated.";
             return result;
         }
 

@@ -351,43 +351,91 @@ namespace DagorAssetsExtractor::App
         app.descriptorUiDxpMatches.clear();
     }
 
-    void TryLoadDescriptorResourceLinkCache(AppState& app, const std::vector<ResourceRecord>& records)
+    void TryLoadDescriptorResourceLinkCache(
+        AppState& app,
+        std::shared_ptr<const std::vector<ResourceRecord>> records)
     {
-        if (app.descriptorLinksCachePath.empty() || records.empty())
+        if (app.descriptorLinksCachePath.empty() || !records || records->empty())
         {
             return;
         }
 
+        {
+            std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+            if (app.descriptorLinks.cacheLoading || app.descriptorLinks.loading)
+            {
+                AddLog(app, LogLevel::Info, "Descriptor-link cache load skipped because descriptor links are already busy.");
+                return;
+            }
+
+            app.descriptorLinks.cacheLoading = true;
+            app.descriptorLinks.cacheLoadingRecords = records;
+            app.descriptorLinks.cacheStatus = "Loading descriptor-link cache...";
+            if (!app.descriptorLinks.links)
+            {
+                app.descriptorLinks.status = "Loading cached descriptor links...";
+            }
+        }
+
+        const fs::path cachePath = app.descriptorLinksCachePath;
+        const fs::path gameRoot = app.settings.gameRoot;
         const AssetIndex::DescriptorResourceLinkBuildOptions options = DefaultDescriptorLinkBuildOptions();
-        AssetIndex::DescriptorResourceLinkCacheLoadResult result =
-            AssetIndex::LoadDescriptorResourceLinkCache(app.descriptorLinksCachePath, app.settings.gameRoot, records, options);
+        std::error_code ec;
+        const uintmax_t cacheBytes = fs::file_size(cachePath, ec);
+        AddLog(app,
+            LogLevel::Info,
+            "Descriptor-link cache load scheduled: " + Platform::PathToUtf8(cachePath) +
+                (ec ? std::string() : (", size=" + std::to_string(cacheBytes) + " bytes")));
 
-        {
-            std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
-            app.descriptorLinks.cacheStatus = result.message;
-        }
+        app.backgroundJobs.Start("LoadDescriptorResourceLinkCache", [&app, records, cachePath, gameRoot, options]() {
+            const auto started = std::chrono::steady_clock::now();
+            AssetIndex::DescriptorResourceLinkCacheLoadResult result =
+                AssetIndex::LoadDescriptorResourceLinkCache(cachePath, gameRoot, *records, options);
 
-        if (!result.fileFound)
-        {
-            return;
-        }
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            result.message += " (" + std::to_string(elapsedMs) + " ms)";
 
-        if (!result.loaded)
-        {
-            AddLog(app, LogLevel::Info, "Descriptor-link cache skipped: " + result.message);
-            return;
-        }
+            std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> cachedLinks;
+            if (result.loaded)
+            {
+                cachedLinks = std::make_shared<const std::vector<AssetIndex::DescriptorResourceLink>>(std::move(result.links));
+            }
 
-        auto cachedLinks = std::make_shared<const std::vector<AssetIndex::DescriptorResourceLink>>(std::move(result.links));
-        {
-            std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
-            app.descriptorLinks.links = cachedLinks;
-            app.descriptorLinks.globalLinks = true;
-            app.descriptorLinks.scopePath.reset();
-            app.descriptorLinks.status = result.message;
-            app.descriptorLinks.cacheStatus = result.message;
-        }
-        AddLog(app, LogLevel::Info, result.message);
+            {
+                std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+                if (app.descriptorLinks.cacheLoadingRecords != records)
+                {
+                    return;
+                }
+
+                app.descriptorLinks.cacheLoading = false;
+                app.descriptorLinks.cacheLoadingRecords.reset();
+                app.descriptorLinks.cacheStatus = result.message;
+                if (cachedLinks)
+                {
+                    app.descriptorLinks.links = cachedLinks;
+                    app.descriptorLinks.globalLinks = true;
+                    app.descriptorLinks.scopePath.reset();
+                    app.descriptorLinks.status = result.message;
+                }
+            }
+
+            if (!result.fileFound)
+            {
+                AddLog(app, LogLevel::Info, result.message);
+                return;
+            }
+
+            if (!result.loaded)
+            {
+                AddLog(app, LogLevel::Info, "Descriptor-link cache skipped: " + result.message);
+                return;
+            }
+
+            ClearDescriptorLinkUiCache(app);
+            AddLog(app, LogLevel::Info, result.message);
+        });
     }
 
     void EnforcePackContentsLimit(AppState& app, const fs::path& parsedPath)
@@ -632,6 +680,11 @@ namespace DagorAssetsExtractor::App
         }
 
         app.selectedPath.clear();
+        {
+            std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+            app.descriptorLinks.cacheLoading = false;
+            app.descriptorLinks.cacheLoadingRecords.reset();
+        }
         app.scan.filesVisited.store(0);
         app.scan.recordsFound.store(0);
         app.scan.completed.store(false);
@@ -649,9 +702,11 @@ namespace DagorAssetsExtractor::App
         {
             std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
             app.descriptorLinks.loading = false;
+            app.descriptorLinks.cacheLoading = false;
             app.descriptorLinks.status = "Not built";
             app.descriptorLinks.cancelRequested.store(false);
             app.descriptorLinks.loadingRecords.reset();
+            app.descriptorLinks.cacheLoadingRecords.reset();
             app.descriptorLinks.loadingBlkLinks.reset();
             app.descriptorLinks.links.reset();
             app.descriptorLinks.globalLinks = false;
@@ -694,9 +749,10 @@ namespace DagorAssetsExtractor::App
             return;
         }
 
+        auto loadedRecords = std::make_shared<std::vector<ResourceRecord>>(result.records);
         {
             std::lock_guard<std::mutex> lock(app.scan.mutex);
-            app.scan.records = std::make_shared<std::vector<ResourceRecord>>(result.records);
+            app.scan.records = loadedRecords;
             app.scan.status = result.records.empty() ? "Idle" : "Loaded from cache";
             app.scan.cacheStatus = result.message;
             app.scan.cacheLoaded = !result.records.empty();
@@ -709,7 +765,7 @@ namespace DagorAssetsExtractor::App
         app.scan.failed.store(false);
 
         AddLog(app, LogLevel::Info, result.message);
-        TryLoadDescriptorResourceLinkCache(app, result.records);
+        TryLoadDescriptorResourceLinkCache(app, loadedRecords);
     }
 
     void SetGameRoot(AppState& app, const fs::path& gameRoot)
@@ -816,9 +872,10 @@ namespace DagorAssetsExtractor::App
                 }
                 else
                 {
+                    auto discoveredRecords = std::make_shared<std::vector<ResourceRecord>>(result.records);
                     {
                         std::lock_guard<std::mutex> lock(app.scan.mutex);
-                        app.scan.records = std::make_shared<std::vector<ResourceRecord>>(result.records);
+                        app.scan.records = discoveredRecords;
                     }
                     {
                         std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
@@ -827,6 +884,8 @@ namespace DagorAssetsExtractor::App
                         app.descriptorLinks.scopePath.reset();
                         app.descriptorLinks.status = "Not built";
                         app.descriptorLinks.cacheStatus = "Resource index changed";
+                        app.descriptorLinks.cacheLoading = false;
+                        app.descriptorLinks.cacheLoadingRecords.reset();
                     }
 
                     std::ostringstream message;
@@ -857,7 +916,7 @@ namespace DagorAssetsExtractor::App
                         }
                     }
 
-                    TryLoadDescriptorResourceLinkCache(app, result.records);
+                    TryLoadDescriptorResourceLinkCache(app, discoveredRecords);
                 }
             }
             catch (const std::exception& exception)
@@ -1833,12 +1892,14 @@ namespace DagorAssetsExtractor::App
                     app.descriptorLinks.status = "Not built";
                     app.descriptorLinks.links.reset();
                     app.descriptorLinks.loadingRecords.reset();
+                    app.descriptorLinks.cacheLoadingRecords.reset();
                     app.descriptorLinks.loadingBlkLinks.reset();
                     app.descriptorLinks.cancelRequested.store(false);
                     app.descriptorLinks.globalLinks = false;
                     app.descriptorLinks.scopePath.reset();
                     app.descriptorLinks.cacheStatus = "Invalidated by BLK relationship rebuild";
                     app.descriptorLinks.loading = false;
+                    app.descriptorLinks.cacheLoading = false;
                 }
             }
             catch (const std::exception& e)
@@ -1892,6 +1953,11 @@ namespace DagorAssetsExtractor::App
             if (app.descriptorLinks.loading)
             {
                 AddLog(app, LogLevel::Info, "Descriptor relationship build is already running.");
+                return;
+            }
+            if (app.descriptorLinks.cacheLoading)
+            {
+                AddLog(app, LogLevel::Info, "Descriptor-link cache is loading; wait for it to finish or rebuild after it is skipped.");
                 return;
             }
 
@@ -2061,6 +2127,7 @@ namespace DagorAssetsExtractor::App
                 if (!result.canceled && !scopedBuild && !app.descriptorLinksCachePath.empty())
                 {
                     std::string cacheError;
+                    const auto cacheSaveStarted = std::chrono::steady_clock::now();
                     if (AssetIndex::SaveDescriptorResourceLinkCache(
                             app.descriptorLinksCachePath,
                             app.settings.gameRoot,
@@ -2069,7 +2136,18 @@ namespace DagorAssetsExtractor::App
                             options,
                             cacheError))
                     {
-                        const std::string cacheMessage = "Descriptor-link cache saved with " + std::to_string(links->size()) + " links.";
+                        const auto cacheSaveMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - cacheSaveStarted).count();
+                        std::error_code ec;
+                        const uintmax_t cacheBytes = fs::file_size(app.descriptorLinksCachePath, ec);
+                        std::string cacheMessage =
+                            "Descriptor-link cache saved with " + std::to_string(links->size()) +
+                            " links in " + std::to_string(cacheSaveMs) + " ms";
+                        if (!ec)
+                        {
+                            cacheMessage += ", size=" + std::to_string(cacheBytes) + " bytes";
+                        }
+                        cacheMessage += ".";
                         {
                             std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
                             app.descriptorLinks.cacheStatus = cacheMessage;
@@ -2153,7 +2231,7 @@ namespace DagorAssetsExtractor::App
     bool IsDescriptorResourceLinksLoading(AppState& app)
     {
         std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
-        return app.descriptorLinks.loading;
+        return app.descriptorLinks.loading || app.descriptorLinks.cacheLoading;
     }
 
     void RequestDescriptorResourceLinkCancel(AppState& app)
