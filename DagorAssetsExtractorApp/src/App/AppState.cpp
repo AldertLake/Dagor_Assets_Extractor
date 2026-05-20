@@ -8,6 +8,7 @@
 #include "DagorFormats/DynModelReader.h"
 #include "DagorFormats/GeomNodeTreeReader.h"
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <chrono>
@@ -67,6 +68,39 @@ namespace DagorAssetsExtractor::App
         }
 
         return { "t3", "t5", "t7", "t9" };
+    }
+
+    template <typename TMesh>
+    std::string BuildUvExportSummary(const std::vector<TMesh>& meshes)
+    {
+        size_t vertices = 0;
+        size_t objShortUv = 0;
+        size_t objFloatUv = 0;
+        size_t zeroUv = 0;
+        for (const TMesh& mesh : meshes)
+        {
+            for (const auto& vertex : mesh.vertices)
+            {
+                ++vertices;
+                if (vertex.uvTransform == DagorFormats::UvTransform::ObjShortVFlipped)
+                {
+                    ++objShortUv;
+                }
+                else if (vertex.uvTransform == DagorFormats::UvTransform::ObjFloatVNegated)
+                {
+                    ++objFloatUv;
+                }
+                if (std::abs(vertex.u) <= 1e-8f && std::abs(vertex.v) <= 1e-8f)
+                {
+                    ++zeroUv;
+                }
+            }
+        }
+
+        return "vertices=" + std::to_string(vertices) +
+            ", objShortUvToGltf=" + std::to_string(objShortUv) +
+            ", objFloatUvToGltf=" + std::to_string(objFloatUv) +
+            ", zeroUv=" + std::to_string(zeroUv);
     }
 
     std::string NowString()
@@ -1187,6 +1221,10 @@ namespace DagorAssetsExtractor::App
                 {
                     DagorFormats::RendInstReader reader(payload);
                     reader.Parse();
+                    AddLog(app,
+                        LogLevel::Info,
+                        "RendInst UV export summary for " + entry.name + ": " +
+                            BuildUvExportSummary(reader.GetLods()));
 
                     manifest.assetType = "RendInst Static Model";
                     manifest.formatDecoderVersion = "RendInstReader v1.0";
@@ -1229,6 +1267,10 @@ namespace DagorAssetsExtractor::App
                     }
 
                     std::vector<DagorFormats::DynModelMesh> dynLods = reader.GetLods();
+                    AddLog(app,
+                        LogLevel::Info,
+                        "DynModel UV export summary for " + entry.name + ": " +
+                            BuildUvExportSummary(dynLods));
                     if (matchedLink && matchedLink->materialDomains.size() == matchedLink->materialNames.size())
                     {
                         const auto firstSkinnedIt = std::find(

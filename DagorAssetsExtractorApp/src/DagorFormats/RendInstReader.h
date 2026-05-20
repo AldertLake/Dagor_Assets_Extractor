@@ -7,10 +7,17 @@
 
 namespace DagorFormats {
 
+enum class UvTransform : uint8_t {
+    None = 0,
+    ObjShortVFlipped = 1,
+    ObjFloatVNegated = 2,
+};
+
 struct Vertex {
     float x, y, z;
     float nx, ny, nz;
     float u, v;
+    UvTransform uvTransform = UvTransform::None;
 };
 
 struct RendInstPrimitive {

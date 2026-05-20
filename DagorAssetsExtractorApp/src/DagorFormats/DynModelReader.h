@@ -14,6 +14,7 @@ struct SkinnedVertex {
     float u, v;
     uint8_t jointIndices[4];
     float jointWeights[4];
+    UvTransform uvTransform = UvTransform::None;
 };
 
 struct DynModelMesh {

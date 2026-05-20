@@ -56,6 +56,20 @@ namespace {
     constexpr int MVD_SKINNED = 1;
     constexpr int MVD_SKINNED_FLAG = 2;
 
+    void ReadShortUv(DagorIO::MemoryReader& reader, Vertex& vertex)
+    {
+        vertex.u = static_cast<float>(reader.ReadInt16()) / 4096.0f;
+        vertex.v = 1.0f - (static_cast<float>(reader.ReadInt16()) / 4096.0f);
+        vertex.uvTransform = UvTransform::ObjShortVFlipped;
+    }
+
+    void ReadFloatUv(DagorIO::MemoryReader& reader, Vertex& vertex)
+    {
+        vertex.u = reader.ReadFloat();
+        vertex.v = -reader.ReadFloat();
+        vertex.uvTransform = UvTransform::ObjFloatVNegated;
+    }
+
     uint32_t ReadU32(std::span<const uint8_t> data, size_t offset)
     {
         if (offset > data.size() || data.size() - offset < sizeof(uint32_t))
@@ -226,7 +240,8 @@ void RendInstReader::Parse() {
             uint32_t indexCount = reader.ReadUInt32();
 
             // Safety check for vertex and index sizes
-            uint64_t requiredBytes = static_cast<uint64_t>(vertCount) * sizeof(Vertex) + static_cast<uint64_t>(indexCount) * sizeof(uint32_t);
+            constexpr uint64_t kSyntheticVertexStride = 32;
+            uint64_t requiredBytes = static_cast<uint64_t>(vertCount) * kSyntheticVertexStride + static_cast<uint64_t>(indexCount) * sizeof(uint32_t);
             if (requiredBytes > reader.GetRemaining()) {
                 throw std::runtime_error("RendInst truncated LOD vertex/index buffers");
             }
@@ -461,14 +476,12 @@ void RendInstReader::ParseRealGrpPayload() {
                     v.y = (float)meshReader.ReadInt16() / 32768.0f;
                     v.z = (float)meshReader.ReadInt16() / 32768.0f;
                     meshReader.Skip(2);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 16) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -478,22 +491,19 @@ void RendInstReader::ParseRealGrpPayload() {
                     v.y = (float)meshReader.ReadInt16() / 32768.0f;
                     v.z = (float)meshReader.ReadInt16() / 32768.0f;
                     meshReader.Skip(6);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 20) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 24) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = meshReader.ReadFloat();
-                    v.v = -meshReader.ReadFloat();
+                    ReadFloatUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -504,22 +514,19 @@ void RendInstReader::ParseRealGrpPayload() {
                     v.y = (float)meshReader.ReadInt16() / 32768.0f;
                     v.z = (float)meshReader.ReadInt16() / 32768.0f;
                     meshReader.Skip(6);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 28) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = meshReader.ReadFloat();
-                    v.v = -meshReader.ReadFloat();
+                    ReadFloatUv(meshReader, v);
                     decoded = true;
                 }
             }
             else if (fmt == 5) {
                 if (stride == 24) {
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     v.x = (float)meshReader.ReadInt16() / 32768.0f;
                     v.y = (float)meshReader.ReadInt16() / 32768.0f;
                     v.z = (float)meshReader.ReadInt16() / 32768.0f;
@@ -528,15 +535,13 @@ void RendInstReader::ParseRealGrpPayload() {
                 else if (stride == 28) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(12);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 36) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = meshReader.ReadFloat();
-                    v.v = -meshReader.ReadFloat();
+                    ReadFloatUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -544,8 +549,7 @@ void RendInstReader::ParseRealGrpPayload() {
                 if (stride == 32) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -555,22 +559,19 @@ void RendInstReader::ParseRealGrpPayload() {
                     v.y = (float)meshReader.ReadInt16() / 32768.0f;
                     v.z = (float)meshReader.ReadInt16() / 32768.0f;
                     meshReader.Skip(6);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 20) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 24) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = meshReader.ReadFloat();
-                    v.v = -meshReader.ReadFloat();
+                    ReadFloatUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -581,15 +582,13 @@ void RendInstReader::ParseRealGrpPayload() {
                     v.y = (float)meshReader.ReadInt16() / 32768.0f;
                     v.z = (float)meshReader.ReadInt16() / 32768.0f;
                     meshReader.Skip(6);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 28) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(8);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 32) {
@@ -605,23 +604,20 @@ void RendInstReader::ParseRealGrpPayload() {
                     v.y = (float)meshReader.ReadInt16() / 32768.0f;
                     v.z = (float)meshReader.ReadInt16() / 32768.0f;
                     meshReader.Skip(6);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 32) {
                     meshReader.Skip(4);
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 36) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(14);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -637,8 +633,7 @@ void RendInstReader::ParseRealGrpPayload() {
                 else if (stride == 36) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(8);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -648,22 +643,19 @@ void RendInstReader::ParseRealGrpPayload() {
                     v.y = (float)meshReader.ReadInt16() / 32768.0f;
                     v.z = (float)meshReader.ReadInt16() / 32768.0f;
                     meshReader.Skip(6);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 28) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
                 else if (stride == 32) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = meshReader.ReadFloat();
-                    v.v = -meshReader.ReadFloat();
+                    ReadFloatUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -672,8 +664,7 @@ void RendInstReader::ParseRealGrpPayload() {
                     meshReader.Skip(4);
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
             }
@@ -681,8 +672,7 @@ void RendInstReader::ParseRealGrpPayload() {
                 if (stride == 36) {
                     v.x = meshReader.ReadFloat(); v.y = meshReader.ReadFloat(); v.z = meshReader.ReadFloat();
                     meshReader.Skip(4);
-                    v.u = (float)meshReader.ReadInt16() / 4096.0f;
-                    v.v = 1.0f - ((float)meshReader.ReadInt16() / 4096.0f);
+                    ReadShortUv(meshReader, v);
                     decoded = true;
                 }
             }

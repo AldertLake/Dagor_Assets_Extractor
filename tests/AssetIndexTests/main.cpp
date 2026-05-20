@@ -2972,8 +2972,18 @@ namespace
         uint32_t indexCount = static_cast<uint32_t>(mesh.indices.size());
         pushBytes(&indexCount, sizeof(indexCount));
 
-        // Vertices
-        pushBytes(mesh.vertices.data(), mesh.vertices.size() * sizeof(DagorFormats::Vertex));
+        // Vertices: keep the synthetic RIND fixture layout stable at 8 floats per vertex.
+        for (const DagorFormats::Vertex& vertex : mesh.vertices)
+        {
+            pushBytes(&vertex.x, sizeof(vertex.x));
+            pushBytes(&vertex.y, sizeof(vertex.y));
+            pushBytes(&vertex.z, sizeof(vertex.z));
+            pushBytes(&vertex.nx, sizeof(vertex.nx));
+            pushBytes(&vertex.ny, sizeof(vertex.ny));
+            pushBytes(&vertex.nz, sizeof(vertex.nz));
+            pushBytes(&vertex.u, sizeof(vertex.u));
+            pushBytes(&vertex.v, sizeof(vertex.v));
+        }
         // Indices
         pushBytes(mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
 
@@ -3196,8 +3206,20 @@ namespace
         uint32_t indexCount = static_cast<uint32_t>(mesh.indices.size());
         pushBytes(&indexCount, sizeof(indexCount));
 
-        // Vertices
-        pushBytes(mesh.vertices.data(), mesh.vertices.size() * sizeof(DagorFormats::SkinnedVertex));
+        // Vertices: keep the synthetic DYN3 fixture layout stable at 8 floats, 4 joint bytes, 4 weights.
+        for (const DagorFormats::SkinnedVertex& vertex : mesh.vertices)
+        {
+            pushBytes(&vertex.x, sizeof(vertex.x));
+            pushBytes(&vertex.y, sizeof(vertex.y));
+            pushBytes(&vertex.z, sizeof(vertex.z));
+            pushBytes(&vertex.nx, sizeof(vertex.nx));
+            pushBytes(&vertex.ny, sizeof(vertex.ny));
+            pushBytes(&vertex.nz, sizeof(vertex.nz));
+            pushBytes(&vertex.u, sizeof(vertex.u));
+            pushBytes(&vertex.v, sizeof(vertex.v));
+            pushBytes(vertex.jointIndices, sizeof(vertex.jointIndices));
+            pushBytes(vertex.jointWeights, sizeof(vertex.jointWeights));
+        }
         // Indices
         pushBytes(mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
 

@@ -114,6 +114,49 @@ namespace DagorAssetsExtractor::Export
             return true;
         }
 
+        std::array<float, 2> ConvertUvForGltf(float u, float v, DagorFormats::UvTransform transform)
+        {
+            switch (transform)
+            {
+            case DagorFormats::UvTransform::ObjShortVFlipped:
+                return { u, 1.0f - v };
+            case DagorFormats::UvTransform::ObjFloatVNegated:
+                return { u, -v };
+            case DagorFormats::UvTransform::None:
+            default:
+                return { u, v };
+            }
+        }
+
+        struct PackedStaticVertex
+        {
+            float x;
+            float y;
+            float z;
+            float nx;
+            float ny;
+            float nz;
+            float u;
+            float v;
+        };
+
+        struct PackedSkinnedVertex
+        {
+            float x;
+            float y;
+            float z;
+            float nx;
+            float ny;
+            float nz;
+            float u;
+            float v;
+            uint8_t jointIndices[4];
+            float jointWeights[4];
+        };
+
+        static_assert(sizeof(PackedStaticVertex) == 32);
+        static_assert(sizeof(PackedSkinnedVertex) == 52);
+
         template <typename TVertex>
         size_t RepairNormals(std::vector<TVertex>& vertices, const std::vector<uint32_t>& indices)
         {
@@ -386,18 +429,28 @@ namespace DagorAssetsExtractor::Export
         {
             LodBinInfo info;
 
-            // Vertices start at the current boundary
-            // Vertices are array of Vertex structs (32 bytes each)
             info.vertByteOffset = binBuffer.size();
-            info.vertByteLength = mesh.vertices.size() * sizeof(DagorFormats::Vertex);
+            info.vertByteLength = mesh.vertices.size() * sizeof(PackedStaticVertex);
 
             if (!mesh.vertices.empty())
             {
-                const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(mesh.vertices.data());
-                binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
+                std::vector<PackedStaticVertex> packedVertices;
+                packedVertices.reserve(mesh.vertices.size());
 
                 for (const auto& v : mesh.vertices)
                 {
+                    const auto uv = ConvertUvForGltf(v.u, v.v, v.uvTransform);
+                    PackedStaticVertex packed{};
+                    packed.x = v.x;
+                    packed.y = v.y;
+                    packed.z = v.z;
+                    packed.nx = v.nx;
+                    packed.ny = v.ny;
+                    packed.nz = v.nz;
+                    packed.u = uv[0];
+                    packed.v = uv[1];
+                    packedVertices.push_back(packed);
+
                     info.minX = std::min(info.minX, v.x);
                     info.minY = std::min(info.minY, v.y);
                     info.minZ = std::min(info.minZ, v.z);
@@ -405,6 +458,9 @@ namespace DagorAssetsExtractor::Export
                     info.maxY = std::max(info.maxY, v.y);
                     info.maxZ = std::max(info.maxZ, v.z);
                 }
+
+                const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
+                binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
             }
             else
             {
@@ -541,7 +597,7 @@ namespace DagorAssetsExtractor::Export
             json << "      \"buffer\": 0,\n";
             json << "      \"byteOffset\": " << binInfos[i].vertByteOffset << ",\n";
             json << "      \"byteLength\": " << binInfos[i].vertByteLength << ",\n";
-            json << "      \"byteStride\": 32,\n";
+            json << "      \"byteStride\": " << sizeof(PackedStaticVertex) << ",\n";
             json << "      \"target\": 34962\n"; // ARRAY_BUFFER
             json << "    },\n";
         }
@@ -852,15 +908,32 @@ namespace DagorAssetsExtractor::Export
         {
             LodBinInfo info;
             info.vertByteOffset = binBuffer.size();
-            info.vertByteLength = mesh.vertices.size() * sizeof(DagorFormats::SkinnedVertex);
+            info.vertByteLength = mesh.vertices.size() * sizeof(PackedSkinnedVertex);
 
             if (!mesh.vertices.empty())
             {
-                const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(mesh.vertices.data());
-                binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
+                std::vector<PackedSkinnedVertex> packedVertices;
+                packedVertices.reserve(mesh.vertices.size());
 
                 for (const auto& v : mesh.vertices)
                 {
+                    const auto uv = ConvertUvForGltf(v.u, v.v, v.uvTransform);
+                    PackedSkinnedVertex packed{};
+                    packed.x = v.x;
+                    packed.y = v.y;
+                    packed.z = v.z;
+                    packed.nx = v.nx;
+                    packed.ny = v.ny;
+                    packed.nz = v.nz;
+                    packed.u = uv[0];
+                    packed.v = uv[1];
+                    for (size_t joint = 0; joint < 4; ++joint)
+                    {
+                        packed.jointIndices[joint] = v.jointIndices[joint];
+                        packed.jointWeights[joint] = v.jointWeights[joint];
+                    }
+                    packedVertices.push_back(packed);
+
                     info.minX = std::min(info.minX, v.x);
                     info.minY = std::min(info.minY, v.y);
                     info.minZ = std::min(info.minZ, v.z);
@@ -868,6 +941,9 @@ namespace DagorAssetsExtractor::Export
                     info.maxY = std::max(info.maxY, v.y);
                     info.maxZ = std::max(info.maxZ, v.z);
                 }
+
+                const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
+                binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
             }
             else
             {
@@ -1122,7 +1198,7 @@ namespace DagorAssetsExtractor::Export
             json << "      \"buffer\": 0,\n";
             json << "      \"byteOffset\": " << binInfos[i].vertByteOffset << ",\n";
             json << "      \"byteLength\": " << binInfos[i].vertByteLength << ",\n";
-            json << "      \"byteStride\": " << sizeof(DagorFormats::SkinnedVertex) << ",\n";
+            json << "      \"byteStride\": " << sizeof(PackedSkinnedVertex) << ",\n";
             json << "      \"target\": 34962\n";
             json << "    },\n";
         }

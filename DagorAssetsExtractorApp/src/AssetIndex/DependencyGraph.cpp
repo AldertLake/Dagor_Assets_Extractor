@@ -120,6 +120,14 @@ namespace DagorAssetsExtractor::AssetIndex
             }
         }
 
+        void AppendUniqueString(std::vector<std::string>& values, std::string value)
+        {
+            if (!value.empty() && std::find(values.begin(), values.end(), value) == values.end())
+            {
+                values.push_back(std::move(value));
+            }
+        }
+
         std::string StripFinalExtension(std::string value)
         {
             const size_t slash = value.find_last_of('/');
@@ -237,6 +245,70 @@ namespace DagorAssetsExtractor::AssetIndex
             return startsWithToken(nameKey, packStem) || startsWithToken(packStem, nameKey);
         }
 
+        std::vector<std::string_view> SplitNameTokens(std::string_view value)
+        {
+            std::vector<std::string_view> tokens;
+            size_t start = 0;
+            while (start < value.size())
+            {
+                while (start < value.size() && (value[start] == '_' || value[start] == '-'))
+                {
+                    ++start;
+                }
+                const size_t end = value.find_first_of("_-", start);
+                if (end == std::string_view::npos)
+                {
+                    if (start < value.size())
+                    {
+                        tokens.push_back(value.substr(start));
+                    }
+                    break;
+                }
+                if (end > start)
+                {
+                    tokens.push_back(value.substr(start, end - start));
+                }
+                start = end + 1;
+            }
+            return tokens;
+        }
+
+        size_t CommonPrefixTokenCount(std::string_view left, std::string_view right)
+        {
+            const std::vector<std::string_view> leftTokens = SplitNameTokens(left);
+            const std::vector<std::string_view> rightTokens = SplitNameTokens(right);
+            const size_t count = std::min(leftTokens.size(), rightTokens.size());
+            size_t matched = 0;
+            while (matched < count && leftTokens[matched] == rightTokens[matched])
+            {
+                ++matched;
+            }
+            return matched;
+        }
+
+        int NamePackAffinityScore(std::string_view name, const std::string& packStem)
+        {
+            int score = 0;
+            for (const std::string& key : BuildAssetNameKeys(name))
+            {
+                if (IsNameRelatedToPackStem(key, packStem))
+                {
+                    score = std::max(score, 120);
+                }
+
+                const size_t commonPrefix = CommonPrefixTokenCount(key, packStem);
+                if (commonPrefix >= 3)
+                {
+                    score = std::max(score, 80 + static_cast<int>(commonPrefix * 5));
+                }
+                else if (commonPrefix == 2)
+                {
+                    score = std::max(score, 45);
+                }
+            }
+            return score;
+        }
+
         bool IsPackRelatedToAnyName(const fs::path& path, const std::vector<std::string>& names)
         {
             const std::string packStem = PackStemKey(path);
@@ -272,6 +344,8 @@ namespace DagorAssetsExtractor::AssetIndex
         };
 
         int CommonPathScore(const fs::path& left, const fs::path& right);
+        bool PathLooksLikePatch(const fs::path& path);
+        bool PathLooksLikeHq(const fs::path& path);
 
         std::vector<DescriptorPackGroup> BuildDescriptorPackGroups(const std::vector<BlkResourceLink>& links)
         {
@@ -937,6 +1011,77 @@ namespace DagorAssetsExtractor::AssetIndex
             return textureIndices;
         }
 
+        std::vector<std::vector<std::string>> BuildTextureKeySets(const std::vector<std::string>& textureNames)
+        {
+            std::vector<std::vector<std::string>> keySets;
+            keySets.reserve(textureNames.size());
+            for (const std::string& textureName : textureNames)
+            {
+                keySets.push_back(BuildAssetNameKeys(textureName));
+            }
+            return keySets;
+        }
+
+        bool AllTextureKeySetsIndexed(
+            const std::vector<std::vector<std::string>>& keySets,
+            const std::unordered_map<std::string, std::vector<size_t>>& index)
+        {
+            if (keySets.empty())
+            {
+                return false;
+            }
+
+            for (const std::vector<std::string>& keys : keySets)
+            {
+                bool found = false;
+                for (const std::string& key : keys)
+                {
+                    if (index.contains(key))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        int ScoreDxpRecordForFocus(
+            const ResourceRecord& record,
+            const ResourceRecord& focus,
+            const std::vector<std::string>& focusedResourceNames,
+            const std::vector<std::string>& focusedTextureNames)
+        {
+            int score = 0;
+            const std::string packStem = PackStemKey(record.path);
+            if (IsSameDirectory(record.path, focus.path))
+            {
+                score += 20;
+            }
+            if (PathLooksLikeHq(record.path))
+            {
+                score += 6;
+            }
+            if (PathLooksLikePatch(record.path))
+            {
+                score += 4;
+            }
+
+            for (const std::string& resourceName : focusedResourceNames)
+            {
+                score = std::max(score, NamePackAffinityScore(resourceName, packStem));
+            }
+            for (const std::string& textureName : focusedTextureNames)
+            {
+                score = std::max(score, NamePackAffinityScore(textureName, packStem));
+            }
+            return score;
+        }
+
         const LightweightGrpEntry* FindBestGrpEntry(
             const SubAssetRecord& descriptorEntry,
             const fs::path& descriptorPath,
@@ -1341,6 +1486,70 @@ namespace DagorAssetsExtractor::AssetIndex
             }
         }
 
+        std::vector<std::string> focusedResourceNames;
+        std::vector<std::string> focusedTextureNames;
+        if (focusRecord != nullptr)
+        {
+            for (const auto& [descriptorPath, descriptorEntry] : descriptorEntries)
+            {
+                bool matchesFocus = false;
+                if (focusRecord->type == AssetType::Descriptor)
+                {
+                    matchesFocus = SamePath(descriptorPath, focusRecord->path);
+                }
+                else if (focusRecord->type == AssetType::Grp)
+                {
+                    if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex))
+                    {
+                        matchesFocus = SamePath(grpMatch->path, focusRecord->path);
+                    }
+                }
+
+                if (!matchesFocus)
+                {
+                    continue;
+                }
+
+                AppendUniqueString(focusedResourceNames, descriptorEntry.name);
+                AppendUniqueString(focusedResourceNames, descriptorEntry.dynModelName);
+                for (const uint32_t textureIndex : BuildTextureIndices(descriptorEntry))
+                {
+                    if (textureIndex < descriptorEntry.textureNames.size())
+                    {
+                        AppendUniqueString(focusedTextureNames, descriptorEntry.textureNames[textureIndex]);
+                    }
+                }
+            }
+        }
+
+        const std::vector<std::vector<std::string>> focusedTextureKeySets =
+            BuildTextureKeySets(focusedTextureNames);
+        if (focusRecord != nullptr && !focusedTextureNames.empty())
+        {
+            std::stable_sort(dxpRecords.begin(), dxpRecords.end(), [&](const ResourceRecord* left, const ResourceRecord* right) {
+                const int leftScore = ScoreDxpRecordForFocus(*left, *focusRecord, focusedResourceNames, focusedTextureNames);
+                const int rightScore = ScoreDxpRecordForFocus(*right, *focusRecord, focusedResourceNames, focusedTextureNames);
+                if (leftScore != rightScore)
+                {
+                    return leftScore > rightScore;
+                }
+                return PathLooksLikeHq(left->path) && !PathLooksLikeHq(right->path);
+            });
+
+            if (!ReportDescriptorProgress(
+                    result,
+                    options,
+                    "Selected scope",
+                    "targetResources=" + std::to_string(focusedResourceNames.size()) +
+                        ", targetTextures=" + std::to_string(focusedTextureNames.size()) +
+                        ", dxpCandidates=" + std::to_string(dxpRecords.size()),
+                    workDone,
+                    totalWork))
+            {
+                return result;
+            }
+        }
+
         std::vector<LightweightDxpEntry> dxpEntries;
         std::unordered_map<std::string, std::vector<size_t>> dxpIndex;
         dxpEntries.reserve(dxpRecords.size() * 32);
@@ -1377,6 +1586,22 @@ namespace DagorAssetsExtractor::AssetIndex
                     totalWork))
             {
                 return result;
+            }
+
+            if (!focusedTextureKeySets.empty() && AllTextureKeySetsIndexed(focusedTextureKeySets, dxpIndex))
+            {
+                if (!ReportDescriptorProgress(
+                        result,
+                        options,
+                        "DXP index",
+                        "Selected texture set matched after " + std::to_string(result.dxpPacksParsed) +
+                            " DXP pack" + (result.dxpPacksParsed == 1 ? "" : "s"),
+                        workDone,
+                        totalWork))
+                {
+                    return result;
+                }
+                break;
             }
         }
 
