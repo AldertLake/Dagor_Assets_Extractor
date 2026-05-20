@@ -454,13 +454,25 @@ namespace DagorAssetsExtractor::AssetIndex
                 link.materialNames = descriptorEntry.materialNames;
                 link.materialTextureRefs = descriptorEntry.dependencyIds;
 
-                const std::optional<PackEntryMatch> grpMatch = FindEntryInPacks(
+                std::optional<PackEntryMatch> grpMatch = FindEntryInPacks(
                     grpCandidates,
                     AssetType::Grp,
                     descriptorEntry.name,
                     maxPackBytes,
                     packCache,
                     result);
+
+                if (!grpMatch && !descriptorEntry.dynModelName.empty() &&
+                    !NamesMatch(descriptorEntry.dynModelName, descriptorEntry.name))
+                {
+                    grpMatch = FindEntryInPacks(
+                        grpCandidates,
+                        AssetType::Grp,
+                        descriptorEntry.dynModelName,
+                        maxPackBytes,
+                        packCache,
+                        result);
+                }
 
                 if (grpMatch)
                 {

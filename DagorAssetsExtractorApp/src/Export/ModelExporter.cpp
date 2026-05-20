@@ -9,6 +9,7 @@
 #include <cctype>
 #include <string_view>
 #include <charconv>
+#include <cmath>
 
 namespace DagorAssetsExtractor::Export
 {
@@ -90,6 +91,215 @@ namespace DagorAssetsExtractor::Export
             fallback << std::defaultfloat << std::setprecision(std::numeric_limits<double>::max_digits10) << exactValue;
             return fallback.str();
         }
+
+        bool NormalizeVector(float& x, float& y, float& z)
+        {
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+            {
+                x = y = z = 0.0f;
+                return false;
+            }
+
+            const float lengthSq = (x * x) + (y * y) + (z * z);
+            if (lengthSq <= 1e-12f)
+            {
+                x = y = z = 0.0f;
+                return false;
+            }
+
+            const float invLength = 1.0f / std::sqrt(lengthSq);
+            x *= invLength;
+            y *= invLength;
+            z *= invLength;
+            return true;
+        }
+
+        template <typename TVertex>
+        size_t RepairNormals(std::vector<TVertex>& vertices, const std::vector<uint32_t>& indices)
+        {
+            if (vertices.empty())
+            {
+                return 0;
+            }
+
+            std::vector<std::array<float, 3>> accumulated(vertices.size(), { 0.0f, 0.0f, 0.0f });
+            for (size_t i = 0; i + 2 < indices.size(); i += 3)
+            {
+                const uint32_t i0 = indices[i];
+                const uint32_t i1 = indices[i + 1];
+                const uint32_t i2 = indices[i + 2];
+                if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size() ||
+                    i0 == i1 || i1 == i2 || i0 == i2)
+                {
+                    continue;
+                }
+
+                const auto& a = vertices[i0];
+                const auto& b = vertices[i1];
+                const auto& c = vertices[i2];
+                const float abx = b.x - a.x;
+                const float aby = b.y - a.y;
+                const float abz = b.z - a.z;
+                const float acx = c.x - a.x;
+                const float acy = c.y - a.y;
+                const float acz = c.z - a.z;
+                float nx = (aby * acz) - (abz * acy);
+                float ny = (abz * acx) - (abx * acz);
+                float nz = (abx * acy) - (aby * acx);
+                if (!NormalizeVector(nx, ny, nz))
+                {
+                    continue;
+                }
+
+                for (uint32_t index : { i0, i1, i2 })
+                {
+                    accumulated[index][0] += nx;
+                    accumulated[index][1] += ny;
+                    accumulated[index][2] += nz;
+                }
+            }
+
+            size_t repaired = 0;
+            for (size_t i = 0; i < vertices.size(); ++i)
+            {
+                auto& vertex = vertices[i];
+                float nx = vertex.nx;
+                float ny = vertex.ny;
+                float nz = vertex.nz;
+                if (NormalizeVector(nx, ny, nz))
+                {
+                    vertex.nx = nx;
+                    vertex.ny = ny;
+                    vertex.nz = nz;
+                    continue;
+                }
+
+                nx = accumulated[i][0];
+                ny = accumulated[i][1];
+                nz = accumulated[i][2];
+                if (!NormalizeVector(nx, ny, nz))
+                {
+                    nx = 0.0f;
+                    ny = 0.0f;
+                    nz = 1.0f;
+                }
+
+                vertex.nx = nx;
+                vertex.ny = ny;
+                vertex.nz = nz;
+                ++repaired;
+            }
+
+            return repaired;
+        }
+
+        template <typename TMesh>
+        std::vector<MaterialInfo> BuildEffectiveMaterials(
+            const std::vector<TMesh>& meshes,
+            const std::vector<MaterialInfo>& inputMaterials)
+        {
+            std::vector<MaterialInfo> materials = inputMaterials;
+
+            size_t maxMaterialIndex = 0;
+            bool hasMaterialIndex = false;
+            for (const auto& mesh : meshes)
+            {
+                for (const auto& primitive : mesh.primitives)
+                {
+                    if (primitive.indexCount == 0)
+                    {
+                        continue;
+                    }
+                    maxMaterialIndex = std::max(maxMaterialIndex, static_cast<size_t>(primitive.materialIndex));
+                    hasMaterialIndex = true;
+                }
+            }
+
+            if (hasMaterialIndex && materials.size() <= maxMaterialIndex)
+            {
+                materials.resize(maxMaterialIndex + 1);
+            }
+
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                if (materials[i].name.empty())
+                {
+                    materials[i].name = "material_" + std::to_string(i);
+                }
+            }
+
+            return materials;
+        }
+
+        void WriteMaterialTextureSections(std::stringstream& json, const std::vector<MaterialInfo>& materials)
+        {
+            if (materials.empty())
+            {
+                return;
+            }
+
+            std::vector<int> textureIndices(materials.size(), -1);
+            std::vector<size_t> texturedMaterials;
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                if (!materials[i].diffuseTexturePath.empty())
+                {
+                    textureIndices[i] = static_cast<int>(texturedMaterials.size());
+                    texturedMaterials.push_back(i);
+                }
+            }
+
+            json << "  \"materials\": [\n";
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                json << "    {\n";
+                json << "      \"name\": \"" << JsonEscape(materials[i].name) << "\",\n";
+                json << "      \"pbrMetallicRoughness\": {\n";
+                if (textureIndices[i] >= 0)
+                {
+                    json << "        \"baseColorTexture\": { \"index\": " << textureIndices[i] << " },\n";
+                }
+                else
+                {
+                    json << "        \"baseColorFactor\": [1, 1, 1, 1],\n";
+                }
+                json << "        \"metallicFactor\": 0.0,\n";
+                json << "        \"roughnessFactor\": 1.0\n";
+                json << "      }\n";
+                json << "    }";
+                if (i + 1 < materials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            if (texturedMaterials.empty())
+            {
+                return;
+            }
+
+            json << "  \"textures\": [\n";
+            for (size_t i = 0; i < texturedMaterials.size(); ++i)
+            {
+                json << "    { \"sampler\": 0, \"source\": " << i << " }";
+                if (i + 1 < texturedMaterials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            json << "  \"images\": [\n";
+            for (size_t i = 0; i < texturedMaterials.size(); ++i)
+            {
+                const MaterialInfo& material = materials[texturedMaterials[i]];
+                json << "    { \"uri\": \"" << JsonEscape(material.diffuseTexturePath) << "\" }";
+                if (i + 1 < texturedMaterials.size()) json << ",";
+                json << "\n";
+            }
+            json << "  ],\n";
+
+            json << "  \"samplers\": [\n";
+            json << "    { \"magFilter\": 9729, \"minFilter\": 9987, \"wrapS\": 10497, \"wrapT\": 10497 }\n";
+            json << "  ],\n";
+        }
     }
 
     bool ModelExporter::ExportToGlb(
@@ -122,6 +332,14 @@ namespace DagorAssetsExtractor::Export
                 debugLog << "  LOD " << lod_in.name << " had empty primitives, creating default." << std::endl;
                 // Create a default primitive if all were empty or none existed
                 validLod.primitives.push_back({ 0, 0, static_cast<uint32_t>(validLod.indices.size()) });
+            }
+
+            const size_t repairedNormals = RepairNormals(validLod.vertices, validLod.indices);
+            if (repairedNormals > 0)
+            {
+                debugLog << "  LOD " << validLod.name
+                         << " repaired " << repairedNormals
+                         << " invalid/non-unit normals before GLB export." << std::endl;
             }
 
             lods.push_back(std::move(validLod));
@@ -265,6 +483,7 @@ namespace DagorAssetsExtractor::Export
                 indexAccessorIndices[i].push_back(currentAccessor++);
             }
         }
+        const std::vector<MaterialInfo> effectiveMaterials = BuildEffectiveMaterials(lods, materials);
 
         // Meshes definition
         json << "  \"meshes\": [\n";
@@ -292,10 +511,10 @@ namespace DagorAssetsExtractor::Export
                 json << "          },\n";
                 json << "          \"indices\": " << indexAccessorIndices[i][p] << ",\n";
                 
-                if (!materials.empty())
+                if (!effectiveMaterials.empty())
                 {
                     size_t matIdx = static_cast<size_t>(prim.materialIndex);
-                    if (matIdx >= materials.size()) matIdx = 0;
+                    if (matIdx >= effectiveMaterials.size()) matIdx = 0;
                     json << "          \"material\": " << matIdx << ",\n";
                 }
                 
@@ -311,62 +530,7 @@ namespace DagorAssetsExtractor::Export
         }
         json << "  ],\n";
 
-        if (!materials.empty())
-        {
-            // Materials definition
-            json << "  \"materials\": [\n";
-            for (size_t i = 0; i < materials.size(); ++i)
-            {
-                json << "    {\n";
-                json << "      \"name\": \"" << JsonEscape(materials[i].name) << "\",\n";
-                json << "      \"pbrMetallicRoughness\": {\n";
-                json << "        \"baseColorTexture\": {\n";
-                json << "          \"index\": " << i << "\n";
-                json << "        },\n";
-                json << "        \"metallicFactor\": 0.0,\n";
-                json << "        \"roughnessFactor\": 1.0\n";
-                json << "      }\n";
-                json << "    }";
-                if (i + 1 < materials.size()) json << ",";
-                json << "\n";
-            }
-            json << "  ],\n";
-
-            // Textures definition
-            json << "  \"textures\": [\n";
-            for (size_t i = 0; i < materials.size(); ++i)
-            {
-                json << "    {\n";
-                json << "      \"sampler\": 0,\n";
-                json << "      \"source\": " << i << "\n";
-                json << "    }";
-                if (i + 1 < materials.size()) json << ",";
-                json << "\n";
-            }
-            json << "  ],\n";
-
-            // Images definition
-            json << "  \"images\": [\n";
-            for (size_t i = 0; i < materials.size(); ++i)
-            {
-                json << "    {\n";
-                json << "      \"uri\": \"" << JsonEscape(materials[i].diffuseTexturePath) << "\"\n";
-                json << "    }";
-                if (i + 1 < materials.size()) json << ",";
-                json << "\n";
-            }
-            json << "  ],\n";
-
-            // Samplers definition
-            json << "  \"samplers\": [\n";
-            json << "    {\n";
-            json << "      \"magFilter\": 9729,\n"; // LINEAR
-            json << "      \"minFilter\": 9987,\n"; // LINEAR_MIPMAP_LINEAR
-            json << "      \"wrapS\": 10497,\n";    // REPEAT
-            json << "      \"wrapT\": 10497\n";     // REPEAT
-            json << "    }\n";
-            json << "  ],\n";
-        }
+        WriteMaterialTextureSections(json, effectiveMaterials);
 
         // BufferViews definition
         json << "  \"bufferViews\": [\n";
@@ -559,6 +723,14 @@ namespace DagorAssetsExtractor::Export
                 validLod.primitives.push_back(defaultPrimitive);
             }
 
+            const size_t repairedNormals = RepairNormals(validLod.vertices, validLod.indices);
+            if (repairedNormals > 0)
+            {
+                debugLog << "  DynModel mesh " << validLod.name
+                         << " repaired " << repairedNormals
+                         << " invalid/non-unit normals before GLB export." << std::endl;
+            }
+
             lods.push_back(std::move(validLod));
         }
 
@@ -747,6 +919,7 @@ namespace DagorAssetsExtractor::Export
             }
         }
         size_t ibmAccessorIndex = currentAccessor;
+        const std::vector<MaterialInfo> effectiveMaterials = BuildEffectiveMaterials(lods, materials);
 
         // Generate JSON
         std::stringstream json;
@@ -919,10 +1092,10 @@ namespace DagorAssetsExtractor::Export
                 json << "          },\n";
                 json << "          \"indices\": " << indexAccessorIndices[i][p] << ",\n";
                 
-                if (!materials.empty())
+                if (!effectiveMaterials.empty())
                 {
                     size_t matIdx = static_cast<size_t>(prim.materialIndex);
-                    if (matIdx >= materials.size()) matIdx = 0;
+                    if (matIdx >= effectiveMaterials.size()) matIdx = 0;
                     json << "          \"material\": " << matIdx << ",\n";
                 }
                 
@@ -938,47 +1111,7 @@ namespace DagorAssetsExtractor::Export
         }
         json << "  ],\n";
 
-        if (!materials.empty())
-        {
-            // Materials definition (same as static)
-            json << "  \"materials\": [\n";
-            for (size_t i = 0; i < materials.size(); ++i)
-            {
-                json << "    {\n";
-                json << "      \"name\": \"" << JsonEscape(materials[i].name) << "\",\n";
-                json << "      \"pbrMetallicRoughness\": {\n";
-                json << "        \"baseColorTexture\": { \"index\": " << i << " },\n";
-                json << "        \"metallicFactor\": 0.0,\n";
-                json << "        \"roughnessFactor\": 1.0\n";
-                json << "      }\n";
-                json << "    }";
-                if (i + 1 < materials.size()) json << ",";
-                json << "\n";
-            }
-            json << "  ],\n";
-
-            json << "  \"textures\": [\n";
-            for (size_t i = 0; i < materials.size(); ++i)
-            {
-                json << "    { \"sampler\": 0, \"source\": " << i << " }";
-                if (i + 1 < materials.size()) json << ",";
-                json << "\n";
-            }
-            json << "  ],\n";
-
-            json << "  \"images\": [\n";
-            for (size_t i = 0; i < materials.size(); ++i)
-            {
-                json << "    { \"uri\": \"" << JsonEscape(materials[i].diffuseTexturePath) << "\" }";
-                if (i + 1 < materials.size()) json << ",";
-                json << "\n";
-            }
-            json << "  ],\n";
-
-            json << "  \"samplers\": [\n";
-            json << "    { \"magFilter\": 9729, \"minFilter\": 9987, \"wrapS\": 10497, \"wrapT\": 10497 }\n";
-            json << "  ],\n";
-        }
+        WriteMaterialTextureSections(json, effectiveMaterials);
 
         // BufferViews
         json << "  \"bufferViews\": [\n";

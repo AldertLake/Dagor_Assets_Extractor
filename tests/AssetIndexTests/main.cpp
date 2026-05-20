@@ -3002,6 +3002,46 @@ namespace
         return ok;
     }
 
+    bool TestModelExporterMaterialFallbackAndNormals()
+    {
+        bool ok = true;
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_MaterialFallback_" + std::to_string(stamp));
+        fs::create_directories(tempDir);
+
+        DagorFormats::RendInstMesh mesh;
+        mesh.name = "fallback_material_mesh";
+        mesh.vertices = {
+            { 0,0,0, 0,0,0, 0,0 },
+            { 1,0,0, 0,0,0, 1,0 },
+            { 0,1,0, 0,0,0, 0,1 }
+        };
+        mesh.indices = { 0, 1, 2 };
+        mesh.primitives = { { 2, 0, 3 } };
+
+        DagorAssetsExtractor::Export::ExportManifest manifest;
+        manifest.sourceResource = "fallback_material_mesh";
+        const fs::path glbPath = tempDir / "fallback.glb";
+
+        const bool success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(glbPath, { mesh }, manifest);
+        ok &= Expect(success, "ModelExporter should export material fallback GLB");
+        ok &= Expect(fs::exists(glbPath), "Material fallback GLB should exist");
+
+        if (fs::exists(glbPath))
+        {
+            std::ifstream file(glbPath, std::ios::binary);
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            ok &= Expect(content.find("\"materials\":") != std::string::npos, "GLB should emit material slots even without texture dependencies");
+            ok &= Expect(content.find("\"material\": 2") != std::string::npos, "Primitive should keep its material slot index");
+            ok &= Expect(content.find("material_2") != std::string::npos, "Fallback material name should be emitted");
+            ok &= Expect(content.find("\"images\":") == std::string::npos, "Textureless fallback materials should not emit empty image URIs");
+        }
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
     bool TestDynModelParsingAndExport()
     {
         bool ok = true;
@@ -3192,6 +3232,7 @@ int main(int argc, char** argv)
     ok &= Expect(TestTextureExporterMissingOodleFallback(), "TextureExporter missing-Oodle fallback test should pass");
     ok &= Expect(TestRendInstParsingAndExport(), "RendInst geometry parsing and GLB/OBJ export tests should pass");
     ok &= Expect(TestMultiMaterialModelExport(), "Multi-material model export test should pass");
+    ok &= Expect(TestModelExporterMaterialFallbackAndNormals(), "Material fallback and normal repair export test should pass");
     ok &= Expect(TestUnifiedModelExport(), "Unified model export test should pass");
     ok &= Expect(TestDynModelParsingAndExport(), "DynModel parsing and skinned export tests should pass");
 

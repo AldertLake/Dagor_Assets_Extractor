@@ -641,6 +641,17 @@ namespace DagorAssetsExtractor::App
         return options;
     }
 
+    std::string MakeExportRelativeUri(const fs::path& exportRoot, const fs::path& outputPath)
+    {
+        std::error_code ec;
+        fs::path relativePath = fs::relative(outputPath, exportRoot, ec);
+        if (ec || relativePath.empty())
+        {
+            relativePath = outputPath.filename();
+        }
+        return relativePath.generic_string();
+    }
+
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
     {
         AddLog(app, LogLevel::Info, "Exporting texture: " + entry.name + "...");
@@ -733,8 +744,27 @@ namespace DagorAssetsExtractor::App
                     }
                 }
 
+                if (matchedLink)
+                {
+                    materials.reserve(matchedLink->materialNames.size());
+                    for (size_t materialIndex = 0; materialIndex < matchedLink->materialNames.size(); ++materialIndex)
+                    {
+                        Export::MaterialInfo mat;
+                        mat.name = matchedLink->materialNames[materialIndex].empty()
+                            ? ("material_" + std::to_string(materialIndex))
+                            : matchedLink->materialNames[materialIndex];
+                        materials.push_back(std::move(mat));
+                    }
+                }
+                else if (exportTextures)
+                {
+                    manifest.decodeWarnings.push_back("No descriptor relationship matched this model; material textures cannot be resolved.");
+                    AddLog(app, LogLevel::Warning, "No descriptor relationship matched " + entry.name + "; exporting geometry/material slots without texture dependencies.");
+                }
+
                 if (matchedLink && exportTextures)
                 {
+                    size_t exportedTextureCount = 0;
                     for (const auto& texLink : matchedLink->textureLinks)
                     {
                         if (texLink.matchedDxpPath && texLink.matchedDxpEntryName)
@@ -761,11 +791,49 @@ namespace DagorAssetsExtractor::App
                                     auto texResult = Export::TextureExporter::ExportTexture(*texLink.matchedDxpPath, *it, textureExportOptions);
                                     if (texResult.success)
                                     {
-                                        Export::MaterialInfo mat;
-                                        mat.name = texLink.textureName;
-                                        mat.diffuseTexturePath = texResult.outputPath.filename().string();
-                                        materials.push_back(mat);
-                                        manifest.textureDependencies.push_back(texResult.outputPath.filename().string());
+                                        const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
+                                        bool assignedToMaterial = false;
+                                        if (texLink.textureIndex < materials.size())
+                                        {
+                                            Export::MaterialInfo& mat = materials[texLink.textureIndex];
+                                            if (mat.name.empty())
+                                            {
+                                                mat.name = texLink.textureName;
+                                            }
+                                            if (mat.diffuseTexturePath.empty())
+                                            {
+                                                mat.diffuseTexturePath = textureFile;
+                                                assignedToMaterial = true;
+                                            }
+                                        }
+
+                                        if (!assignedToMaterial)
+                                        {
+                                            auto emptyTextureSlot = std::find_if(materials.begin(), materials.end(), [](const Export::MaterialInfo& mat) {
+                                                return mat.diffuseTexturePath.empty();
+                                            });
+                                            if (emptyTextureSlot != materials.end())
+                                            {
+                                                if (emptyTextureSlot->name.empty())
+                                                {
+                                                    emptyTextureSlot->name = texLink.textureName;
+                                                }
+                                                emptyTextureSlot->diffuseTexturePath = textureFile;
+                                                assignedToMaterial = true;
+                                            }
+                                        }
+
+                                        if (!assignedToMaterial)
+                                        {
+                                            Export::MaterialInfo mat;
+                                            mat.name = texLink.textureName;
+                                            mat.diffuseTexturePath = textureFile;
+                                            materials.push_back(mat);
+                                            assignedToMaterial = true;
+                                        }
+
+                                        manifest.textureDependencies.push_back(textureFile);
+                                        ++exportedTextureCount;
                                     }
                                     else
                                     {
@@ -775,6 +843,14 @@ namespace DagorAssetsExtractor::App
                             }
                         }
                     }
+
+                    AddLog(app,
+                        LogLevel::Info,
+                        "Model material dependency summary for " + entry.name +
+                        ": descriptorMaterials=" + std::to_string(matchedLink->materialNames.size()) +
+                        ", descriptorTextures=" + std::to_string(matchedLink->textureLinks.size()) +
+                        ", exportedTextures=" + std::to_string(exportedTextureCount) +
+                        ", gltfMaterialSlots=" + std::to_string(materials.size()));
                 }
 
                 bool success = false;

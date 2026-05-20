@@ -104,6 +104,37 @@ namespace {
         return offset <= total && size <= total - offset;
     }
 
+    bool LooksLikeZlibHeader(std::span<const uint8_t> data)
+    {
+        if (data.size() < 2)
+        {
+            return false;
+        }
+
+        const uint8_t cmf = data[0];
+        const uint8_t flg = data[1];
+        const uint16_t header = (static_cast<uint16_t>(cmf) << 8) | flg;
+        return (cmf & 0x0Fu) == 8u &&
+               (cmf >> 4) <= 7u &&
+               (header % 31u) == 0u;
+    }
+
+    std::string HexPrefix(std::span<const uint8_t> data, size_t maxBytes)
+    {
+        std::ostringstream out;
+        out << std::hex << std::uppercase << std::setfill('0');
+        const size_t count = std::min(data.size(), maxBytes);
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (i != 0)
+            {
+                out << ' ';
+            }
+            out << std::setw(2) << static_cast<unsigned int>(data[i]);
+        }
+        return out.str();
+    }
+
     bool HasSyntheticMagic(std::span<const uint8_t> data)
     {
         if (data.size() < 4) return false;
@@ -1526,82 +1557,104 @@ void DynModelReader::ParseRealGrpPayload() {
             AddDiagnostic("DynModel skinned resource count=" + std::to_string(skinnedResourceCount));
             if (skinnedResourceCount > 1)
             {
-                throw std::runtime_error("DynModel has multiple skinned mesh resources; only one is supported");
+                AddDiagnostic("Skipped optional skinned mesh resources: multiple resources are not supported yet.");
             }
-            if (skinnedResourceCount > 0)
+            else if (skinnedResourceCount > 0)
             {
-                const uint32_t skinnedResourceSize = rawReader.ReadUInt32();
-                if (skinnedResourceSize > rawReader.GetRemaining())
+                try
                 {
-                    throw std::runtime_error("DynModel skinned mesh resource exceeds payload bounds");
-                }
-
-                AddDiagnostic("DynModel skinned resource size=" + std::to_string(skinnedResourceSize));
-                DagorIO::MemoryReader skinnedReader(rawReader.ReadSpan(skinnedResourceSize));
-                if (skinnedReader.GetRemaining() < 0x18)
-                {
-                    throw std::runtime_error("DynModel skinned mesh resource header is truncated");
-                }
-                skinnedReader.ReadUInt64();
-                skinnedReader.ReadUInt32();
-                skinnedReader.ReadUInt32();
-                skinnedReader.ReadUInt32();
-                skinnedReader.ReadUInt32();
-
-                const CompressedBlock skinnedMvd = decompressBlock(
-                    skinnedReader.ReadSpan(skinnedReader.GetRemaining()));
-                skinnedReader.Seek(skinnedMvd.rawSize + 0x18);
-                skinnedVertexData = decodeMatVData(
-                    skinnedMvd.decompressed,
-                    header.mvdHdrFlag ? MVD_SKINNED : MVD_SKINNED_FLAG);
-
-                const std::span<const uint8_t> skinsCompressed =
-                    skinnedReader.ReadSpan(skinnedReader.GetRemaining());
-                const std::vector<uint8_t> skinsData =
-                    DagorIO::Decompressor::DecompressZlib(skinsCompressed);
-                DagorIO::MemoryReader skinsReader(skinsData);
-
-                for (size_t lodIndex = 0; lodIndex < lods.size(); ++lodIndex)
-                {
-                    auto& skinnedLod = skinnedLods[lodIndex];
-                    const uint32_t skinCount = lods[lodIndex].skinCount;
-                    skinnedLod.skinNodes.reserve(skinCount);
-                    for (uint32_t skinIdx = 0; skinIdx < skinCount; ++skinIdx)
+                    const uint32_t skinnedResourceSize = rawReader.ReadUInt32();
+                    if (skinnedResourceSize > rawReader.GetRemaining())
                     {
-                        skinnedLod.skinNodes.push_back(skinsReader.ReadUInt32());
+                        throw std::runtime_error("DynModel skinned mesh resource exceeds payload bounds");
                     }
 
-                    std::vector<uint64_t> blockSizes;
-                    blockSizes.reserve(skinCount);
-                    for (uint32_t skinIdx = 0; skinIdx < skinCount; ++skinIdx)
+                    AddDiagnostic("DynModel skinned resource size=" + std::to_string(skinnedResourceSize));
+                    DagorIO::MemoryReader skinnedReader(rawReader.ReadSpan(skinnedResourceSize));
+                    if (skinnedReader.GetRemaining() < 0x18)
                     {
-                        const uint64_t rawBlockSize = skinsReader.ReadUInt64();
-                        const uint64_t blockSize = rawBlockSize & kBlockSizeMask;
-                        if (blockSize > skinsReader.GetRemaining())
+                        throw std::runtime_error("DynModel skinned mesh resource header is truncated");
+                    }
+                    skinnedReader.ReadUInt64();
+                    skinnedReader.ReadUInt32();
+                    skinnedReader.ReadUInt32();
+                    skinnedReader.ReadUInt32();
+                    skinnedReader.ReadUInt32();
+
+                    const size_t skinnedMvdOffset = skinnedReader.GetPosition();
+                    const CompressedBlock skinnedMvd = decompressBlock(
+                        skinnedReader.ReadSpan(skinnedReader.GetRemaining()));
+                    skinnedReader.Seek(skinnedMvdOffset + skinnedMvd.rawSize);
+                    skinnedVertexData = decodeMatVData(
+                        skinnedMvd.decompressed,
+                        header.mvdHdrFlag ? MVD_SKINNED : MVD_SKINNED_FLAG);
+
+                    const std::span<const uint8_t> skinsCompressed =
+                        skinnedReader.ReadSpan(skinnedReader.GetRemaining());
+                    {
+                        std::ostringstream diag;
+                        diag << "DynModel skinned skin-tail: offset=" << skinnedReader.GetPosition()
+                             << ", compressedBytes=" << skinsCompressed.size()
+                             << ", firstBytes=" << HexPrefix(skinsCompressed, 12);
+                        AddDiagnostic(diag.str());
+                    }
+                    if (!LooksLikeZlibHeader(skinsCompressed))
+                    {
+                        throw std::runtime_error("DynModel skinned skin-tail is not a recognized zlib stream");
+                    }
+
+                    const std::vector<uint8_t> skinsData =
+                        DagorIO::Decompressor::DecompressZlib(skinsCompressed);
+                    DagorIO::MemoryReader skinsReader(skinsData);
+
+                    for (size_t lodIndex = 0; lodIndex < lods.size(); ++lodIndex)
+                    {
+                        auto& skinnedLod = skinnedLods[lodIndex];
+                        const uint32_t skinCount = lods[lodIndex].skinCount;
+                        skinnedLod.skinNodes.reserve(skinCount);
+                        for (uint32_t skinIdx = 0; skinIdx < skinCount; ++skinIdx)
                         {
-                            throw std::runtime_error("DynModel skinned mesh block exceeds the skin payload bounds");
+                            skinnedLod.skinNodes.push_back(skinsReader.ReadUInt32());
                         }
-                        blockSizes.push_back(blockSize);
-                    }
 
-                    skinnedLod.meshes.reserve(skinCount);
-                    for (uint32_t skinIdx = 0; skinIdx < skinCount; ++skinIdx)
-                    {
-                        DagorIO::MemoryReader blockReader(skinsReader.ReadSpan(static_cast<size_t>(blockSizes[skinIdx])));
-                        blockReader.ReadUInt32();
-                        blockReader.ReadUInt32();
-                        blockReader.Skip(8);
-                        blockReader.ReadUInt32();
-                        blockReader.ReadUInt32();
-                        blockReader.Skip(8);
-                        blockReader.ReadUInt32();
-                        blockReader.ReadUInt32();
-                        blockReader.ReadUInt32();
-                        blockReader.ReadUInt32();
-                        blockReader.ReadUInt32();
-                        blockReader.ReadUInt32();
-                        skinnedLod.meshes.push_back(readShaderMesh(blockReader));
+                        std::vector<uint64_t> blockSizes;
+                        blockSizes.reserve(skinCount);
+                        for (uint32_t skinIdx = 0; skinIdx < skinCount; ++skinIdx)
+                        {
+                            const uint64_t rawBlockSize = skinsReader.ReadUInt64();
+                            const uint64_t blockSize = rawBlockSize & kBlockSizeMask;
+                            if (blockSize > skinsReader.GetRemaining())
+                            {
+                                throw std::runtime_error("DynModel skinned mesh block exceeds the skin payload bounds");
+                            }
+                            blockSizes.push_back(blockSize);
+                        }
+
+                        skinnedLod.meshes.reserve(skinCount);
+                        for (uint32_t skinIdx = 0; skinIdx < skinCount; ++skinIdx)
+                        {
+                            DagorIO::MemoryReader blockReader(skinsReader.ReadSpan(static_cast<size_t>(blockSizes[skinIdx])));
+                            blockReader.ReadUInt32();
+                            blockReader.ReadUInt32();
+                            blockReader.Skip(8);
+                            blockReader.ReadUInt32();
+                            blockReader.ReadUInt32();
+                            blockReader.Skip(8);
+                            blockReader.ReadUInt32();
+                            blockReader.ReadUInt32();
+                            blockReader.ReadUInt32();
+                            blockReader.ReadUInt32();
+                            blockReader.ReadUInt32();
+                            blockReader.ReadUInt32();
+                            skinnedLod.meshes.push_back(readShaderMesh(blockReader));
+                        }
                     }
+                }
+                catch (const std::exception& ex)
+                {
+                    skinnedVertexData.clear();
+                    skinnedLods.assign(lodCount, {});
+                    AddDiagnostic(std::string("Skipped optional skinned mesh resource: ") + ex.what());
                 }
             }
         }
