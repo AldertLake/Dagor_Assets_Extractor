@@ -709,7 +709,7 @@ namespace
         appendParam(0x01000000u | 4u, bodyTexOffset);    // t0:t = body_tex
         appendParam(0x01000000u | 5u, normalTexOffset);  // t1:t = body_n
         appendParam(0x01000000u | 8u, shaderClassOffset);// cls:t = rendinst_simple
-        appendParam(0x02000000u | 9u, 1u);               // t2 texture slot references tex[1]
+        appendParam(0x02000000u | 4u, 0u);               // material t0 texture slot references tex[0]
 
         auto appendBlock = [&payload](uint32_t nameIndex, uint32_t paramCount, uint32_t childCount, uint32_t firstChild) {
             AppendVlq(payload, nameIndex + 2); // descriptor binary BLK block ids are two-based
@@ -752,10 +752,30 @@ namespace
                 ok &= Expect(entry.textures[1] == "body_n", "GameResDescReader second texture should match");
             }
             ok &= Expect(entry.materials.size() == 1, "GameResDescReader should collect material summaries");
+            if (!entry.materials.empty())
+            {
+                ok &= Expect(entry.materials[0] == "body",
+                    "GameResDescReader should derive material names from texture slots");
+            }
+            ok &= Expect(entry.materialDomains.size() == 1 && entry.materialDomains[0] == "rigid",
+                "GameResDescReader should preserve descriptor material domains");
+            ok &= Expect(entry.materialShaderClasses.size() == 1 && entry.materialShaderClasses[0] == "rendinst_simple",
+                "GameResDescReader should preserve material shader classes");
             ok &= Expect(entry.shaders.size() == 1 && entry.shaders[0] == "rendinst_simple",
                 "GameResDescReader should collect shader class");
-            ok &= Expect(entry.dependencyIds.size() == 1 && entry.dependencyIds[0] == 1,
+            ok &= Expect(entry.dependencyIds.size() == 1 && entry.dependencyIds[0] == 0,
                 "GameResDescReader should collect material texture index references");
+            ok &= Expect(entry.materialTextureRefs.size() == 1,
+                "GameResDescReader should preserve material-owned texture references");
+            if (!entry.materialTextureRefs.empty())
+            {
+                ok &= Expect(entry.materialTextureRefs[0].materialIndex == 0,
+                    "GameResDescReader material texture ref should preserve material slot");
+                ok &= Expect(entry.materialTextureRefs[0].textureIndex == 0,
+                    "GameResDescReader material texture ref should preserve descriptor texture slot");
+                ok &= Expect(entry.materialTextureRefs[0].slotName == "t0",
+                    "GameResDescReader material texture ref should preserve descriptor slot name");
+            }
             ok &= Expect(entry.className.find("2 tex") != std::string::npos,
                 "GameResDescReader class summary should include texture count");
         }
@@ -789,6 +809,17 @@ namespace
                 ok &= Expect(sub.name == "sample_tank", "Descriptor PackContents should preserve resource name");
                 ok &= Expect(sub.textureNames.size() == 2, "Descriptor PackContents should preserve texture list");
                 ok &= Expect(sub.materialNames.size() == 1, "Descriptor PackContents should preserve material list");
+                if (!sub.materialNames.empty())
+                {
+                    ok &= Expect(sub.materialNames[0] == "body",
+                        "Descriptor PackContents should preserve generated material names");
+                }
+                ok &= Expect(sub.materialDomains.size() == 1 && sub.materialDomains[0] == "rigid",
+                    "Descriptor PackContents should preserve material domains");
+                ok &= Expect(sub.materialShaderClasses.size() == 1 && sub.materialShaderClasses[0] == "rendinst_simple",
+                    "Descriptor PackContents should preserve material shader classes");
+                ok &= Expect(sub.materialTextureRefs.size() == 1,
+                    "Descriptor PackContents should preserve per-material texture refs");
             }
         }
 
@@ -1354,13 +1385,30 @@ namespace
 
             ok &= Expect(link.textureLinks.size() == 1,
                 "Descriptor link should resolve material texture references, not every declared texture");
+            ok &= Expect(link.materialNames.size() == 1 && link.materialNames[0] == "body",
+                "Descriptor link should preserve generated material names");
+            ok &= Expect(link.materialDomains.size() == 1 && link.materialDomains[0] == "rigid",
+                "Descriptor link should preserve material domains");
+            ok &= Expect(link.materialShaderClasses.size() == 1 && link.materialShaderClasses[0] == "rendinst_simple",
+                "Descriptor link should preserve material shader classes");
+            ok &= Expect(link.materialTextureBindings.size() == 1,
+                "Descriptor link should preserve material-to-texture bindings");
+            if (!link.materialTextureBindings.empty())
+            {
+                ok &= Expect(link.materialTextureBindings[0].materialIndex == 0,
+                    "Descriptor link material texture binding should preserve material slot");
+                ok &= Expect(link.materialTextureBindings[0].textureIndex == 0,
+                    "Descriptor link material texture binding should preserve texture slot");
+                ok &= Expect(link.materialTextureBindings[0].slotName == "t0",
+                    "Descriptor link material texture binding should preserve slot name");
+            }
             if (!link.textureLinks.empty())
             {
                 const AssetIndex::DescriptorTextureLink& textureLink = link.textureLinks[0];
-                ok &= Expect(textureLink.textureIndex == 1, "Descriptor texture link should preserve texture slot index");
-                ok &= Expect(textureLink.textureName == "body_n", "Descriptor texture link should resolve texture index to name");
+                ok &= Expect(textureLink.textureIndex == 0, "Descriptor texture link should preserve texture slot index");
+                ok &= Expect(textureLink.textureName == "body_tex", "Descriptor texture link should resolve texture index to name");
                 ok &= Expect(textureLink.matchedDxpPath.has_value(), "Descriptor texture link should match DXP pack");
-                ok &= Expect(textureLink.matchedDxpEntryName.has_value() && *textureLink.matchedDxpEntryName == "body_n$hq*",
+                ok &= Expect(textureLink.matchedDxpEntryName.has_value() && *textureLink.matchedDxpEntryName == "body_tex$hq*",
                     "Descriptor texture link should match qualified DXP entry name");
                 if (textureLink.matchedDxpPath)
                 {
@@ -1406,6 +1454,15 @@ namespace
                 ok &= Expect(cachedLinks.links[0].resourceName == "sample_tank", "Descriptor-link cache should preserve resource names");
                 ok &= Expect(cachedLinks.links[0].matchedGrpPath.has_value(), "Descriptor-link cache should preserve matched GRP path");
                 ok &= Expect(!cachedLinks.links[0].textureLinks.empty(), "Descriptor-link cache should preserve texture links");
+                ok &= Expect(cachedLinks.links[0].materialNames.size() == 1 && cachedLinks.links[0].materialNames[0] == "body",
+                    "Descriptor-link cache should preserve generated material names");
+                ok &= Expect(cachedLinks.links[0].materialDomains.size() == 1 && cachedLinks.links[0].materialDomains[0] == "rigid",
+                    "Descriptor-link cache should preserve material domains");
+                ok &= Expect(cachedLinks.links[0].materialShaderClasses.size() == 1 &&
+                    cachedLinks.links[0].materialShaderClasses[0] == "rendinst_simple",
+                    "Descriptor-link cache should preserve material shader classes");
+                ok &= Expect(!cachedLinks.links[0].materialTextureBindings.empty(),
+                    "Descriptor-link cache should preserve material texture bindings");
             }
 
             std::vector<AssetIndex::ResourceRecord> staleRecords = records;

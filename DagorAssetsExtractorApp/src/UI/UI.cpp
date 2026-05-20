@@ -477,11 +477,16 @@ namespace DagorAssetsExtractor::UI
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::TextUnformatted("Filters");
-        ImGui::Checkbox("VROMFS", &app.showVromfs);
-        ImGui::Checkbox("GRP", &app.showGrp);
-        ImGui::Checkbox("DXP", &app.showDxp);
-        ImGui::Checkbox("Descriptors", &app.showDescriptors);
-        ImGui::Checkbox("BLK", &app.showBlk);
+        bool filterChanged = false;
+        filterChanged |= ImGui::Checkbox("VROMFS", &app.showVromfs);
+        filterChanged |= ImGui::Checkbox("GRP", &app.showGrp);
+        filterChanged |= ImGui::Checkbox("DXP", &app.showDxp);
+        filterChanged |= ImGui::Checkbox("Descriptors", &app.showDescriptors);
+        filterChanged |= ImGui::Checkbox("BLK", &app.showBlk);
+        if (filterChanged)
+        {
+            App::SaveSettingsWithLog(app);
+        }
 
         uint32_t counts[5] = {};
         for (const ResourceRecord& record : records)

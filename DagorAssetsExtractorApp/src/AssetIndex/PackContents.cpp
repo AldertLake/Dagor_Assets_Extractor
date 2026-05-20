@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <sstream>
+#include <utility>
 
 namespace DagorAssetsExtractor::AssetIndex
 {
@@ -440,6 +441,17 @@ namespace DagorAssetsExtractor::AssetIndex
                 sub.dependencyIds = entry.dependencyIds;
                 sub.textureNames = entry.textures;
                 sub.materialNames = entry.materials;
+                sub.materialDomains = entry.materialDomains;
+                sub.materialShaderClasses = entry.materialShaderClasses;
+                sub.materialTextureRefs.reserve(entry.materialTextureRefs.size());
+                for (const DagorFormats::GameResDescMaterialTextureRef& ref : entry.materialTextureRefs)
+                {
+                    DescriptorMaterialTextureRef materialRef;
+                    materialRef.materialIndex = ref.materialIndex;
+                    materialRef.textureIndex = ref.textureIndex;
+                    materialRef.slotName = ref.slotName;
+                    sub.materialTextureRefs.push_back(std::move(materialRef));
+                }
                 sub.skeletonName = entry.skeletonName;
                 sub.dynModelName = entry.dynModelName;
                 contents->entries.push_back(std::move(sub));

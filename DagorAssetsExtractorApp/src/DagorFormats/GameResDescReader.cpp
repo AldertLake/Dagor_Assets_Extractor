@@ -3,10 +3,13 @@
 #include "DagorIO/Decompression.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 
 namespace DagorFormats {
 namespace {
@@ -327,6 +330,229 @@ namespace {
         }
     }
 
+    void AppendUniqueMaterialTextureRef(
+        std::vector<GameResDescMaterialTextureRef>& values,
+        uint32_t materialIndex,
+        uint32_t textureIndex,
+        std::string slotName)
+    {
+        const auto existing = std::find_if(values.begin(), values.end(), [&](const GameResDescMaterialTextureRef& ref) {
+            return ref.materialIndex == materialIndex &&
+                   ref.textureIndex == textureIndex &&
+                   ref.slotName == slotName;
+        });
+        if (existing == values.end())
+        {
+            GameResDescMaterialTextureRef ref;
+            ref.materialIndex = materialIndex;
+            ref.textureIndex = textureIndex;
+            ref.slotName = std::move(slotName);
+            values.push_back(std::move(ref));
+        }
+    }
+
+    using DescriptorTextureSlots = std::array<std::string, 11>;
+
+    bool TryParseTextureSlotIndex(std::string_view name, size_t& slotIndex)
+    {
+        if (name.size() < 2 || name[0] != 't')
+        {
+            return false;
+        }
+
+        size_t value = 0;
+        for (size_t i = 1; i < name.size(); ++i)
+        {
+            const unsigned char c = static_cast<unsigned char>(name[i]);
+            if (std::isdigit(c) == 0)
+            {
+                return false;
+            }
+            value = (value * 10) + static_cast<size_t>(name[i] - '0');
+        }
+
+        if (value >= std::tuple_size_v<DescriptorTextureSlots>)
+        {
+            return false;
+        }
+
+        slotIndex = value;
+        return true;
+    }
+
+    std::vector<std::string> SplitAscii(std::string_view value, char separator)
+    {
+        std::vector<std::string> parts;
+        size_t start = 0;
+        while (start <= value.size())
+        {
+            const size_t end = value.find(separator, start);
+            if (end == std::string_view::npos)
+            {
+                parts.emplace_back(value.substr(start));
+                break;
+            }
+            parts.emplace_back(value.substr(start, end - start));
+            start = end + 1;
+        }
+        return parts;
+    }
+
+    std::string JoinAscii(const std::vector<std::string>& parts, char separator)
+    {
+        std::ostringstream out;
+        for (size_t i = 0; i < parts.size(); ++i)
+        {
+            if (i != 0)
+            {
+                out << separator;
+            }
+            out << parts[i];
+        }
+        return out.str();
+    }
+
+    std::string TextureNameToMaterialComponent(std::string value)
+    {
+        const size_t star = value.find('*');
+        if (star != std::string::npos)
+        {
+            value.resize(star);
+        }
+
+        std::vector<std::string> parts = SplitAscii(value, '_');
+        bool removedTextureToken = false;
+        for (size_t i = parts.size(); i > 1; --i)
+        {
+            const size_t partIndex = i - 1;
+            if (parts[partIndex] != "tex")
+            {
+                continue;
+            }
+
+            if (partIndex + 1 < parts.size() && parts[partIndex + 1].size() <= 2)
+            {
+                parts.erase(parts.begin() + static_cast<std::ptrdiff_t>(partIndex + 1));
+            }
+            parts.erase(parts.begin() + static_cast<std::ptrdiff_t>(partIndex));
+            removedTextureToken = true;
+            break;
+        }
+
+        if (!removedTextureToken && !parts.empty() && parts.back().size() < 2)
+        {
+            parts.pop_back();
+        }
+
+        return JoinAscii(parts, '_');
+    }
+
+    void AppendMaterialNameComponent(std::vector<std::string>& components, const std::string& textureName)
+    {
+        if (!textureName.empty())
+        {
+            std::string component = TextureNameToMaterialComponent(textureName);
+            if (!component.empty())
+            {
+                components.push_back(std::move(component));
+            }
+        }
+    }
+
+    bool ContainsAscii(std::string_view value, std::string_view needle)
+    {
+        return value.find(needle) != std::string_view::npos;
+    }
+
+    std::string GenerateMaterialName(std::string_view shaderClass, const DescriptorTextureSlots& slots)
+    {
+        bool hasTexture = false;
+        for (const std::string& slot : slots)
+        {
+            if (!slot.empty())
+            {
+                hasTexture = true;
+                break;
+            }
+        }
+
+        if (!hasTexture)
+        {
+            return std::string(shaderClass);
+        }
+
+        std::vector<std::string> components;
+        const bool layered = ContainsAscii(shaderClass, "layered");
+        const bool dynamic = ContainsAscii(shaderClass, "dynamic");
+
+        if (!layered)
+        {
+            AppendMaterialNameComponent(components, slots[0]);
+            AppendMaterialNameComponent(components, slots[1]);
+        }
+
+        size_t detailStart = 4;
+        if (!dynamic || layered)
+        {
+            detailStart = 3;
+        }
+
+        for (size_t i = detailStart; i < slots.size(); i += 2)
+        {
+            AppendMaterialNameComponent(components, slots[i]);
+            if (slots[i].empty() && i + 1 < slots.size())
+            {
+                AppendMaterialNameComponent(components, slots[i + 1]);
+            }
+        }
+
+        return JoinAscii(components, '_');
+    }
+
+    std::string MakeMaterialNameUniqueIfNeeded(
+        const std::vector<std::string>& existingNames,
+        const std::vector<DescriptorTextureSlots>& existingSlots,
+        std::string candidate,
+        const DescriptorTextureSlots& candidateSlots,
+        uint32_t materialIndex)
+    {
+        if (candidate.empty())
+        {
+            candidate = "material_" + std::to_string(materialIndex);
+        }
+
+        for (size_t i = 0; i < existingNames.size(); ++i)
+        {
+            if (existingNames[i] != candidate)
+            {
+                continue;
+            }
+            if (i < existingSlots.size() && existingSlots[i] == candidateSlots)
+            {
+                return candidate;
+            }
+
+            const std::string base = candidate;
+            for (uint32_t suffix = 1; suffix < 100000; ++suffix)
+            {
+                std::string suffixed = base + "_" + std::to_string(suffix);
+                if (std::find(existingNames.begin(), existingNames.end(), suffixed) == existingNames.end())
+                {
+                    return suffixed;
+                }
+            }
+
+            return base + "_" + std::to_string(materialIndex);
+        }
+
+        return candidate;
+    }
+
+    std::string MaterialDomainForBlock(std::string_view blockName)
+    {
+        return blockName == "matS" ? "skinned" : "rigid";
+    }
+
     std::string MakeDescriptorClassSummary(const GameResDescEntry& entry)
     {
         std::ostringstream out;
@@ -398,31 +624,71 @@ namespace {
                 }
                 continue;
             }
+        }
 
-            if (!IsMaterialContainer(child.name))
+        std::vector<DescriptorTextureSlots> materialSlots;
+        constexpr std::string_view materialContainerOrder[] = { "matR", "mat", "matS" };
+        for (const std::string_view materialContainerName : materialContainerOrder)
+        {
+            for (const size_t childIndex : block.children)
             {
-                continue;
-            }
-
-            for (const size_t materialBlockIndex : child.children)
-            {
-                const BinaryBlkBlock& materialBlock = document.blocks[materialBlockIndex];
-                std::string materialName = materialBlock.name;
-                if (const std::optional<std::string> shaderClass = FindStringParam(document, materialBlock, "cls"))
+                const BinaryBlkBlock& child = document.blocks[childIndex];
+                if (child.name != materialContainerName)
                 {
-                    materialName = *shaderClass;
-                    AppendUnique(entry.shaders, *shaderClass);
+                    continue;
                 }
 
-                AppendUnique(entry.materials, materialName);
-
-                for (uint32_t i = 0; i < materialBlock.paramsCount; ++i)
+                for (const size_t materialBlockIndex : child.children)
                 {
-                    const BinaryBlkParam param = ReadParam(document, materialBlock, i);
-                    if ((param.flags & 0x0F000000u) == 0x02000000u)
+                    const BinaryBlkBlock& materialBlock = document.blocks[materialBlockIndex];
+                    DescriptorTextureSlots slots = {};
+                    std::string shaderClass;
+                    if (const std::optional<std::string> clsParam = FindStringParam(document, materialBlock, "cls"))
                     {
-                        AppendUnique(entry.dependencyIds, param.rawValue);
+                        shaderClass = *clsParam;
+                        AppendUnique(entry.shaders, *clsParam);
                     }
+
+                    const uint32_t materialIndex = static_cast<uint32_t>(entry.materials.size());
+                    for (uint32_t i = 0; i < materialBlock.paramsCount; ++i)
+                    {
+                        const BinaryBlkParam param = ReadParam(document, materialBlock, i);
+                        const uint32_t valueType = param.flags & 0x0F000000u;
+                        if (valueType == 0x02000000u)
+                        {
+                            size_t slotIndex = 0;
+                            if (TryParseTextureSlotIndex(param.name, slotIndex))
+                            {
+                                AppendUnique(entry.dependencyIds, param.rawValue);
+                                if (param.rawValue < entry.textures.size())
+                                {
+                                    slots[slotIndex] = entry.textures[param.rawValue];
+                                }
+                                AppendUniqueMaterialTextureRef(
+                                    entry.materialTextureRefs,
+                                    materialIndex,
+                                    param.rawValue,
+                                    param.name);
+                            }
+                        }
+                    }
+
+                    std::string materialName = GenerateMaterialName(shaderClass, slots);
+                    if (materialName.empty())
+                    {
+                        materialName = shaderClass.empty() ? materialBlock.name : shaderClass;
+                    }
+                    materialName = MakeMaterialNameUniqueIfNeeded(
+                        entry.materials,
+                        materialSlots,
+                        std::move(materialName),
+                        slots,
+                        materialIndex);
+
+                    entry.materials.push_back(std::move(materialName));
+                    entry.materialDomains.push_back(MaterialDomainForBlock(child.name));
+                    entry.materialShaderClasses.push_back(std::move(shaderClass));
+                    materialSlots.push_back(std::move(slots));
                 }
             }
         }

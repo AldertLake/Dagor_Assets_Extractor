@@ -123,34 +123,46 @@ namespace DagorAssetsExtractor::Platform {
 #endif
     }
 
+    fs::path GetExecutableDirectory()
+    {
+#if defined(_WIN32)
+        std::wstring buffer(32768, L'\0');
+        const DWORD length = GetModuleFileNameW(
+            nullptr,
+            buffer.data(),
+            static_cast<DWORD>(buffer.size()));
+        if (length > 0 && length < buffer.size())
+        {
+            buffer.resize(length);
+            const fs::path executablePath(buffer);
+            if (executablePath.has_parent_path())
+            {
+                return executablePath.parent_path();
+            }
+        }
+#endif
+
+        return fs::current_path();
+    }
+
+    fs::path GetCacheRootPath()
+    {
+        return GetExecutableDirectory() / L"cache";
+    }
+
     fs::path GetSettingsPath()
     {
-        if (const auto appData = GetKnownFolderPathRoamingAppData())
-        {
-            return *appData / L"DagorAssetsExtractor" / L"settings.ini";
-        }
-
-        return fs::current_path() / L"settings.ini";
+        return GetCacheRootPath() / L"settings";
     }
 
     fs::path GetIndexCachePath()
     {
-        if (const auto appData = GetKnownFolderPathRoamingAppData())
-        {
-            return *appData / L"DagorAssetsExtractor" / L"index-cache.txt";
-        }
-
-        return fs::current_path() / L"index-cache.txt";
+        return GetCacheRootPath() / L"index-cache";
     }
 
     fs::path GetDescriptorLinksCachePath()
     {
-        if (const auto appData = GetKnownFolderPathRoamingAppData())
-        {
-            return *appData / L"DagorAssetsExtractor" / L"descriptor-links-cache.txt";
-        }
-
-        return fs::current_path() / L"descriptor-links-cache.txt";
+        return GetCacheRootPath() / L"descriptor-links-cache";
     }
 
     fs::path GetDefaultExportRoot()

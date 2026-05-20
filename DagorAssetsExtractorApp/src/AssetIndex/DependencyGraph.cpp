@@ -23,8 +23,8 @@ namespace DagorAssetsExtractor::AssetIndex
     namespace
     {
         constexpr size_t MaxWarnings = 12;
-        constexpr int DescriptorLinkerVersion = 4;
-        constexpr int DescriptorLinkCacheVersion = 1;
+        constexpr int DescriptorLinkerVersion = 6;
+        constexpr int DescriptorLinkCacheVersion = 3;
 
         std::string Trim(std::string value)
         {
@@ -912,7 +912,14 @@ namespace DagorAssetsExtractor::AssetIndex
         std::vector<uint32_t> BuildTextureIndices(const SubAssetRecord& descriptorEntry)
         {
             std::vector<uint32_t> textureIndices;
-            if (!descriptorEntry.dependencyIds.empty())
+            if (!descriptorEntry.materialTextureRefs.empty())
+            {
+                for (const DescriptorMaterialTextureRef& materialRef : descriptorEntry.materialTextureRefs)
+                {
+                    AppendUniqueUInt(textureIndices, materialRef.textureIndex);
+                }
+            }
+            else if (!descriptorEntry.dependencyIds.empty())
             {
                 for (const uint32_t textureIndex : descriptorEntry.dependencyIds)
                 {
@@ -1392,7 +1399,10 @@ namespace DagorAssetsExtractor::AssetIndex
             link.resId = descriptorEntry.resId;
             link.textureNames = descriptorEntry.textureNames;
             link.materialNames = descriptorEntry.materialNames;
+            link.materialDomains = descriptorEntry.materialDomains;
+            link.materialShaderClasses = descriptorEntry.materialShaderClasses;
             link.materialTextureRefs = descriptorEntry.dependencyIds;
+            link.materialTextureBindings = descriptorEntry.materialTextureRefs;
 
             if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex))
             {
@@ -1530,9 +1540,24 @@ namespace DagorAssetsExtractor::AssetIndex
             {
                 file << "materialName " << std::quoted(materialName) << '\n';
             }
+            for (const std::string& materialDomain : link.materialDomains)
+            {
+                file << "materialDomain " << std::quoted(materialDomain) << '\n';
+            }
+            for (const std::string& materialShaderClass : link.materialShaderClasses)
+            {
+                file << "materialShaderClass " << std::quoted(materialShaderClass) << '\n';
+            }
             for (const uint32_t materialTextureRef : link.materialTextureRefs)
             {
                 file << "materialTextureRef " << materialTextureRef << '\n';
+            }
+            for (const DescriptorMaterialTextureRef& materialTextureBinding : link.materialTextureBindings)
+            {
+                file << "materialTextureBinding "
+                     << materialTextureBinding.materialIndex << ' '
+                     << materialTextureBinding.textureIndex << ' '
+                     << std::quoted(materialTextureBinding.slotName) << '\n';
             }
             WriteOptionalPath(file, "matchedGrpPath", link.matchedGrpPath);
             WriteOptionalString(file, "matchedGrpEntryName", link.matchedGrpEntryName);
@@ -1717,6 +1742,22 @@ namespace DagorAssetsExtractor::AssetIndex
                             link.materialNames.push_back(std::move(value));
                         }
                     }
+                    else if (linkTag == "materialDomain")
+                    {
+                        std::string value;
+                        if (linkStream >> std::quoted(value))
+                        {
+                            link.materialDomains.push_back(std::move(value));
+                        }
+                    }
+                    else if (linkTag == "materialShaderClass")
+                    {
+                        std::string value;
+                        if (linkStream >> std::quoted(value))
+                        {
+                            link.materialShaderClasses.push_back(std::move(value));
+                        }
+                    }
                     else if (linkTag == "materialTextureRef")
                     {
                         uint32_t value = 0;
@@ -1724,6 +1765,16 @@ namespace DagorAssetsExtractor::AssetIndex
                         {
                             link.materialTextureRefs.push_back(value);
                         }
+                    }
+                    else if (linkTag == "materialTextureBinding")
+                    {
+                        DescriptorMaterialTextureRef ref;
+                        if (!(linkStream >> ref.materialIndex >> ref.textureIndex >> std::quoted(ref.slotName)))
+                        {
+                            result.message = "Descriptor-link cache material texture binding row is malformed.";
+                            return result;
+                        }
+                        link.materialTextureBindings.push_back(std::move(ref));
                     }
                     else if (linkTag == "matchedGrpPath")
                     {

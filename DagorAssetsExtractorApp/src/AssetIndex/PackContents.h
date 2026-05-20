@@ -11,6 +11,13 @@
 
 namespace DagorAssetsExtractor::AssetIndex
 {
+    struct DescriptorMaterialTextureRef
+    {
+        uint32_t materialIndex = 0;
+        uint32_t textureIndex = 0;
+        std::string slotName;
+    };
+
     // A single sub-asset entry inside a container (VROMFS, DXP, etc.)
     struct SubAssetRecord
     {
@@ -36,6 +43,9 @@ namespace DagorAssetsExtractor::AssetIndex
         std::vector<uint32_t> dependencyIds;
         std::vector<std::string> textureNames;
         std::vector<std::string> materialNames;
+        std::vector<std::string> materialDomains;
+        std::vector<std::string> materialShaderClasses;
+        std::vector<DescriptorMaterialTextureRef> materialTextureRefs;
         std::string skeletonName;
         std::string dynModelName;
     };

@@ -29,6 +29,8 @@ namespace DagorAssetsExtractor::Platform {
     std::optional<std::filesystem::path> GetKnownFolderPathRoamingAppData();
     std::optional<std::filesystem::path> GetKnownFolderPathDocuments();
 
+    std::filesystem::path GetExecutableDirectory();
+    std::filesystem::path GetCacheRootPath();
     std::filesystem::path GetSettingsPath();
     std::filesystem::path GetIndexCachePath();
     std::filesystem::path GetDescriptorLinksCachePath();

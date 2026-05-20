@@ -1661,6 +1661,39 @@ void DynModelReader::ParseRealGrpPayload() {
     }
 
     const uint32_t exportLod = 0;
+    std::vector<uint32_t> rawMaterialIds;
+    auto appendMaterialIds = [&](const std::vector<ShaderMesh>& meshes)
+    {
+        for (const ShaderMesh& mesh : meshes)
+        {
+            for (const ShaderMeshElem& element : mesh.elements)
+            {
+                rawMaterialIds.push_back(element.materialIndex);
+            }
+        }
+    };
+
+    if (exportLod < lods.size())
+    {
+        appendMaterialIds(lods[exportLod].rigidMeshes);
+    }
+    if (exportLod < skinnedLods.size())
+    {
+        appendMaterialIds(skinnedLods[exportLod].meshes);
+    }
+
+    std::sort(rawMaterialIds.begin(), rawMaterialIds.end());
+    rawMaterialIds.erase(std::unique(rawMaterialIds.begin(), rawMaterialIds.end()), rawMaterialIds.end());
+    if (!rawMaterialIds.empty())
+    {
+        const uint32_t maxRawMaterialSlot = rawMaterialIds.back();
+        std::ostringstream diag;
+        diag << "DynModel material index summary: uniqueRaw=" << rawMaterialIds.size()
+             << ", maxRaw=" << maxRawMaterialSlot
+             << ", mode=raw";
+        AddDiagnostic(diag.str());
+    }
+
     if (exportLod < lods.size())
     {
         const auto& lod = lods[exportLod];

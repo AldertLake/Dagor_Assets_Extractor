@@ -33,6 +33,12 @@ namespace DagorAssetsExtractor::App
         bool preserveOriginalDDS = true;
         bool indexCacheEnabled = true;
         size_t maxLoadedPackContents = 8;
+        bool showVromfs = true;
+        bool showGrp = true;
+        bool showDxp = true;
+        bool showDescriptors = true;
+        bool showBlk = true;
+        bool groupByBlk = false;
         std::string lastOpenedPackFilters;
     };
 
@@ -202,6 +208,8 @@ namespace DagorAssetsExtractor::App
 
     // Core actions that UI can trigger
     void LoadSettings(AppSettings& settings, const std::filesystem::path& path);
+    void ApplySettingsToUiState(AppState& app);
+    void UpdateSettingsFromUiState(AppState& app);
     void SetGameRoot(AppState& app, const std::filesystem::path& gameRoot);
     void SaveSettingsWithLog(AppState& app);
     void ApplyGameRootBuffer(AppState& app);

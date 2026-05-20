@@ -7,6 +7,12 @@
 
 namespace DagorFormats {
 
+struct GameResDescMaterialTextureRef {
+    uint32_t materialIndex = 0;
+    uint32_t textureIndex = 0;
+    std::string slotName;
+};
+
 struct GameResDescEntry {
     std::string name;
     std::string className;
@@ -15,6 +21,9 @@ struct GameResDescEntry {
     
     std::vector<std::string> textures;
     std::vector<std::string> materials;
+    std::vector<std::string> materialDomains;
+    std::vector<std::string> materialShaderClasses;
+    std::vector<GameResDescMaterialTextureRef> materialTextureRefs;
     std::vector<std::string> shaders;
     std::string skeletonName;
     std::string dynModelName;

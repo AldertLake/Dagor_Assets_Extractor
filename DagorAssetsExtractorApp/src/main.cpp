@@ -231,11 +231,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     
     // We access the settings load from App module
     DagorAssetsExtractor::App::LoadSettings(app.settings, app.settingsPath);
+    DagorAssetsExtractor::App::ApplySettingsToUiState(app);
     app.validation = DagorAssetsExtractor::AssetIndex::ValidateGameRoot(app.settings.gameRoot);
     DagorAssetsExtractor::App::SyncSettingsBuffers(app);
     app.firstRunPromptOpen = !app.validation.IsValid();
 
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Application started.");
+    DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Portable cache folder: " + DagorAssetsExtractor::Platform::PathToUtf8(DagorAssetsExtractor::Platform::GetCacheRootPath()));
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Settings path: " + DagorAssetsExtractor::Platform::PathToUtf8(app.settingsPath));
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Index cache path: " + DagorAssetsExtractor::Platform::PathToUtf8(app.indexCachePath));
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Descriptor-link cache path: " + DagorAssetsExtractor::Platform::PathToUtf8(app.descriptorLinksCachePath));

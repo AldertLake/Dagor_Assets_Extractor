@@ -14,6 +14,9 @@
 #include <iomanip>
 #include <sstream>
 #include <algorithm>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace DagorAssetsExtractor::App
 {
@@ -42,6 +45,28 @@ namespace DagorAssetsExtractor::App
             return !isSpace(static_cast<unsigned char>(c));
         }).base(), value.end());
         return value;
+    }
+
+    std::string ToLowerLocal(std::string_view value)
+    {
+        std::string lowered(value);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return lowered;
+    }
+
+    std::vector<std::string> BuildBaseColorSlotPreference(std::string_view shaderClass)
+    {
+        const std::string lowered = ToLowerLocal(shaderClass);
+        const bool layered = lowered.find("layered") != std::string::npos;
+        const bool detail1IsDiffuse = layered && lowered != "rendinst_simple_layered";
+        if (!detail1IsDiffuse || lowered == "dynamic_painted_by_mask")
+        {
+            return { "t0" };
+        }
+
+        return { "t3", "t5", "t7", "t9" };
     }
 
     std::string NowString()
@@ -449,6 +474,30 @@ namespace DagorAssetsExtractor::App
             {
                 settings.maxLoadedPackContents = ParseSize(value, settings.maxLoadedPackContents);
             }
+            else if (key == "showVromfs")
+            {
+                settings.showVromfs = ParseBool(value, settings.showVromfs);
+            }
+            else if (key == "showGrp")
+            {
+                settings.showGrp = ParseBool(value, settings.showGrp);
+            }
+            else if (key == "showDxp")
+            {
+                settings.showDxp = ParseBool(value, settings.showDxp);
+            }
+            else if (key == "showDescriptors")
+            {
+                settings.showDescriptors = ParseBool(value, settings.showDescriptors);
+            }
+            else if (key == "showBlk")
+            {
+                settings.showBlk = ParseBool(value, settings.showBlk);
+            }
+            else if (key == "groupByBlk")
+            {
+                settings.groupByBlk = ParseBool(value, settings.groupByBlk);
+            }
             else if (key == "lastOpenedPackFilters")
             {
                 settings.lastOpenedPackFilters = value;
@@ -481,8 +530,34 @@ namespace DagorAssetsExtractor::App
         file << "preserveOriginalDDS=" << (settings.preserveOriginalDDS ? "true" : "false") << '\n';
         file << "indexCacheEnabled=" << (settings.indexCacheEnabled ? "true" : "false") << '\n';
         file << "maxLoadedPackContents=" << settings.maxLoadedPackContents << '\n';
+        file << "showVromfs=" << (settings.showVromfs ? "true" : "false") << '\n';
+        file << "showGrp=" << (settings.showGrp ? "true" : "false") << '\n';
+        file << "showDxp=" << (settings.showDxp ? "true" : "false") << '\n';
+        file << "showDescriptors=" << (settings.showDescriptors ? "true" : "false") << '\n';
+        file << "showBlk=" << (settings.showBlk ? "true" : "false") << '\n';
+        file << "groupByBlk=" << (settings.groupByBlk ? "true" : "false") << '\n';
         file << "lastOpenedPackFilters=" << settings.lastOpenedPackFilters << '\n';
         return true;
+    }
+
+    void ApplySettingsToUiState(AppState& app)
+    {
+        app.showVromfs = app.settings.showVromfs;
+        app.showGrp = app.settings.showGrp;
+        app.showDxp = app.settings.showDxp;
+        app.showDescriptors = app.settings.showDescriptors;
+        app.showBlk = app.settings.showBlk;
+        app.groupByBlk = app.settings.groupByBlk;
+    }
+
+    void UpdateSettingsFromUiState(AppState& app)
+    {
+        app.settings.showVromfs = app.showVromfs;
+        app.settings.showGrp = app.showGrp;
+        app.settings.showDxp = app.showDxp;
+        app.settings.showDescriptors = app.showDescriptors;
+        app.settings.showBlk = app.showBlk;
+        app.settings.groupByBlk = app.groupByBlk;
     }
 
     void SyncSettingsBuffers(AppState& app)
@@ -621,6 +696,7 @@ namespace DagorAssetsExtractor::App
     void SaveSettingsWithLog(AppState& app)
     {
         std::string error;
+        UpdateSettingsFromUiState(app);
         if (SaveSettings(app.settings, app.settingsPath, error))
         {
             AddLog(app, LogLevel::Info, "Settings saved to " + Platform::PathToUtf8(app.settingsPath));
@@ -951,6 +1027,7 @@ namespace DagorAssetsExtractor::App
                 if (matchedLink && exportTextures)
                 {
                     size_t exportedTextureCount = 0;
+                    std::unordered_map<uint32_t, std::string> exportedTexturesByDescriptorIndex;
                     for (const auto& texLink : matchedLink->textureLinks)
                     {
                         if (texLink.matchedDxpPath && texLink.matchedDxpEntryName)
@@ -978,46 +1055,7 @@ namespace DagorAssetsExtractor::App
                                     if (texResult.success)
                                     {
                                         const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
-                                        bool assignedToMaterial = false;
-                                        if (texLink.textureIndex < materials.size())
-                                        {
-                                            Export::MaterialInfo& mat = materials[texLink.textureIndex];
-                                            if (mat.name.empty())
-                                            {
-                                                mat.name = texLink.textureName;
-                                            }
-                                            if (mat.diffuseTexturePath.empty())
-                                            {
-                                                mat.diffuseTexturePath = textureFile;
-                                                assignedToMaterial = true;
-                                            }
-                                        }
-
-                                        if (!assignedToMaterial)
-                                        {
-                                            auto emptyTextureSlot = std::find_if(materials.begin(), materials.end(), [](const Export::MaterialInfo& mat) {
-                                                return mat.diffuseTexturePath.empty();
-                                            });
-                                            if (emptyTextureSlot != materials.end())
-                                            {
-                                                if (emptyTextureSlot->name.empty())
-                                                {
-                                                    emptyTextureSlot->name = texLink.textureName;
-                                                }
-                                                emptyTextureSlot->diffuseTexturePath = textureFile;
-                                                assignedToMaterial = true;
-                                            }
-                                        }
-
-                                        if (!assignedToMaterial)
-                                        {
-                                            Export::MaterialInfo mat;
-                                            mat.name = texLink.textureName;
-                                            mat.diffuseTexturePath = textureFile;
-                                            materials.push_back(mat);
-                                            assignedToMaterial = true;
-                                        }
-
+                                        exportedTexturesByDescriptorIndex.emplace(texLink.textureIndex, textureFile);
                                         manifest.textureDependencies.push_back(textureFile);
                                         ++exportedTextureCount;
                                     }
@@ -1030,12 +1068,104 @@ namespace DagorAssetsExtractor::App
                         }
                     }
 
+                    size_t assignedTextureCount = 0;
+                    size_t skippedBindingCount = 0;
+                    if (!matchedLink->materialTextureBindings.empty())
+                    {
+                        size_t maxBoundMaterialIndex = materials.empty() ? 0 : materials.size() - 1;
+                        for (const AssetIndex::DescriptorMaterialTextureRef& binding : matchedLink->materialTextureBindings)
+                        {
+                            if (binding.materialIndex >= 100000)
+                            {
+                                ++skippedBindingCount;
+                                continue;
+                            }
+                            maxBoundMaterialIndex = std::max(maxBoundMaterialIndex, static_cast<size_t>(binding.materialIndex));
+                        }
+
+                        if (materials.size() <= maxBoundMaterialIndex)
+                        {
+                            const size_t oldSize = materials.size();
+                            materials.resize(maxBoundMaterialIndex + 1);
+                            for (size_t fillIndex = oldSize; fillIndex < materials.size(); ++fillIndex)
+                            {
+                                materials[fillIndex].name = "material_" + std::to_string(fillIndex);
+                            }
+                        }
+
+                        for (size_t materialIndex = 0; materialIndex <= maxBoundMaterialIndex; ++materialIndex)
+                        {
+                            const std::string shaderClass =
+                                materialIndex < matchedLink->materialShaderClasses.size()
+                                    ? matchedLink->materialShaderClasses[materialIndex]
+                                    : std::string();
+                            const std::vector<std::string> baseColorSlots = BuildBaseColorSlotPreference(shaderClass);
+                            std::optional<std::string> selectedTexturePath;
+
+                            for (const std::string& slotName : baseColorSlots)
+                            {
+                                for (const AssetIndex::DescriptorMaterialTextureRef& binding : matchedLink->materialTextureBindings)
+                                {
+                                    if (binding.materialIndex != materialIndex || binding.slotName != slotName)
+                                    {
+                                        continue;
+                                    }
+                                    const auto textureIt = exportedTexturesByDescriptorIndex.find(binding.textureIndex);
+                                    if (textureIt != exportedTexturesByDescriptorIndex.end())
+                                    {
+                                        selectedTexturePath = textureIt->second;
+                                        break;
+                                    }
+                                }
+                                if (selectedTexturePath)
+                                {
+                                    break;
+                                }
+                            }
+
+                            Export::MaterialInfo& material = materials[materialIndex];
+                            if (material.name.empty())
+                            {
+                                material.name = "material_" + std::to_string(materialIndex);
+                            }
+                            if (selectedTexturePath && material.diffuseTexturePath.empty())
+                            {
+                                material.diffuseTexturePath = *selectedTexturePath;
+                                ++assignedTextureCount;
+                            }
+                        }
+
+                        for (const AssetIndex::DescriptorMaterialTextureRef& binding : matchedLink->materialTextureBindings)
+                        {
+                            if (!exportedTexturesByDescriptorIndex.contains(binding.textureIndex))
+                            {
+                                ++skippedBindingCount;
+                            }
+                        }
+                    }
+                    else if (materials.size() == 1 && exportedTexturesByDescriptorIndex.size() == 1)
+                    {
+                        materials.front().diffuseTexturePath = exportedTexturesByDescriptorIndex.begin()->second;
+                        assignedTextureCount = 1;
+                    }
+                    else if (!exportedTexturesByDescriptorIndex.empty())
+                    {
+                        const std::string warning =
+                            "Descriptor link for " + entry.name +
+                            " has no per-material texture bindings; textures were exported but not assigned to avoid corrupt material slots.";
+                        manifest.decodeWarnings.push_back(warning);
+                        AddLog(app, LogLevel::Warning, warning);
+                    }
+
                     AddLog(app,
                         LogLevel::Info,
                         "Model material dependency summary for " + entry.name +
                         ": descriptorMaterials=" + std::to_string(matchedLink->materialNames.size()) +
                         ", descriptorTextures=" + std::to_string(matchedLink->textureLinks.size()) +
+                        ", materialTextureBindings=" + std::to_string(matchedLink->materialTextureBindings.size()) +
                         ", exportedTextures=" + std::to_string(exportedTextureCount) +
+                        ", assignedTextures=" + std::to_string(assignedTextureCount) +
+                        ", skippedBindings=" + std::to_string(skippedBindingCount) +
                         ", gltfMaterialSlots=" + std::to_string(materials.size()));
                 }
 
@@ -1098,22 +1228,92 @@ namespace DagorAssetsExtractor::App
                         AddLog(app, LogLevel::Info, "DynModel diagnostic for " + entry.name + ": " + diagnostic);
                     }
 
+                    std::vector<DagorFormats::DynModelMesh> dynLods = reader.GetLods();
+                    if (matchedLink && matchedLink->materialDomains.size() == matchedLink->materialNames.size())
+                    {
+                        const auto firstSkinnedIt = std::find(
+                            matchedLink->materialDomains.begin(),
+                            matchedLink->materialDomains.end(),
+                            "skinned");
+                        if (firstSkinnedIt != matchedLink->materialDomains.end())
+                        {
+                            const size_t firstSkinnedMaterial =
+                                static_cast<size_t>(std::distance(matchedLink->materialDomains.begin(), firstSkinnedIt));
+                            const size_t skinnedMaterialCount = matchedLink->materialNames.size() - firstSkinnedMaterial;
+                            size_t remappedSkinnedPrimitives = 0;
+                            size_t outOfRangeSkinnedPrimitives = 0;
+
+                            if (firstSkinnedMaterial > 0 && skinnedMaterialCount > 0)
+                            {
+                                for (DagorFormats::DynModelMesh& mesh : dynLods)
+                                {
+                                    if (!mesh.useSkinning)
+                                    {
+                                        continue;
+                                    }
+                                    for (auto& primitive : mesh.primitives)
+                                    {
+                                        if (primitive.materialIndex < skinnedMaterialCount)
+                                        {
+                                            primitive.materialIndex += static_cast<uint32_t>(firstSkinnedMaterial);
+                                            ++remappedSkinnedPrimitives;
+                                        }
+                                        else
+                                        {
+                                            ++outOfRangeSkinnedPrimitives;
+                                        }
+                                    }
+                                }
+                            }
+
+                            AddLog(app,
+                                LogLevel::Info,
+                                "DynModel material domain summary for " + entry.name +
+                                ": rigidMaterials=" + std::to_string(firstSkinnedMaterial) +
+                                ", skinnedMaterials=" + std::to_string(skinnedMaterialCount) +
+                                ", skinnedPrimitiveOffsetsApplied=" + std::to_string(remappedSkinnedPrimitives) +
+                                ", skinnedPrimitiveOutOfRange=" + std::to_string(outOfRangeSkinnedPrimitives));
+                        }
+                    }
+
                     size_t dynVertexCount = 0;
                     size_t dynIndexCount = 0;
                     size_t dynPrimitiveCount = 0;
-                    for (const auto& lod : reader.GetLods())
+                    size_t dynMaxMaterialSlot = 0;
+                    bool dynHasMaterialSlot = false;
+                    std::unordered_set<uint32_t> dynMaterialSlots;
+                    for (const auto& lod : dynLods)
                     {
                         dynVertexCount += lod.vertices.size();
                         dynIndexCount += lod.indices.size();
                         dynPrimitiveCount += lod.primitives.size();
+                        for (const auto& primitive : lod.primitives)
+                        {
+                            if (primitive.indexCount == 0)
+                            {
+                                continue;
+                            }
+                            dynHasMaterialSlot = true;
+                            dynMaxMaterialSlot = std::max(
+                                dynMaxMaterialSlot,
+                                static_cast<size_t>(primitive.materialIndex));
+                            dynMaterialSlots.insert(primitive.materialIndex);
+                        }
                     }
                     AddLog(app,
                         LogLevel::Info,
                         "DynModel export summary for " + entry.name +
-                        ": meshes=" + std::to_string(reader.GetLods().size()) +
+                        ": meshes=" + std::to_string(dynLods.size()) +
                         ", compactVertices=" + std::to_string(dynVertexCount) +
                         ", indices=" + std::to_string(dynIndexCount) +
                         ", primitives=" + std::to_string(dynPrimitiveCount));
+                    AddLog(app,
+                        LogLevel::Info,
+                        "DynModel material slot summary for " + entry.name +
+                        ": primitiveMaterialSlots=" + std::to_string(dynMaterialSlots.size()) +
+                        ", maxSlot=" + (dynHasMaterialSlot ? std::to_string(dynMaxMaterialSlot) : std::string("none")) +
+                        ", descriptorMaterials=" + std::to_string(matchedLink ? matchedLink->materialNames.size() : 0) +
+                        ", descriptorBindings=" + std::to_string(matchedLink ? matchedLink->materialTextureBindings.size() : 0));
 
                     manifest.assetType = "DynModel Skinned Model";
                     manifest.formatDecoderVersion = "DynModelReader v1.0";
@@ -1273,7 +1473,7 @@ namespace DagorAssetsExtractor::App
                             "Writing DynModel GLB for " + entry.name +
                             " with skeletonNodes=" + std::to_string(skeleton.size()) +
                             " to " + Platform::PathToUtf8(outPath));
-                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), skeleton, manifest, materials);
+                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, dynLods, skeleton, manifest, materials);
                     }
                     else
                     {
