@@ -132,9 +132,15 @@ namespace {
             start = i + 1;
         }
 
-        if (expectedCount != 0 && names.size() < expectedCount)
+        if (expectedCount != 0 && names.size() + 1 < expectedCount)
         {
             throw std::runtime_error("Descriptor BLK name map is truncated");
+        }
+        while (expectedCount != 0 && names.size() < expectedCount)
+        {
+            // Live War Thunder descriptors count one trailing sentinel name that is
+            // not present in the null-terminated name payload.
+            names.emplace_back();
         }
 
         return names;

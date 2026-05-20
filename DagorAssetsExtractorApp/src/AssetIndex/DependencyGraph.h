@@ -4,9 +4,11 @@
 #include "AssetIndex/BlkRelationships.h"
 
 #include <cstdint>
+#include <functional>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace DagorAssetsExtractor::AssetIndex
@@ -44,8 +46,35 @@ namespace DagorAssetsExtractor::AssetIndex
         size_t parseErrors = 0;
         size_t grpPacksParsed = 0;
         size_t dxpPacksParsed = 0;
+        bool canceled = false;
         std::vector<std::string> warnings;
     };
+
+    struct DescriptorResourceLinkProgress
+    {
+        std::string stage;
+        std::string item;
+        size_t current = 0;
+        size_t total = 0;
+        size_t descriptorFilesParsed = 0;
+        size_t linksBuilt = 0;
+        size_t grpPacksParsed = 0;
+        size_t dxpPacksParsed = 0;
+    };
+
+    using DescriptorResourceLinkProgressCallback = std::function<bool(const DescriptorResourceLinkProgress&)>;
+
+    struct DescriptorResourceLinkBuildOptions
+    {
+        const std::vector<BlkResourceLink>* blkLinks = nullptr;
+        uintmax_t maxDescriptorBytes = 256 * 1024 * 1024;
+        uintmax_t maxPackBytes = 256 * 1024 * 1024;
+        DescriptorResourceLinkProgressCallback progress;
+    };
+
+    DescriptorResourceLinkBuildResult BuildDescriptorResourceLinks(
+        const std::vector<ResourceRecord>& records,
+        const DescriptorResourceLinkBuildOptions& options);
 
     DescriptorResourceLinkBuildResult BuildDescriptorResourceLinks(
         const std::vector<ResourceRecord>& records,

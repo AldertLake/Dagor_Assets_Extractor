@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <mutex>
 #include <sstream>
 
 namespace DagorAssetsExtractor::UI
@@ -1310,6 +1311,90 @@ namespace DagorAssetsExtractor::UI
         }
     }
 
+    void DrawProgressJobWindow(AppState& app)
+    {
+        App::ProgressJobSnapshot snapshot = App::SnapshotProgressJob(app);
+        if (!snapshot.windowOpen && !snapshot.running)
+        {
+            return;
+        }
+
+        bool open = snapshot.windowOpen;
+        ImGui::SetNextWindowSize(ImVec2(620.0f, 360.0f), ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin(snapshot.title.empty() ? "Operation Progress" : snapshot.title.c_str(), &open))
+        {
+            {
+                std::lock_guard<std::mutex> lock(app.progressJob.mutex);
+                app.progressJob.windowOpen = open || snapshot.running;
+            }
+            ImGui::End();
+            return;
+        }
+
+        ImGui::TextWrapped("%s", snapshot.status.empty() ? "Working..." : snapshot.status.c_str());
+        if (!snapshot.currentItem.empty())
+        {
+            ImGui::TextDisabled("%s", snapshot.currentItem.c_str());
+        }
+
+        const float fraction = snapshot.total > 0
+            ? std::clamp(static_cast<float>(snapshot.current) / static_cast<float>(snapshot.total), 0.0f, 1.0f)
+            : 0.0f;
+        std::string overlay;
+        if (snapshot.total > 0)
+        {
+            overlay = std::to_string(snapshot.current) + " / " + std::to_string(snapshot.total);
+        }
+        ImGui::ProgressBar(snapshot.total > 0 ? fraction : 0.0f, ImVec2(-1.0f, 0.0f), overlay.empty() ? nullptr : overlay.c_str());
+
+        ImGui::BeginDisabled(!snapshot.running || snapshot.cancelRequested);
+        if (ImGui::Button(snapshot.cancelRequested ? "Cancel Requested" : "Cancel", ImVec2(130.0f, 0.0f)))
+        {
+            if (App::IsDescriptorResourceLinksLoading(app))
+            {
+                App::RequestDescriptorResourceLinkCancel(app);
+            }
+            else
+            {
+                App::RequestProgressJobCancel(app);
+            }
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (!snapshot.running && ImGui::Button("Close", ImVec2(100.0f, 0.0f)))
+        {
+            open = false;
+        }
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Progress Log");
+        if (ImGui::BeginTable("ProgressJobLogs", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0.0f, 0.0f)))
+        {
+            ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+            ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, 82.0f);
+            ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+            for (const LogEntry& entry : snapshot.logs)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(entry.time.c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextColored(LevelColor(entry.level), "%s", LevelName(entry.level));
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextWrapped("%s", entry.message.c_str());
+            }
+            ImGui::EndTable();
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(app.progressJob.mutex);
+            app.progressJob.windowOpen = open || snapshot.running;
+        }
+        ImGui::End();
+    }
+
     void DrawSettingsWindow(AppState& app)
     {
         if (!app.settingsWindowOpen)
@@ -1572,5 +1657,6 @@ namespace DagorAssetsExtractor::UI
         DrawSettingsWindow(app);
         DrawAboutWindow(app);
         DrawFirstRunModal(app);
+        DrawProgressJobWindow(app);
     }
 }

@@ -186,6 +186,58 @@ namespace DagorAssetsExtractor::App
         }
     }
 
+    void AddProgressJobLog(AppState& app, LogLevel level, std::string message)
+    {
+        std::lock_guard<std::mutex> lock(app.progressJob.mutex);
+        app.progressJob.logs.push_back(LogEntry{ NowString(), level, std::move(message) });
+        if (app.progressJob.logs.size() > 200)
+        {
+            app.progressJob.logs.erase(app.progressJob.logs.begin(), app.progressJob.logs.begin() + 50);
+        }
+    }
+
+    void BeginProgressJob(AppState& app, std::string title, std::string status, uint64_t total)
+    {
+        {
+            std::lock_guard<std::mutex> lock(app.progressJob.mutex);
+            app.progressJob.title = std::move(title);
+            app.progressJob.status = std::move(status);
+            app.progressJob.currentItem.clear();
+            app.progressJob.current = 0;
+            app.progressJob.total = total;
+            app.progressJob.logs.clear();
+            app.progressJob.windowOpen = true;
+        }
+
+        app.progressJob.cancelRequested.store(false);
+        app.progressJob.running.store(true);
+    }
+
+    void UpdateProgressJob(AppState& app, uint64_t current, uint64_t total, std::string status, std::string item)
+    {
+        std::lock_guard<std::mutex> lock(app.progressJob.mutex);
+        app.progressJob.current = current;
+        app.progressJob.total = total;
+        app.progressJob.status = std::move(status);
+        app.progressJob.currentItem = std::move(item);
+    }
+
+    void EndProgressJob(AppState& app, std::string finalStatus)
+    {
+        {
+            std::lock_guard<std::mutex> lock(app.progressJob.mutex);
+            app.progressJob.status = std::move(finalStatus);
+            app.progressJob.currentItem.clear();
+            if (app.progressJob.total > 0)
+            {
+                app.progressJob.current = app.progressJob.total;
+            }
+        }
+
+        app.progressJob.running.store(false);
+        app.progressJob.cancelRequested.store(false);
+    }
+
     std::shared_ptr<const std::vector<ResourceRecord>> SnapshotRecords(ScanState& scan)
     {
         std::lock_guard<std::mutex> lock(scan.mutex);
@@ -382,9 +434,15 @@ namespace DagorAssetsExtractor::App
             std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
             app.descriptorLinks.loading = false;
             app.descriptorLinks.status = "Not built";
+            app.descriptorLinks.cancelRequested.store(false);
             app.descriptorLinks.loadingRecords.reset();
             app.descriptorLinks.loadingBlkLinks.reset();
             app.descriptorLinks.links.reset();
+        }
+
+        if (app.progressJob.running.load())
+        {
+            app.progressJob.cancelRequested.store(true);
         }
     }
 
@@ -1392,6 +1450,7 @@ namespace DagorAssetsExtractor::App
                     app.descriptorLinks.links.reset();
                     app.descriptorLinks.loadingRecords.reset();
                     app.descriptorLinks.loadingBlkLinks.reset();
+                    app.descriptorLinks.cancelRequested.store(false);
                     app.descriptorLinks.loading = false;
                 }
             }
@@ -1441,21 +1500,84 @@ namespace DagorAssetsExtractor::App
             std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
             if (app.descriptorLinks.loading)
             {
+                AddLog(app, LogLevel::Info, "Descriptor relationship build is already running.");
                 return;
             }
 
             app.descriptorLinks.loading = true;
             app.descriptorLinks.status = "Building descriptor relationships...";
+            app.descriptorLinks.cancelRequested.store(false);
             app.descriptorLinks.loadingRecords = records;
             app.descriptorLinks.loadingBlkLinks = blkLinks;
         }
 
+        BeginProgressJob(app, "Descriptor Resource Links", "Starting descriptor relationship build", records->size());
+        AddProgressJobLog(app, LogLevel::Info, "Preparing descriptor, GRP, and DXP metadata indexes.");
+        AddLog(app,
+            LogLevel::Info,
+            "Building descriptor relationships: records=" + std::to_string(records->size()) +
+            ", blkLinks=" + (blkLinks ? std::to_string(blkLinks->size()) : std::string("not built")) +
+            ", using universal metadata indexes.");
+
         app.backgroundJobs.Start("DescriptorResourceLinks", [&app, records, blkLinks]() {
             try
             {
-                auto result = AssetIndex::BuildDescriptorResourceLinks(
-                    *records,
-                    blkLinks ? blkLinks.get() : nullptr);
+                std::string lastProgressStage;
+                uint64_t lastLogCurrent = 0;
+
+                AssetIndex::DescriptorResourceLinkBuildOptions options;
+                options.blkLinks = blkLinks ? blkLinks.get() : nullptr;
+                options.progress = [&app, records, &lastProgressStage, &lastLogCurrent](const AssetIndex::DescriptorResourceLinkProgress& progress) {
+                    UpdateProgressJob(
+                        app,
+                        static_cast<uint64_t>(progress.current),
+                        static_cast<uint64_t>(progress.total),
+                        progress.stage,
+                        progress.item);
+
+                    {
+                        std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
+                        if (app.descriptorLinks.loadingRecords == records)
+                        {
+                            std::ostringstream status;
+                            status << progress.stage;
+                            if (progress.total > 0)
+                            {
+                                status << " " << progress.current << '/' << progress.total;
+                            }
+                            app.descriptorLinks.status = status.str();
+                        }
+                    }
+
+                    if (progress.stage != lastProgressStage ||
+                        progress.current == progress.total ||
+                        progress.current >= lastLogCurrent + 250)
+                    {
+                        std::ostringstream line;
+                        line << progress.stage;
+                        if (!progress.item.empty())
+                        {
+                            line << ": " << progress.item;
+                        }
+                        if (progress.total > 0)
+                        {
+                            line << " [" << progress.current << '/' << progress.total << ']';
+                        }
+                        line << " links=" << progress.linksBuilt
+                             << " descriptors=" << progress.descriptorFilesParsed
+                             << " grpPacks=" << progress.grpPacksParsed
+                             << " dxpPacks=" << progress.dxpPacksParsed;
+                        AddProgressJobLog(app, LogLevel::Info, line.str());
+                        AddLog(app, LogLevel::Info, "Descriptor link progress: " + line.str());
+                        lastProgressStage = progress.stage;
+                        lastLogCurrent = static_cast<uint64_t>(progress.current);
+                    }
+
+                    return !app.descriptorLinks.cancelRequested.load() &&
+                           !app.progressJob.cancelRequested.load();
+                };
+
+                auto result = AssetIndex::BuildDescriptorResourceLinks(*records, options);
 
                 const size_t warningCount = result.warnings.size();
                 const size_t parseErrors = result.parseErrors;
@@ -1466,9 +1588,16 @@ namespace DagorAssetsExtractor::App
                 const auto links = std::make_shared<const std::vector<AssetIndex::DescriptorResourceLink>>(std::move(result.links));
 
                 std::ostringstream status;
-                status << "Built " << links->size()
-                       << " descriptor links from " << descriptorFilesParsed
-                       << " descriptor file" << (descriptorFilesParsed == 1 ? "" : "s");
+                if (result.canceled)
+                {
+                    status << "Canceled after building " << links->size() << " descriptor links";
+                }
+                else
+                {
+                    status << "Built " << links->size()
+                           << " descriptor links from " << descriptorFilesParsed
+                           << " descriptor file" << (descriptorFilesParsed == 1 ? "" : "s");
+                }
                 if (descriptorFilesSkipped > 0)
                 {
                     status << ", skipped " << descriptorFilesSkipped;
@@ -1494,16 +1623,24 @@ namespace DagorAssetsExtractor::App
                     app.descriptorLinks.loading = false;
                     app.descriptorLinks.loadingRecords.reset();
                     app.descriptorLinks.loadingBlkLinks.reset();
+                    app.descriptorLinks.cancelRequested.store(false);
                 }
 
                 std::ostringstream log;
-                log << "Descriptor relationships built: " << links->size()
-                    << " resources, " << grpPacksParsed << " GRP packs parsed, "
-                    << dxpPacksParsed << " DXP packs parsed.";
-                AddLog(app, warningCount > 0 || parseErrors > 0 ? LogLevel::Warning : LogLevel::Info, log.str());
+                log << (result.canceled ? "Descriptor relationship build canceled: " : "Descriptor relationships built: ")
+                    << links->size() << " resources, "
+                    << grpPacksParsed << " GRP packs indexed, "
+                    << dxpPacksParsed << " DXP packs indexed.";
+                const LogLevel finalLevel = result.canceled
+                    ? LogLevel::Warning
+                    : (warningCount > 0 || parseErrors > 0 ? LogLevel::Warning : LogLevel::Info);
+                AddProgressJobLog(app, finalLevel, log.str());
+                AddLog(app, finalLevel, log.str());
+                EndProgressJob(app, status.str());
 
                 for (size_t i = 0; i < std::min<size_t>(warningCount, 5); ++i)
                 {
+                    AddProgressJobLog(app, LogLevel::Warning, result.warnings[i]);
                     AddLog(app, LogLevel::Warning, result.warnings[i]);
                 }
             }
@@ -1519,6 +1656,10 @@ namespace DagorAssetsExtractor::App
                 app.descriptorLinks.loading = false;
                 app.descriptorLinks.loadingRecords.reset();
                 app.descriptorLinks.loadingBlkLinks.reset();
+                app.descriptorLinks.cancelRequested.store(false);
+                AddProgressJobLog(app, LogLevel::Error, "Descriptor relationship build failed: " + std::string(e.what()));
+                EndProgressJob(app, "Failed: " + std::string(e.what()));
+                AddLog(app, LogLevel::Error, "Descriptor relationship build failed: " + std::string(e.what()));
             }
         });
     }
@@ -1539,6 +1680,36 @@ namespace DagorAssetsExtractor::App
     {
         std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
         return app.descriptorLinks.loading;
+    }
+
+    void RequestDescriptorResourceLinkCancel(AppState& app)
+    {
+        app.descriptorLinks.cancelRequested.store(true);
+        app.progressJob.cancelRequested.store(true);
+        AddProgressJobLog(app, LogLevel::Warning, "Cancel requested by user.");
+        AddLog(app, LogLevel::Warning, "Descriptor relationship build cancel requested.");
+    }
+
+    ProgressJobSnapshot SnapshotProgressJob(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.progressJob.mutex);
+        ProgressJobSnapshot snapshot;
+        snapshot.running = app.progressJob.running.load();
+        snapshot.cancelRequested = app.progressJob.cancelRequested.load();
+        snapshot.windowOpen = app.progressJob.windowOpen;
+        snapshot.title = app.progressJob.title;
+        snapshot.status = app.progressJob.status;
+        snapshot.currentItem = app.progressJob.currentItem;
+        snapshot.current = app.progressJob.current;
+        snapshot.total = app.progressJob.total;
+        snapshot.logs = app.progressJob.logs;
+        return snapshot;
+    }
+
+    void RequestProgressJobCancel(AppState& app)
+    {
+        app.progressJob.cancelRequested.store(true);
+        AddProgressJobLog(app, LogLevel::Warning, "Cancel requested by user.");
     }
 
     void JoinFinishedBackgroundJobs(AppState& app)

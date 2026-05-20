@@ -95,9 +95,37 @@ namespace DagorAssetsExtractor::App
         std::mutex mutex;
         bool loading = false;
         std::string status = "Not built";
+        std::atomic_bool cancelRequested = false;
         std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> loadingRecords;
         std::shared_ptr<const std::vector<AssetIndex::BlkResourceLink>> loadingBlkLinks;
         std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> links;
+    };
+
+    struct ProgressJobSnapshot
+    {
+        bool running = false;
+        bool cancelRequested = false;
+        bool windowOpen = false;
+        std::string title;
+        std::string status;
+        std::string currentItem;
+        uint64_t current = 0;
+        uint64_t total = 0;
+        std::vector<LogEntry> logs;
+    };
+
+    struct ProgressJobState
+    {
+        std::mutex mutex;
+        std::atomic_bool running = false;
+        std::atomic_bool cancelRequested = false;
+        bool windowOpen = false;
+        std::string title;
+        std::string status;
+        std::string currentItem;
+        uint64_t current = 0;
+        uint64_t total = 0;
+        std::vector<LogEntry> logs;
     };
 
     struct AppState
@@ -141,6 +169,7 @@ namespace DagorAssetsExtractor::App
         BlkPreviewState blkPreview;
         BlkResourceLinkState blkLinks;
         DescriptorResourceLinkState descriptorLinks;
+        ProgressJobState progressJob;
         Jobs::JobSystem backgroundJobs;
     };
 
@@ -179,6 +208,9 @@ namespace DagorAssetsExtractor::App
     std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> SnapshotDescriptorResourceLinks(AppState& app);
     std::string GetDescriptorResourceLinkStatus(AppState& app);
     bool IsDescriptorResourceLinksLoading(AppState& app);
+    void RequestDescriptorResourceLinkCancel(AppState& app);
+    ProgressJobSnapshot SnapshotProgressJob(AppState& app);
+    void RequestProgressJobCancel(AppState& app);
     void JoinFinishedBackgroundJobs(AppState& app);
     void WaitForBackgroundJobs(AppState& app);
 }

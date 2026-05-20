@@ -1298,7 +1298,7 @@ namespace
             "Descriptor link test should write synthetic descriptor");
         ok &= Expect(WriteBinaryFile(grpPath, MakeSyntheticModernGrpPack("sample_tank", 0x77F8232Fu, "RIND")),
             "Descriptor link test should write synthetic GRP");
-        ok &= Expect(WriteBinaryFile(dxpPath, MakeSyntheticDxpPack({ "body_tex", "body_n" })),
+        ok &= Expect(WriteBinaryFile(dxpPath, MakeSyntheticDxpPack({ "body_tex$hq*", "body_n$hq*" })),
             "Descriptor link test should write synthetic DXP");
 
         {
@@ -1349,14 +1349,26 @@ namespace
                 ok &= Expect(textureLink.textureIndex == 1, "Descriptor texture link should preserve texture slot index");
                 ok &= Expect(textureLink.textureName == "body_n", "Descriptor texture link should resolve texture index to name");
                 ok &= Expect(textureLink.matchedDxpPath.has_value(), "Descriptor texture link should match DXP pack");
-                ok &= Expect(textureLink.matchedDxpEntryName.has_value() && *textureLink.matchedDxpEntryName == "body_n",
-                    "Descriptor texture link should match DXP entry name");
+                ok &= Expect(textureLink.matchedDxpEntryName.has_value() && *textureLink.matchedDxpEntryName == "body_n$hq*",
+                    "Descriptor texture link should match qualified DXP entry name");
                 if (textureLink.matchedDxpPath)
                 {
                     ok &= Expect(textureLink.matchedDxpPath->filename() == "sample_textures.dxp.bin",
                         "Descriptor texture link should prefer BLK-linked DXP pack");
                 }
             }
+
+            size_t progressCalls = 0;
+            AssetIndex::DescriptorResourceLinkBuildOptions options;
+            options.blkLinks = &blkLinks.links;
+            options.progress = [&progressCalls](const AssetIndex::DescriptorResourceLinkProgress&) {
+                ++progressCalls;
+                return true;
+            };
+            const AssetIndex::DescriptorResourceLinkBuildResult progressLinks =
+                AssetIndex::BuildDescriptorResourceLinks(records, options);
+            ok &= Expect(progressLinks.links.size() == 1, "Universal descriptor linker should find one model link");
+            ok &= Expect(progressCalls > 0, "Universal descriptor linker should report progress");
         }
 
         fs::remove_all(tempDir, ec);
@@ -1388,7 +1400,7 @@ namespace
             "Non-static descriptor link test should write synthetic descriptor");
         ok &= Expect(WriteBinaryFile(grpPath, MakeSyntheticModernGrpPack("sample_tank", 0x40C586F9u, "A2D!")),
             "Non-static descriptor link test should write synthetic GRP");
-        ok &= Expect(WriteBinaryFile(dxpPath, MakeSyntheticDxpPack({ "body_tex", "body_n" })),
+        ok &= Expect(WriteBinaryFile(dxpPath, MakeSyntheticDxpPack({ "body_tex$hq*", "body_n$hq*" })),
             "Non-static descriptor link test should write synthetic DXP");
 
         {
