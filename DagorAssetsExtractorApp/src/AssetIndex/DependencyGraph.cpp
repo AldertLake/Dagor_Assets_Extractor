@@ -7,6 +7,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -22,6 +23,8 @@ namespace DagorAssetsExtractor::AssetIndex
     namespace
     {
         constexpr size_t MaxWarnings = 12;
+        constexpr int DescriptorLinkerVersion = 4;
+        constexpr int DescriptorLinkCacheVersion = 1;
 
         std::string Trim(std::string value)
         {
@@ -268,6 +271,8 @@ namespace DagorAssetsExtractor::AssetIndex
             std::vector<fs::path> dxpPaths;
         };
 
+        int CommonPathScore(const fs::path& left, const fs::path& right);
+
         std::vector<DescriptorPackGroup> BuildDescriptorPackGroups(const std::vector<BlkResourceLink>& links)
         {
             std::vector<DescriptorPackGroup> groups;
@@ -301,6 +306,133 @@ namespace DagorAssetsExtractor::AssetIndex
             }
 
             return groups;
+        }
+
+        const ResourceRecord* FindFocusRecord(
+            const std::vector<ResourceRecord>& records,
+            const std::optional<fs::path>& focusPath)
+        {
+            if (!focusPath)
+            {
+                return nullptr;
+            }
+
+            for (const ResourceRecord& record : records)
+            {
+                if (SamePath(record.path, *focusPath))
+                {
+                    return &record;
+                }
+            }
+
+            return nullptr;
+        }
+
+        bool IsRecordRelatedToFocus(const ResourceRecord& record, const ResourceRecord& focus)
+        {
+            if (SamePath(record.path, focus.path))
+            {
+                return true;
+            }
+
+            if (IsSameDirectory(record.path, focus.path))
+            {
+                return true;
+            }
+
+            const std::string focusStem = PackStemKey(focus.path);
+            const std::string recordStem = PackStemKey(record.path);
+            if (IsNameRelatedToPackStem(recordStem, focusStem))
+            {
+                return true;
+            }
+
+            return CommonPathScore(record.path, focus.path) >= 45;
+        }
+
+        bool ShouldIncludeDescriptorForFocus(const ResourceRecord& record, const ResourceRecord* focus)
+        {
+            if (focus == nullptr)
+            {
+                return true;
+            }
+
+            if (focus->type == AssetType::Descriptor)
+            {
+                return SamePath(record.path, focus->path);
+            }
+
+            // For selected GRP/DXP packs, descriptors are the only source that
+            // can tell us which resource owns that pack, so keep descriptor pass global.
+            return true;
+        }
+
+        bool ShouldIncludeGrpForFocus(const ResourceRecord& record, const ResourceRecord* focus)
+        {
+            if (focus == nullptr)
+            {
+                return true;
+            }
+
+            if (focus->type == AssetType::Grp)
+            {
+                return SamePath(record.path, focus->path);
+            }
+            if (focus->type == AssetType::Descriptor || focus->type == AssetType::Dxp)
+            {
+                return IsRecordRelatedToFocus(record, *focus);
+            }
+
+            return true;
+        }
+
+        bool ShouldIncludeDxpForFocus(const ResourceRecord& record, const ResourceRecord* focus)
+        {
+            if (focus == nullptr)
+            {
+                return true;
+            }
+
+            if (focus->type == AssetType::Dxp)
+            {
+                return SamePath(record.path, focus->path);
+            }
+            if (focus->type == AssetType::Descriptor || focus->type == AssetType::Grp)
+            {
+                return IsRecordRelatedToFocus(record, *focus);
+            }
+
+            return true;
+        }
+
+        bool LinkMatchesFocus(const DescriptorResourceLink& link, const ResourceRecord* focus)
+        {
+            if (focus == nullptr)
+            {
+                return true;
+            }
+
+            if (focus->type == AssetType::Descriptor)
+            {
+                return SamePath(link.descriptorPath, focus->path);
+            }
+            if (focus->type == AssetType::Grp)
+            {
+                return link.matchedGrpPath && SamePath(*link.matchedGrpPath, focus->path);
+            }
+            if (focus->type == AssetType::Dxp)
+            {
+                for (const DescriptorTextureLink& textureLink : link.textureLinks)
+                {
+                    if (textureLink.matchedDxpPath && SamePath(*textureLink.matchedDxpPath, focus->path))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            return true;
         }
 
         void AddWarning(DescriptorResourceLinkBuildResult& result, std::string warning)
@@ -949,6 +1081,88 @@ namespace DagorAssetsExtractor::AssetIndex
 
             return best;
         }
+
+        bool IsDescriptorCacheSourceType(AssetType type)
+        {
+            return type == AssetType::Descriptor ||
+                   type == AssetType::Grp ||
+                   type == AssetType::Dxp ||
+                   type == AssetType::Blk;
+        }
+
+        std::vector<ResourceRecord> BuildDescriptorCacheSourceRecords(const std::vector<ResourceRecord>& records)
+        {
+            std::vector<ResourceRecord> sources;
+            for (const ResourceRecord& record : records)
+            {
+                if (IsDescriptorCacheSourceType(record.type))
+                {
+                    sources.push_back(record);
+                }
+            }
+
+            std::sort(sources.begin(), sources.end(), [](const ResourceRecord& left, const ResourceRecord& right) {
+                const int leftType = static_cast<int>(left.type);
+                const int rightType = static_cast<int>(right.type);
+                if (leftType != rightType)
+                {
+                    return leftType < rightType;
+                }
+                return PathKey(left.path) < PathKey(right.path);
+            });
+            return sources;
+        }
+
+        bool SameDescriptorCacheSources(
+            const std::vector<ResourceRecord>& left,
+            const std::vector<ResourceRecord>& right)
+        {
+            if (left.size() != right.size())
+            {
+                return false;
+            }
+
+            for (size_t i = 0; i < left.size(); ++i)
+            {
+                if (!SamePath(left[i].path, right[i].path) ||
+                    left[i].type != right[i].type ||
+                    left[i].sizeBytes != right[i].sizeBytes ||
+                    left[i].lastWriteTicks != right[i].lastWriteTicks)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool ReadQuotedPath(std::stringstream& stream, fs::path& path)
+        {
+            std::string value;
+            if (!(stream >> std::quoted(value)))
+            {
+                return false;
+            }
+
+            path = Platform::Utf8ToPath(value);
+            return true;
+        }
+
+        void WriteOptionalPath(std::ostream& stream, std::string_view tag, const std::optional<fs::path>& path)
+        {
+            if (path)
+            {
+                stream << tag << ' ' << std::quoted(Platform::PathToUtf8(*path)) << '\n';
+            }
+        }
+
+        void WriteOptionalString(std::ostream& stream, std::string_view tag, const std::optional<std::string>& value)
+        {
+            if (value)
+            {
+                stream << tag << ' ' << std::quoted(*value) << '\n';
+            }
+        }
     }
 
     DescriptorResourceLinkBuildResult BuildDescriptorResourceLinks(
@@ -975,6 +1189,8 @@ namespace DagorAssetsExtractor::AssetIndex
 
         const std::vector<BlkResourceLink>* blkLinks = options.blkLinks ? options.blkLinks : &builtBlkLinks;
         const std::vector<DescriptorPackGroup> packGroups = BuildDescriptorPackGroups(*blkLinks);
+        (void)packGroups;
+        const ResourceRecord* focusRecord = FindFocusRecord(records, options.focusPath);
 
         std::vector<const ResourceRecord*> descriptorRecords;
         std::vector<const ResourceRecord*> grpRecords;
@@ -987,15 +1203,24 @@ namespace DagorAssetsExtractor::AssetIndex
         {
             if (record.type == AssetType::Descriptor)
             {
-                descriptorRecords.push_back(&record);
+                if (ShouldIncludeDescriptorForFocus(record, focusRecord))
+                {
+                    descriptorRecords.push_back(&record);
+                }
             }
             else if (record.type == AssetType::Grp)
             {
-                grpRecords.push_back(&record);
+                if (ShouldIncludeGrpForFocus(record, focusRecord))
+                {
+                    grpRecords.push_back(&record);
+                }
             }
             else if (record.type == AssetType::Dxp)
             {
-                dxpRecords.push_back(&record);
+                if (ShouldIncludeDxpForFocus(record, focusRecord))
+                {
+                    dxpRecords.push_back(&record);
+                }
             }
         }
 
@@ -1204,6 +1429,11 @@ namespace DagorAssetsExtractor::AssetIndex
                 link.textureLinks.push_back(std::move(textureLink));
             }
 
+            if (!LinkMatchesFocus(link, focusRecord))
+            {
+                continue;
+            }
+
             result.links.push_back(std::move(link));
             if (result.links.size() % 250 == 0)
             {
@@ -1243,5 +1473,391 @@ namespace DagorAssetsExtractor::AssetIndex
         options.maxDescriptorBytes = maxDescriptorBytes;
         options.maxPackBytes = maxPackBytes;
         return BuildDescriptorResourceLinks(records, options);
+    }
+
+    bool SaveDescriptorResourceLinkCache(
+        const fs::path& cachePath,
+        const fs::path& gameRoot,
+        const std::vector<ResourceRecord>& records,
+        const std::vector<DescriptorResourceLink>& links,
+        const DescriptorResourceLinkBuildOptions& options,
+        std::string& error)
+    {
+        std::error_code ec;
+        fs::create_directories(cachePath.parent_path(), ec);
+        if (ec)
+        {
+            error = "Could not create descriptor-link cache folder: " + ec.message();
+            return false;
+        }
+
+        std::ofstream file(cachePath, std::ios::trunc);
+        if (!file)
+        {
+            error = "Could not open descriptor-link cache for writing.";
+            return false;
+        }
+
+        file << "DagorAssetsExtractorDescriptorLinksCache " << DescriptorLinkCacheVersion << '\n';
+        file << "root " << std::quoted(Platform::PathToUtf8(gameRoot)) << '\n';
+        file << "linkerVersion " << DescriptorLinkerVersion << '\n';
+        file << "maxDescriptorBytes " << options.maxDescriptorBytes << '\n';
+        file << "maxPackBytes " << options.maxPackBytes << '\n';
+
+        const std::vector<ResourceRecord> sources = BuildDescriptorCacheSourceRecords(records);
+        file << "sourceCount " << sources.size() << '\n';
+        for (const ResourceRecord& source : sources)
+        {
+            file << "source "
+                 << std::quoted(Platform::PathToUtf8(source.path)) << ' '
+                 << AssetTypeCacheName(source.type) << ' '
+                 << source.sizeBytes << ' '
+                 << source.lastWriteTicks << '\n';
+        }
+
+        file << "linkCount " << links.size() << '\n';
+        for (const DescriptorResourceLink& link : links)
+        {
+            file << "beginLink\n";
+            file << "descriptorPath " << std::quoted(Platform::PathToUtf8(link.descriptorPath)) << '\n';
+            file << "resourceName " << std::quoted(link.resourceName) << '\n';
+            file << "resId " << link.resId << '\n';
+            for (const std::string& textureName : link.textureNames)
+            {
+                file << "textureName " << std::quoted(textureName) << '\n';
+            }
+            for (const std::string& materialName : link.materialNames)
+            {
+                file << "materialName " << std::quoted(materialName) << '\n';
+            }
+            for (const uint32_t materialTextureRef : link.materialTextureRefs)
+            {
+                file << "materialTextureRef " << materialTextureRef << '\n';
+            }
+            WriteOptionalPath(file, "matchedGrpPath", link.matchedGrpPath);
+            WriteOptionalString(file, "matchedGrpEntryName", link.matchedGrpEntryName);
+            file << "matchedGrpClassId " << link.matchedGrpClassId << '\n';
+            file << "matchedGrpClassName " << std::quoted(link.matchedGrpClassName) << '\n';
+            file << "matchedGrpCanExportStatic " << (link.matchedGrpEntryCanExportStaticModel ? 1 : 0) << '\n';
+            file << "matchedGrpCanExportSkinned " << (link.matchedGrpEntryCanExportSkinnedModel ? 1 : 0) << '\n';
+
+            for (const DescriptorTextureLink& textureLink : link.textureLinks)
+            {
+                file << "textureLink "
+                     << textureLink.textureIndex << ' '
+                     << std::quoted(textureLink.textureName) << ' '
+                     << std::quoted(textureLink.matchedDxpPath ? Platform::PathToUtf8(*textureLink.matchedDxpPath) : std::string()) << ' '
+                     << std::quoted(textureLink.matchedDxpEntryName.value_or(std::string())) << '\n';
+            }
+
+            file << "endLink\n";
+        }
+
+        if (!file)
+        {
+            error = "Could not finish writing descriptor-link cache.";
+            return false;
+        }
+
+        return true;
+    }
+
+    DescriptorResourceLinkCacheLoadResult LoadDescriptorResourceLinkCache(
+        const fs::path& cachePath,
+        const fs::path& gameRoot,
+        const std::vector<ResourceRecord>& records,
+        const DescriptorResourceLinkBuildOptions& options)
+    {
+        DescriptorResourceLinkCacheLoadResult result;
+        std::ifstream file(cachePath);
+        if (!file)
+        {
+            result.message = "No descriptor-link cache file found.";
+            return result;
+        }
+
+        result.fileFound = true;
+
+        std::string magic;
+        int cacheVersion = 0;
+        if (!(file >> magic >> cacheVersion) ||
+            magic != "DagorAssetsExtractorDescriptorLinksCache" ||
+            cacheVersion != DescriptorLinkCacheVersion)
+        {
+            result.message = "Descriptor-link cache has an unsupported format.";
+            return result;
+        }
+
+        fs::path cachedRoot;
+        int cachedLinkerVersion = 0;
+        uintmax_t cachedMaxDescriptorBytes = 0;
+        uintmax_t cachedMaxPackBytes = 0;
+        size_t expectedSourceCount = 0;
+        size_t expectedLinkCount = 0;
+        std::vector<ResourceRecord> cachedSources;
+        std::vector<DescriptorResourceLink> loadedLinks;
+
+        std::string line;
+        while (std::getline(file, line))
+        {
+            if (line.empty())
+            {
+                continue;
+            }
+
+            std::stringstream stream(line);
+            std::string tag;
+            if (!(stream >> tag))
+            {
+                continue;
+            }
+
+            if (tag == "root")
+            {
+                if (!ReadQuotedPath(stream, cachedRoot))
+                {
+                    result.message = "Descriptor-link cache root is malformed.";
+                    return result;
+                }
+            }
+            else if (tag == "linkerVersion")
+            {
+                stream >> cachedLinkerVersion;
+            }
+            else if (tag == "maxDescriptorBytes")
+            {
+                stream >> cachedMaxDescriptorBytes;
+            }
+            else if (tag == "maxPackBytes")
+            {
+                stream >> cachedMaxPackBytes;
+            }
+            else if (tag == "sourceCount")
+            {
+                stream >> expectedSourceCount;
+            }
+            else if (tag == "source")
+            {
+                std::string pathUtf8;
+                std::string typeName;
+                ResourceRecord source;
+                if (!(stream >> std::quoted(pathUtf8) >> typeName >> source.sizeBytes >> source.lastWriteTicks))
+                {
+                    result.message = "Descriptor-link cache source row is malformed.";
+                    return result;
+                }
+
+                const std::optional<AssetType> type = ParseAssetType(typeName);
+                if (!type)
+                {
+                    result.message = "Descriptor-link cache source row has an unknown type.";
+                    return result;
+                }
+
+                source.path = Platform::Utf8ToPath(pathUtf8);
+                source.type = *type;
+                cachedSources.push_back(std::move(source));
+            }
+            else if (tag == "linkCount")
+            {
+                stream >> expectedLinkCount;
+            }
+            else if (tag == "beginLink")
+            {
+                DescriptorResourceLink link;
+                bool ended = false;
+                while (std::getline(file, line))
+                {
+                    if (line.empty())
+                    {
+                        continue;
+                    }
+
+                    std::stringstream linkStream(line);
+                    std::string linkTag;
+                    if (!(linkStream >> linkTag))
+                    {
+                        continue;
+                    }
+
+                    if (linkTag == "endLink")
+                    {
+                        ended = true;
+                        break;
+                    }
+                    if (linkTag == "descriptorPath")
+                    {
+                        if (!ReadQuotedPath(linkStream, link.descriptorPath))
+                        {
+                            result.message = "Descriptor-link cache link descriptor path is malformed.";
+                            return result;
+                        }
+                    }
+                    else if (linkTag == "resourceName")
+                    {
+                        linkStream >> std::quoted(link.resourceName);
+                    }
+                    else if (linkTag == "resId")
+                    {
+                        linkStream >> link.resId;
+                    }
+                    else if (linkTag == "textureName")
+                    {
+                        std::string value;
+                        if (linkStream >> std::quoted(value))
+                        {
+                            link.textureNames.push_back(std::move(value));
+                        }
+                    }
+                    else if (linkTag == "materialName")
+                    {
+                        std::string value;
+                        if (linkStream >> std::quoted(value))
+                        {
+                            link.materialNames.push_back(std::move(value));
+                        }
+                    }
+                    else if (linkTag == "materialTextureRef")
+                    {
+                        uint32_t value = 0;
+                        if (linkStream >> value)
+                        {
+                            link.materialTextureRefs.push_back(value);
+                        }
+                    }
+                    else if (linkTag == "matchedGrpPath")
+                    {
+                        fs::path value;
+                        if (!ReadQuotedPath(linkStream, value))
+                        {
+                            result.message = "Descriptor-link cache matched GRP path is malformed.";
+                            return result;
+                        }
+                        link.matchedGrpPath = std::move(value);
+                    }
+                    else if (linkTag == "matchedGrpEntryName")
+                    {
+                        std::string value;
+                        if (linkStream >> std::quoted(value))
+                        {
+                            link.matchedGrpEntryName = std::move(value);
+                        }
+                    }
+                    else if (linkTag == "matchedGrpClassId")
+                    {
+                        linkStream >> link.matchedGrpClassId;
+                    }
+                    else if (linkTag == "matchedGrpClassName")
+                    {
+                        linkStream >> std::quoted(link.matchedGrpClassName);
+                    }
+                    else if (linkTag == "matchedGrpCanExportStatic")
+                    {
+                        int value = 0;
+                        linkStream >> value;
+                        link.matchedGrpEntryCanExportStaticModel = value != 0;
+                    }
+                    else if (linkTag == "matchedGrpCanExportSkinned")
+                    {
+                        int value = 0;
+                        linkStream >> value;
+                        link.matchedGrpEntryCanExportSkinnedModel = value != 0;
+                    }
+                    else if (linkTag == "textureLink")
+                    {
+                        DescriptorTextureLink textureLink;
+                        std::string textureName;
+                        std::string dxpPath;
+                        std::string dxpEntryName;
+                        if (!(linkStream >> textureLink.textureIndex >> std::quoted(textureName) >> std::quoted(dxpPath) >> std::quoted(dxpEntryName)))
+                        {
+                            result.message = "Descriptor-link cache texture link row is malformed.";
+                            return result;
+                        }
+
+                        textureLink.textureName = std::move(textureName);
+                        if (!dxpPath.empty())
+                        {
+                            textureLink.matchedDxpPath = Platform::Utf8ToPath(dxpPath);
+                        }
+                        if (!dxpEntryName.empty())
+                        {
+                            textureLink.matchedDxpEntryName = std::move(dxpEntryName);
+                        }
+                        link.textureLinks.push_back(std::move(textureLink));
+                    }
+                }
+
+                if (!ended)
+                {
+                    result.message = "Descriptor-link cache link block is truncated.";
+                    return result;
+                }
+                if (link.descriptorPath.empty() || link.resourceName.empty())
+                {
+                    result.message = "Descriptor-link cache link block is missing required fields.";
+                    return result;
+                }
+
+                loadedLinks.push_back(std::move(link));
+            }
+        }
+
+        if (cachedRoot.empty())
+        {
+            result.message = "Descriptor-link cache is missing its game root.";
+            return result;
+        }
+
+        result.rootMatched = SamePath(cachedRoot, gameRoot);
+        if (!result.rootMatched)
+        {
+            result.message = "Descriptor-link cache belongs to another game folder.";
+            return result;
+        }
+
+        result.optionsMatched =
+            cachedLinkerVersion == DescriptorLinkerVersion &&
+            cachedMaxDescriptorBytes == options.maxDescriptorBytes &&
+            cachedMaxPackBytes == options.maxPackBytes;
+        if (!result.optionsMatched)
+        {
+            result.message = "Descriptor-link cache was built by an older linker or incompatible limits.";
+            return result;
+        }
+
+        if (expectedSourceCount != cachedSources.size())
+        {
+            result.message = "Descriptor-link cache source table is truncated.";
+            return result;
+        }
+        if (expectedLinkCount != loadedLinks.size())
+        {
+            result.message = "Descriptor-link cache link table is truncated.";
+            return result;
+        }
+
+        const std::vector<ResourceRecord> expectedSources = BuildDescriptorCacheSourceRecords(records);
+        std::sort(cachedSources.begin(), cachedSources.end(), [](const ResourceRecord& left, const ResourceRecord& right) {
+            const int leftType = static_cast<int>(left.type);
+            const int rightType = static_cast<int>(right.type);
+            if (leftType != rightType)
+            {
+                return leftType < rightType;
+            }
+            return PathKey(left.path) < PathKey(right.path);
+        });
+
+        result.sourcesMatched = SameDescriptorCacheSources(cachedSources, expectedSources);
+        if (!result.sourcesMatched)
+        {
+            result.message = "Descriptor-link cache is stale because resource records changed.";
+            return result;
+        }
+
+        result.links = std::move(loadedLinks);
+        result.loaded = true;
+        result.message = "Loaded " + std::to_string(result.links.size()) + " cached descriptor links.";
+        return result;
     }
 }

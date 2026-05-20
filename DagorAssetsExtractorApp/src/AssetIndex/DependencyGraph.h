@@ -69,7 +69,19 @@ namespace DagorAssetsExtractor::AssetIndex
         const std::vector<BlkResourceLink>* blkLinks = nullptr;
         uintmax_t maxDescriptorBytes = 256 * 1024 * 1024;
         uintmax_t maxPackBytes = 256 * 1024 * 1024;
+        std::optional<std::filesystem::path> focusPath;
         DescriptorResourceLinkProgressCallback progress;
+    };
+
+    struct DescriptorResourceLinkCacheLoadResult
+    {
+        bool fileFound = false;
+        bool rootMatched = false;
+        bool optionsMatched = false;
+        bool sourcesMatched = false;
+        bool loaded = false;
+        std::string message;
+        std::vector<DescriptorResourceLink> links;
     };
 
     DescriptorResourceLinkBuildResult BuildDescriptorResourceLinks(
@@ -81,4 +93,18 @@ namespace DagorAssetsExtractor::AssetIndex
         const std::vector<BlkResourceLink>* blkLinks = nullptr,
         uintmax_t maxDescriptorBytes = 256 * 1024 * 1024,
         uintmax_t maxPackBytes = 256 * 1024 * 1024);
+
+    bool SaveDescriptorResourceLinkCache(
+        const std::filesystem::path& cachePath,
+        const std::filesystem::path& gameRoot,
+        const std::vector<ResourceRecord>& records,
+        const std::vector<DescriptorResourceLink>& links,
+        const DescriptorResourceLinkBuildOptions& options,
+        std::string& error);
+
+    DescriptorResourceLinkCacheLoadResult LoadDescriptorResourceLinkCache(
+        const std::filesystem::path& cachePath,
+        const std::filesystem::path& gameRoot,
+        const std::vector<ResourceRecord>& records,
+        const DescriptorResourceLinkBuildOptions& options);
 }

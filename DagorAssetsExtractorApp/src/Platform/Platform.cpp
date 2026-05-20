@@ -143,6 +143,16 @@ namespace DagorAssetsExtractor::Platform {
         return fs::current_path() / L"index-cache.txt";
     }
 
+    fs::path GetDescriptorLinksCachePath()
+    {
+        if (const auto appData = GetKnownFolderPathRoamingAppData())
+        {
+            return *appData / L"DagorAssetsExtractor" / L"descriptor-links-cache.txt";
+        }
+
+        return fs::current_path() / L"descriptor-links-cache.txt";
+    }
+
     fs::path GetDefaultExportRoot()
     {
         if (const auto documents = GetKnownFolderPathDocuments())

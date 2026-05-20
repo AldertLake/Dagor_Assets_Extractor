@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 #include <memory>
 
@@ -30,6 +32,7 @@ namespace DagorAssetsExtractor::App
         bool exportTexturesWithModels = true;
         bool preserveOriginalDDS = true;
         bool indexCacheEnabled = true;
+        size_t maxLoadedPackContents = 8;
         std::string lastOpenedPackFilters;
     };
 
@@ -99,6 +102,9 @@ namespace DagorAssetsExtractor::App
         std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> loadingRecords;
         std::shared_ptr<const std::vector<AssetIndex::BlkResourceLink>> loadingBlkLinks;
         std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> links;
+        bool globalLinks = false;
+        std::optional<std::filesystem::path> scopePath;
+        std::string cacheStatus = "Not loaded";
     };
 
     struct ProgressJobSnapshot
@@ -134,6 +140,7 @@ namespace DagorAssetsExtractor::App
         AppSettings settings;
         std::filesystem::path settingsPath;
         std::filesystem::path indexCachePath;
+        std::filesystem::path descriptorLinksCachePath;
         AssetIndex::ValidationResult validation;
         ScanState scan;
         std::mutex logMutex;
@@ -142,6 +149,7 @@ namespace DagorAssetsExtractor::App
         std::array<char, PathBufferSize> gameRootBuffer = {};
         std::array<char, PathBufferSize> exportRootBuffer = {};
         std::array<char, SearchBufferSize> searchBuffer = {};
+        std::array<char, SearchBufferSize> subAssetSearchBuffer = {};
         std::wstring selectedPath;
 
         bool firstRunPromptOpen = false;
@@ -162,6 +170,18 @@ namespace DagorAssetsExtractor::App
         std::string lastSearch;
         bool lastGroupByBlk = false;
         std::vector<size_t> filteredIndices;
+
+        std::wstring subAssetFilterPath;
+        std::string lastSubAssetSearch;
+        size_t lastSubAssetCount = 0;
+        std::vector<size_t> filteredSubAssetIndices;
+
+        std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> descriptorUiLinks;
+        std::wstring descriptorUiSelectedPath;
+        AssetIndex::AssetType descriptorUiSelectedType = AssetIndex::AssetType::Unknown;
+        std::vector<size_t> descriptorUiDescriptorMatches;
+        std::vector<size_t> descriptorUiGrpMatches;
+        std::vector<std::pair<size_t, size_t>> descriptorUiDxpMatches;
 
         // Lazy-loaded pack contents cache (sub-assets parsed on demand)
         AssetIndex::PackContentsCache packContentsCache;
@@ -205,8 +225,10 @@ namespace DagorAssetsExtractor::App
     std::string GetBlkResourceLinkStatus(AppState& app);
     bool IsBlkResourceLinksLoading(AppState& app);
     void RequestDescriptorResourceLinks(AppState& app, std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records);
+    void RequestDescriptorResourceLinksForSelected(AppState& app, std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records, AssetIndex::ResourceRecord selected);
     std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> SnapshotDescriptorResourceLinks(AppState& app);
     std::string GetDescriptorResourceLinkStatus(AppState& app);
+    bool HasGlobalDescriptorResourceLinks(AppState& app);
     bool IsDescriptorResourceLinksLoading(AppState& app);
     void RequestDescriptorResourceLinkCancel(AppState& app);
     ProgressJobSnapshot SnapshotProgressJob(AppState& app);

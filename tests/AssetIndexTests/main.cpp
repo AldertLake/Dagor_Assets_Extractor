@@ -1124,8 +1124,19 @@ namespace
 
         cache.Put(dxpPath, dxpContents);
         ok &= Expect(cache.Has(dxpPath), "PackContentsCache should report inserted DXP contents");
+        cache.Put(vromfsPath, vromfsContents);
+        ok &= Expect(cache.Size() == 2, "PackContentsCache should report retained entry count");
+        ok &= Expect(cache.ClearExcept(dxpPath) == 1, "PackContentsCache should clear every entry except the requested pack");
+        ok &= Expect(cache.Has(dxpPath), "PackContentsCache ClearExcept should keep requested pack");
+        ok &= Expect(!cache.Has(vromfsPath), "PackContentsCache ClearExcept should remove other packs");
+
+        cache.Put(vromfsPath, vromfsContents);
+        ok &= Expect(cache.TrimToLimit(1, vromfsPath) == 1, "PackContentsCache TrimToLimit should evict one old pack");
+        ok &= Expect(cache.Has(vromfsPath), "PackContentsCache TrimToLimit should keep requested pack");
+        ok &= Expect(!cache.Has(dxpPath), "PackContentsCache TrimToLimit should evict non-kept pack");
+
         cache.Clear();
-        ok &= Expect(!cache.Has(dxpPath), "PackContentsCache should clear all entries");
+        ok &= Expect(cache.Size() == 0, "PackContentsCache should clear all entries");
 
         return ok;
     }
@@ -1369,6 +1380,40 @@ namespace
                 AssetIndex::BuildDescriptorResourceLinks(records, options);
             ok &= Expect(progressLinks.links.size() == 1, "Universal descriptor linker should find one model link");
             ok &= Expect(progressCalls > 0, "Universal descriptor linker should report progress");
+
+            const fs::path descriptorCachePath = tempDir / "descriptor-links-cache.txt";
+            std::string descriptorCacheError;
+            ok &= Expect(
+                AssetIndex::SaveDescriptorResourceLinkCache(
+                    descriptorCachePath,
+                    tempDir,
+                    records,
+                    progressLinks.links,
+                    options,
+                    descriptorCacheError),
+                "Descriptor-link cache save should succeed");
+            if (!descriptorCacheError.empty())
+            {
+                std::cerr << "Descriptor-link cache save detail: " << descriptorCacheError << '\n';
+            }
+
+            const AssetIndex::DescriptorResourceLinkCacheLoadResult cachedLinks =
+                AssetIndex::LoadDescriptorResourceLinkCache(descriptorCachePath, tempDir, records, options);
+            ok &= Expect(cachedLinks.loaded, "Descriptor-link cache load should restore fresh links");
+            ok &= Expect(cachedLinks.links.size() == progressLinks.links.size(), "Descriptor-link cache load should preserve link count");
+            if (!cachedLinks.links.empty())
+            {
+                ok &= Expect(cachedLinks.links[0].resourceName == "sample_tank", "Descriptor-link cache should preserve resource names");
+                ok &= Expect(cachedLinks.links[0].matchedGrpPath.has_value(), "Descriptor-link cache should preserve matched GRP path");
+                ok &= Expect(!cachedLinks.links[0].textureLinks.empty(), "Descriptor-link cache should preserve texture links");
+            }
+
+            std::vector<AssetIndex::ResourceRecord> staleRecords = records;
+            staleRecords[0].sizeBytes += 1;
+            const AssetIndex::DescriptorResourceLinkCacheLoadResult staleCache =
+                AssetIndex::LoadDescriptorResourceLinkCache(descriptorCachePath, tempDir, staleRecords, options);
+            ok &= Expect(!staleCache.loaded && staleCache.fileFound && staleCache.rootMatched,
+                "Descriptor-link cache should invalidate when source records change");
         }
 
         fs::remove_all(tempDir, ec);

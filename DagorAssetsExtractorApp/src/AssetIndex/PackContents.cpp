@@ -92,7 +92,8 @@ namespace DagorAssetsExtractor::AssetIndex
         const auto it = m_cache.find(key);
         if (it != m_cache.end())
         {
-            return it->second;
+            it->second.lastAccess = m_nextAccess++;
+            return it->second.contents;
         }
         return nullptr;
     }
@@ -101,7 +102,7 @@ namespace DagorAssetsExtractor::AssetIndex
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         const std::wstring key = packPath.lexically_normal().wstring();
-        m_cache[key] = std::move(contents);
+        m_cache[key] = CachedContents{ std::move(contents), m_nextAccess++ };
     }
 
     bool PackContentsCache::Has(const fs::path& packPath) const
@@ -116,6 +117,75 @@ namespace DagorAssetsExtractor::AssetIndex
         std::lock_guard<std::mutex> lock(m_mutex);
         const std::wstring key = packPath.lexically_normal().wstring();
         m_cache.erase(key);
+    }
+
+    size_t PackContentsCache::Size() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_cache.size();
+    }
+
+    size_t PackContentsCache::ClearExcept(const fs::path& keepPath)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::wstring keepKey = keepPath.lexically_normal().wstring();
+        size_t removed = 0;
+        for (auto it = m_cache.begin(); it != m_cache.end();)
+        {
+            if (it->first == keepKey)
+            {
+                it->second.lastAccess = m_nextAccess++;
+                ++it;
+                continue;
+            }
+
+            it = m_cache.erase(it);
+            ++removed;
+        }
+
+        return removed;
+    }
+
+    size_t PackContentsCache::TrimToLimit(size_t maxEntries, const fs::path& keepPath)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (maxEntries == 0 || m_cache.size() <= maxEntries)
+        {
+            return 0;
+        }
+
+        const std::wstring keepKey = keepPath.lexically_normal().wstring();
+        size_t removed = 0;
+        while (m_cache.size() > maxEntries)
+        {
+            auto oldest = m_cache.end();
+            for (auto it = m_cache.begin(); it != m_cache.end(); ++it)
+            {
+                if (it->first == keepKey)
+                {
+                    continue;
+                }
+                if (oldest == m_cache.end() || it->second.lastAccess < oldest->second.lastAccess)
+                {
+                    oldest = it;
+                }
+            }
+
+            if (oldest == m_cache.end())
+            {
+                break;
+            }
+
+            m_cache.erase(oldest);
+            ++removed;
+        }
+
+        if (const auto keep = m_cache.find(keepKey); keep != m_cache.end())
+        {
+            keep->second.lastAccess = m_nextAccess++;
+        }
+
+        return removed;
     }
 
     void PackContentsCache::Clear()

@@ -379,6 +379,76 @@ namespace DagorAssetsExtractor::UI
         return haystack.find(search) != std::string::npos;
     }
 
+    bool SubAssetPassesSearch(const AssetIndex::SubAssetRecord& entry, const std::string& search)
+    {
+        if (search.empty())
+        {
+            return true;
+        }
+
+        std::string haystack = entry.name + " " + entry.formatInfo + " " +
+            entry.texFormat + " " + entry.texCompression + " " + entry.skeletonRootName;
+        for (const std::string& textureName : entry.textureNames)
+        {
+            haystack += " " + textureName;
+        }
+        for (const std::string& materialName : entry.materialNames)
+        {
+            haystack += " " + materialName;
+        }
+
+        return AssetIndex::ToLowerAscii(std::move(haystack)).find(search) != std::string::npos;
+    }
+
+    void RebuildDescriptorUiMatches(
+        AppState& app,
+        const std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>>& links,
+        const ResourceRecord& selected)
+    {
+        if (app.descriptorUiLinks == links &&
+            app.descriptorUiSelectedPath == selected.path.wstring() &&
+            app.descriptorUiSelectedType == selected.type)
+        {
+            return;
+        }
+
+        app.descriptorUiLinks = links;
+        app.descriptorUiSelectedPath = selected.path.wstring();
+        app.descriptorUiSelectedType = selected.type;
+        app.descriptorUiDescriptorMatches.clear();
+        app.descriptorUiGrpMatches.clear();
+        app.descriptorUiDxpMatches.clear();
+
+        if (!links)
+        {
+            return;
+        }
+
+        for (size_t linkIndex = 0; linkIndex < links->size(); ++linkIndex)
+        {
+            const AssetIndex::DescriptorResourceLink& link = (*links)[linkIndex];
+            if (selected.type == AssetType::Descriptor && link.descriptorPath == selected.path)
+            {
+                app.descriptorUiDescriptorMatches.push_back(linkIndex);
+            }
+            else if (selected.type == AssetType::Grp && link.matchedGrpPath && *link.matchedGrpPath == selected.path)
+            {
+                app.descriptorUiGrpMatches.push_back(linkIndex);
+            }
+            else if (selected.type == AssetType::Dxp)
+            {
+                for (size_t textureIndex = 0; textureIndex < link.textureLinks.size(); ++textureIndex)
+                {
+                    const AssetIndex::DescriptorTextureLink& textureLink = link.textureLinks[textureIndex];
+                    if (textureLink.matchedDxpPath && *textureLink.matchedDxpPath == selected.path)
+                    {
+                        app.descriptorUiDxpMatches.push_back({ linkIndex, textureIndex });
+                    }
+                }
+            }
+        }
+    }
+
     void DrawLeftPanel(AppState& app, const std::vector<ResourceRecord>& records)
     {
         ImGui::TextUnformatted("Game Install");
@@ -700,12 +770,17 @@ namespace DagorAssetsExtractor::UI
     {
         const std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>> links = App::SnapshotDescriptorResourceLinks(app);
         const bool isLoading = App::IsDescriptorResourceLinksLoading(app);
+        const bool hasGlobalLinks = App::HasGlobalDescriptorResourceLinks(app);
 
         ImGui::TextUnformatted("Descriptor Resource Links");
-        ImGui::BeginDisabled(isLoading || !app.scan.completed.load());
-        if (ImGui::Button("Refresh Links##desc", ImVec2(110.0f, 0.0f)))
+        ImGui::BeginDisabled(isLoading || !app.scan.completed.load() || hasGlobalLinks);
+        if (ImGui::Button("Build Selected Links##desc", ImVec2(160.0f, 0.0f)))
         {
-            App::RequestDescriptorResourceLinks(app, App::SnapshotRecords(app.scan));
+            App::RequestDescriptorResourceLinksForSelected(app, App::SnapshotRecords(app.scan), selected);
+        }
+        if (hasGlobalLinks && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip("Descriptor links are already built globally.");
         }
         ImGui::EndDisabled();
 
@@ -717,33 +792,26 @@ namespace DagorAssetsExtractor::UI
 
         if (!links)
         {
-            ImGui::TextWrapped("Click Refresh Links to parse descriptor files and build relationship graphs.");
+            ImGui::TextWrapped("Build selected links for this asset, or use Tools > Rebuild Descriptor Relationships for a full global cache.");
             return;
         }
 
+        RebuildDescriptorUiMatches(app, links, selected);
+
         if (selected.type == AssetType::Descriptor)
         {
-            std::vector<const AssetIndex::DescriptorResourceLink*> descriptorMatches;
-            for (const auto& link : *links)
-            {
-                if (link.descriptorPath == selected.path)
-                {
-                    descriptorMatches.push_back(&link);
-                }
-            }
-
-            if (descriptorMatches.empty())
+            if (app.descriptorUiDescriptorMatches.empty())
             {
                 ImGui::TextWrapped("No relationships found for this descriptor.");
                 return;
             }
 
             const size_t resolvedGrpCount = static_cast<size_t>(std::count_if(
-                descriptorMatches.begin(),
-                descriptorMatches.end(),
-                [](const auto* link) { return link->matchedGrpPath.has_value(); }));
+                app.descriptorUiDescriptorMatches.begin(),
+                app.descriptorUiDescriptorMatches.end(),
+                [&](size_t linkIndex) { return (*links)[linkIndex].matchedGrpPath.has_value(); }));
 
-            ImGui::Text("Resources in this descriptor: %zu", descriptorMatches.size());
+            ImGui::Text("Resources in this descriptor: %zu", app.descriptorUiDescriptorMatches.size());
             ImGui::Text("Resolved GRP matches: %zu", resolvedGrpCount);
 
             ImGuiTableFlags resourceTableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
@@ -757,9 +825,9 @@ namespace DagorAssetsExtractor::UI
                 ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 120.0f);
                 ImGui::TableHeadersRow();
 
-                for (size_t rowIndex = 0; rowIndex < descriptorMatches.size(); ++rowIndex)
+                for (size_t rowIndex = 0; rowIndex < app.descriptorUiDescriptorMatches.size(); ++rowIndex)
                 {
-                    const AssetIndex::DescriptorResourceLink& link = *descriptorMatches[rowIndex];
+                    const AssetIndex::DescriptorResourceLink& link = (*links)[app.descriptorUiDescriptorMatches[rowIndex]];
                     const size_t resolvedTextureCount = static_cast<size_t>(std::count_if(
                         link.textureLinks.begin(),
                         link.textureLinks.end(),
@@ -845,7 +913,7 @@ namespace DagorAssetsExtractor::UI
                 ImGui::EndTable();
             }
 
-            const AssetIndex::DescriptorResourceLink& primaryLink = *descriptorMatches.front();
+            const AssetIndex::DescriptorResourceLink& primaryLink = (*links)[app.descriptorUiDescriptorMatches.front()];
             ImGui::Text("Primary resource preview: %s", primaryLink.resourceName.c_str());
             ImGui::Text("Textures: %zu (Resolved: %zu)", primaryLink.textureLinks.size(),
                 std::count_if(primaryLink.textureLinks.begin(), primaryLink.textureLinks.end(), [](const auto& t) { return t.matchedDxpPath.has_value(); }));
@@ -902,17 +970,8 @@ namespace DagorAssetsExtractor::UI
         }
         else if (selected.type == AssetType::Grp)
         {
-            std::vector<const AssetIndex::DescriptorResourceLink*> grpMatches;
-            for (const auto& link : *links)
-            {
-                if (link.matchedGrpPath && *link.matchedGrpPath == selected.path)
-                {
-                    grpMatches.push_back(&link);
-                }
-            }
-
-            ImGui::Text("Descriptor resources resolving to this GRP: %zu", grpMatches.size());
-            if (!grpMatches.empty())
+            ImGui::Text("Descriptor resources resolving to this GRP: %zu", app.descriptorUiGrpMatches.size());
+            if (!app.descriptorUiGrpMatches.empty())
             {
                 ImGuiTableFlags tblFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
                 if (ImGui::BeginTable("GrpMatchesTable", 3, tblFlags, ImVec2(0.0f, 150.0f)))
@@ -922,20 +981,21 @@ namespace DagorAssetsExtractor::UI
                     ImGui::TableSetupColumn("Descriptor File", ImGuiTableColumnFlags_WidthStretch, 0.3f);
                     ImGui::TableHeadersRow();
 
-                    for (const auto* match : grpMatches)
+                    for (const size_t linkIndex : app.descriptorUiGrpMatches)
                     {
+                        const AssetIndex::DescriptorResourceLink& match = (*links)[linkIndex];
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted(match->resourceName.c_str());
+                        ImGui::TextUnformatted(match.resourceName.c_str());
 
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::TextUnformatted(match->matchedGrpEntryName ? match->matchedGrpEntryName->c_str() : "Root");
+                        ImGui::TextUnformatted(match.matchedGrpEntryName ? match.matchedGrpEntryName->c_str() : "Root");
 
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::TextUnformatted(Platform::PathToUtf8(match->descriptorPath.filename()).c_str());
+                        ImGui::TextUnformatted(Platform::PathToUtf8(match.descriptorPath.filename()).c_str());
                         if (ImGui::IsItemHovered())
                         {
-                            ImGui::SetTooltip("%s", Platform::PathToUtf8(match->descriptorPath).c_str());
+                            ImGui::SetTooltip("%s", Platform::PathToUtf8(match.descriptorPath).c_str());
                         }
                     }
                     ImGui::EndTable();
@@ -944,20 +1004,8 @@ namespace DagorAssetsExtractor::UI
         }
         else if (selected.type == AssetType::Dxp)
         {
-            std::vector<std::pair<const AssetIndex::DescriptorResourceLink*, const AssetIndex::DescriptorTextureLink*>> dxpMatches;
-            for (const auto& link : *links)
-            {
-                for (const auto& texLink : link.textureLinks)
-                {
-                    if (texLink.matchedDxpPath && *texLink.matchedDxpPath == selected.path)
-                    {
-                        dxpMatches.push_back({&link, &texLink});
-                    }
-                }
-            }
-
-            ImGui::Text("Descriptor textures resolving to this DXP: %zu", dxpMatches.size());
-            if (!dxpMatches.empty())
+            ImGui::Text("Descriptor textures resolving to this DXP: %zu", app.descriptorUiDxpMatches.size());
+            if (!app.descriptorUiDxpMatches.empty())
             {
                 ImGuiTableFlags tblFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
                 if (ImGui::BeginTable("DxpMatchesTable", 3, tblFlags, ImVec2(0.0f, 150.0f)))
@@ -967,20 +1015,22 @@ namespace DagorAssetsExtractor::UI
                     ImGui::TableSetupColumn("Descriptor File", ImGuiTableColumnFlags_WidthStretch, 0.3f);
                     ImGui::TableHeadersRow();
 
-                    for (const auto& match : dxpMatches)
+                    for (const auto& matchIndex : app.descriptorUiDxpMatches)
                     {
+                        const AssetIndex::DescriptorResourceLink& match = (*links)[matchIndex.first];
+                        const AssetIndex::DescriptorTextureLink& textureLink = match.textureLinks[matchIndex.second];
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted(match.second->matchedDxpEntryName ? match.second->matchedDxpEntryName->c_str() : "Root");
+                        ImGui::TextUnformatted(textureLink.matchedDxpEntryName ? textureLink.matchedDxpEntryName->c_str() : "Root");
 
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::TextUnformatted(match.first->resourceName.c_str());
+                        ImGui::TextUnformatted(match.resourceName.c_str());
 
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::TextUnformatted(Platform::PathToUtf8(match.first->descriptorPath.filename()).c_str());
+                        ImGui::TextUnformatted(Platform::PathToUtf8(match.descriptorPath.filename()).c_str());
                         if (ImGui::IsItemHovered())
                         {
-                            ImGui::SetTooltip("%s", Platform::PathToUtf8(match.first->descriptorPath).c_str());
+                            ImGui::SetTooltip("%s", Platform::PathToUtf8(match.descriptorPath).c_str());
                         }
                     }
                     ImGui::EndTable();
@@ -1055,6 +1105,35 @@ namespace DagorAssetsExtractor::UI
                         App::RequestBatchTextureExport(app, selected->path, cachedContents);
                     }
                 }
+                ImGui::SetNextItemWidth(-1.0f);
+                const bool subAssetSearchChanged = ImGui::InputTextWithHint(
+                    "##SubAssetSearch",
+                    "Search loaded sub-assets by name, class, texture, or material",
+                    app.subAssetSearchBuffer.data(),
+                    app.subAssetSearchBuffer.size());
+                const std::string subAssetSearch = AssetIndex::ToLowerAscii(std::string(app.subAssetSearchBuffer.data()));
+
+                if (app.subAssetFilterPath != selected->path.wstring() ||
+                    app.lastSubAssetSearch != subAssetSearch ||
+                    app.lastSubAssetCount != cachedContents->entries.size() ||
+                    subAssetSearchChanged)
+                {
+                    app.subAssetFilterPath = selected->path.wstring();
+                    app.lastSubAssetSearch = subAssetSearch;
+                    app.lastSubAssetCount = cachedContents->entries.size();
+                    app.filteredSubAssetIndices.clear();
+                    app.filteredSubAssetIndices.reserve(cachedContents->entries.size());
+
+                    for (size_t i = 0; i < cachedContents->entries.size(); ++i)
+                    {
+                        if (SubAssetPassesSearch(cachedContents->entries[i], subAssetSearch))
+                        {
+                            app.filteredSubAssetIndices.push_back(i);
+                        }
+                    }
+                }
+
+                ImGui::Text("%zu matching sub-assets.", app.filteredSubAssetIndices.size());
                 ImGui::Separator();
 
                 const bool isDxp = (selected->type == AssetType::Dxp);
@@ -1070,7 +1149,8 @@ namespace DagorAssetsExtractor::UI
                 ImGuiTableFlags subFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
 
-                if (ImGui::BeginTable("SubAssets", columnCount, subFlags, ImVec2(0.0f, 0.0f)))
+                const float tableHeight = std::clamp(ImGui::GetContentRegionAvail().y * 0.58f, 260.0f, 460.0f);
+                if (ImGui::BeginTable("SubAssets", columnCount, subFlags, ImVec2(0.0f, tableHeight)))
                 {
                     if (isDesc)
                     {
@@ -1100,13 +1180,14 @@ namespace DagorAssetsExtractor::UI
                     ImGui::TableHeadersRow();
 
                     ImGuiListClipper clipper;
-                    clipper.Begin(static_cast<int>(cachedContents->entries.size()));
+                    clipper.Begin(static_cast<int>(app.filteredSubAssetIndices.size()));
                     while (clipper.Step())
                     {
                         for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
                         {
                             ImGui::PushID(row);
-                            const AssetIndex::SubAssetRecord& entry = cachedContents->entries[row];
+                            const size_t entryIndex = app.filteredSubAssetIndices[static_cast<size_t>(row)];
+                            const AssetIndex::SubAssetRecord& entry = cachedContents->entries[entryIndex];
                             ImGui::TableNextRow();
 
                             if (isDesc)
@@ -1472,6 +1553,16 @@ namespace DagorAssetsExtractor::UI
                 App::SetCacheStatus(app.scan, "Disabled", false);
             }
         }
+        int maxLoadedPackContents = static_cast<int>(app.settings.maxLoadedPackContents);
+        if (ImGui::InputInt("Max loaded containers", &maxLoadedPackContents))
+        {
+            maxLoadedPackContents = std::clamp(maxLoadedPackContents, 1, 256);
+            app.settings.maxLoadedPackContents = static_cast<size_t>(maxLoadedPackContents);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("When loaded pack contents exceed this number, the cache unloads old parsed containers and keeps the current inspector target.");
+        }
 
         ImGui::Separator();
         if (ImGui::Button("Save Settings"))
@@ -1483,6 +1574,7 @@ namespace DagorAssetsExtractor::UI
         ImGui::SameLine();
         ImGui::Text("Settings file: %s", Platform::PathToUtf8(app.settingsPath).c_str());
         ImGui::Text("Index cache: %s", Platform::PathToUtf8(app.indexCachePath).c_str());
+        ImGui::Text("Descriptor-link cache: %s", Platform::PathToUtf8(app.descriptorLinksCachePath).c_str());
 
         ImGui::End();
     }
@@ -1600,12 +1692,12 @@ namespace DagorAssetsExtractor::UI
         // Initialize inspectorHeight if not set
         if (app.inspectorHeight < 0.0f)
         {
-            app.inspectorHeight = topHeight * 0.42f;
+            app.inspectorHeight = topHeight * 0.54f;
         }
 
         // Clamp inspector height to stay within reasonable bounds
-        const float minInspectorHeight = 100.0f;
-        const float maxInspectorHeight = topHeight - 160.0f;
+        const float minInspectorHeight = 180.0f;
+        const float maxInspectorHeight = topHeight - 180.0f;
         app.inspectorHeight = std::clamp(app.inspectorHeight, minInspectorHeight, std::max(minInspectorHeight, maxInspectorHeight));
 
 

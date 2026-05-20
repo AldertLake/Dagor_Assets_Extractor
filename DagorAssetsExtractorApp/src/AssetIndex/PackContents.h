@@ -68,12 +68,28 @@ namespace DagorAssetsExtractor::AssetIndex
         // Remove cached contents for a given path (e.g., after re-scan).
         void Remove(const std::filesystem::path& packPath);
 
+        // Number of parsed containers currently retained by the cache.
+        size_t Size() const;
+
+        // Remove every cached container except the path that should stay visible.
+        size_t ClearExcept(const std::filesystem::path& keepPath);
+
+        // Enforce a maximum retained count using least-recently-used eviction.
+        size_t TrimToLimit(size_t maxEntries, const std::filesystem::path& keepPath);
+
         // Clear the entire cache.
         void Clear();
 
     private:
+        struct CachedContents
+        {
+            std::shared_ptr<PackContents> contents;
+            uint64_t lastAccess = 0;
+        };
+
         mutable std::mutex m_mutex;
-        std::unordered_map<std::wstring, std::shared_ptr<PackContents>> m_cache;
+        mutable uint64_t m_nextAccess = 1;
+        mutable std::unordered_map<std::wstring, CachedContents> m_cache;
     };
 
     // Parse the contents of a VROMFS container from disk.
