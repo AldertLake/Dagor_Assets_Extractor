@@ -441,9 +441,9 @@ namespace DagorAssetsExtractor::AssetIndex
                 return SamePath(record.path, focus->path);
             }
 
-            // For selected GRP/DXP packs, descriptors are the only source that
-            // can tell us which resource owns that pack, so keep descriptor pass global.
-            return true;
+            // Only parse descriptors that are related to the focus pack.
+            // This prevents the system from doing a 100GB exhaustive scan for every export!
+            return IsRecordRelatedToFocus(record, *focus);
         }
 
         bool ShouldIncludeGrpForFocus(const ResourceRecord& record, const ResourceRecord* focus)
@@ -1074,6 +1074,14 @@ namespace DagorAssetsExtractor::AssetIndex
             if (PathLooksLikePatch(record.path))
             {
                 score += 4;
+            }
+
+            if (packStem.find("shared") != std::string::npos ||
+                packStem.find("common") != std::string::npos ||
+                packStem.find("base") != std::string::npos ||
+                packStem.find("general") != std::string::npos)
+            {
+                score += 15;
             }
 
             for (const std::string& resourceName : focusedResourceNames)
@@ -1733,7 +1741,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
             }
         }
-
+        
         const size_t totalWork =
             std::max<size_t>(1, descriptorRecords.size() + grpRecords.size() + dxpRecords.size() + 1);
         size_t workDone = 0;
@@ -1875,6 +1883,13 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
                 return PathLooksLikeHq(left->path) && !PathLooksLikeHq(right->path);
             });
+            
+            // To ensure rapid scoped exports, cap the maximum number of dynamically indexed DXP candidates
+            // to the most highly correlated ones. Global cache builds remain exhaustive.
+            if (dxpRecords.size() > 15)
+            {
+                dxpRecords.resize(15);
+            }
 
             if (!ReportDescriptorProgress(
                     result,

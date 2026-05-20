@@ -544,6 +544,10 @@ namespace DagorAssetsExtractor::App
             {
                 settings.exportTexturesWithModels = ParseBool(value, settings.exportTexturesWithModels);
             }
+            else if (key == "exportJsonManifest")
+            {
+                settings.exportJsonManifest = ParseBool(value, settings.exportJsonManifest);
+            }
             else if (key == "preserveOriginalDDS")
             {
                 settings.preserveOriginalDDS = ParseBool(value, settings.preserveOriginalDDS);
@@ -609,6 +613,7 @@ namespace DagorAssetsExtractor::App
         file << "textureExportFormat=" << settings.textureExportFormat << '\n';
         file << "modelExportFormat=" << settings.modelExportFormat << '\n';
         file << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
+        file << "exportJsonManifest=" << (settings.exportJsonManifest ? "true" : "false") << '\n';
         file << "preserveOriginalDDS=" << (settings.preserveOriginalDDS ? "true" : "false") << '\n';
         file << "indexCacheEnabled=" << (settings.indexCacheEnabled ? "true" : "false") << '\n';
         file << "maxLoadedPackContents=" << settings.maxLoadedPackContents << '\n';
@@ -993,6 +998,7 @@ namespace DagorAssetsExtractor::App
         options.preserveOriginalDDS = app.settings.preserveOriginalDDS;
         options.overwrite = true;
         options.useOodleFromGameFolder = false;
+        options.exportJsonManifest = app.settings.exportJsonManifest;
         return options;
     }
 
@@ -1041,14 +1047,20 @@ namespace DagorAssetsExtractor::App
 
         AddLog(app, LogLevel::Info, "Exporting model: " + entry.name + "...");
 
-        std::filesystem::path exportRoot = app.settings.exportRoot;
+        std::string safeName = entry.name;
+        std::replace(safeName.begin(), safeName.end(), '/', '_');
+        std::replace(safeName.begin(), safeName.end(), '\\', '_');
+        std::replace(safeName.begin(), safeName.end(), ':', '_');
+
+        std::filesystem::path exportRoot = app.settings.exportRoot / safeName;
         std::string format = app.settings.modelExportFormat;
         bool exportTextures = app.settings.exportTexturesWithModels;
+        bool exportJsonManifest = app.settings.exportJsonManifest;
         
         auto descriptorLinks = SnapshotDescriptorResourceLinks(app);
         auto allRecords = SnapshotRecords(app.scan);
         auto textureExportOptions = GetTextureExportOptions(app);
-        textureExportOptions.outputDir = exportRoot;
+        textureExportOptions.outputDir = exportRoot / "Textures";
         const bool exportGlb = AssetIndex::ToLowerAscii(format) == "glb";
         if (exportGlb && exportTextures)
         {
@@ -1060,7 +1072,7 @@ namespace DagorAssetsExtractor::App
                 " will use PNG only; DDS/TGA are not core glTF image formats and will not be linked into GLB materials.");
         }
 
-        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, exportTextures, descriptorLinks, allRecords, textureExportOptions]() {
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, exportTextures, exportJsonManifest, descriptorLinks, allRecords, textureExportOptions]() {
             try
             {
                 std::ifstream file(packPath, std::ios::binary);
@@ -1090,6 +1102,7 @@ namespace DagorAssetsExtractor::App
                 manifest.sourcePack = packPath.filename().string();
                 manifest.sourceResource = entry.name;
                 manifest.appVersion = "1.0.0";
+                manifest.skipWrite = !exportJsonManifest;
 
                 std::vector<Export::MaterialInfo> materials;
                 

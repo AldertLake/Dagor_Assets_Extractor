@@ -347,3 +347,19 @@ AI models picking up the next coding task should prioritize the following object
 * **Safer Cache Writes**: Cache saves now write a temp file first, flush/close it, then replace the target using the Windows replace path. Successful saves log link count, elapsed time, and final cache size.
 * **Reference Alignment**: Rechecked `Dagor-Asset-Explorer` behavior: it keeps descriptor data lazy/in-memory per loaded descriptor instead of startup-loading a global expanded graph. The C++ cache now follows the same principle by keeping startup responsive and avoiding redundant persisted rows.
 * **Verification**: Rebuilt with `powershell -ExecutionPolicy Bypass -File scripts\run_tests.ps1`; result: 0 build warnings/errors and all tests passing.
+
+### Day 41: Descriptor Linking Phase Speedup Slice
+* **Reference-Guided Diagnosis**: Rechecked `Dagor-Asset-Explorer` descriptor behavior and confirmed it answers model texture/material questions lazily from cached descriptors instead of repeatedly resolving every global descriptor texture against every DXP candidate.
+* **DXP Candidate Cache**: Added a per-build cache for normalized DXP candidate sets so repeated texture names no longer rebuild candidate vectors and duplicate filtering during the global Linking phase.
+* **Best-Match Cache**: Added a per-build best DXP match cache keyed by texture keys, descriptor/GRP path context, and resource-name keys. Repeated texture/context combinations now reuse the selected DXP entry directly.
+* **Cached Path Scoring**: Replaced repeated path UTF-8 conversion, path normalization, patch/HQ checks, and common-directory scoring inside DXP matching with cached path metadata.
+* **Linking Diagnostics**: Progress logs during Linking now report texture request counts, unique texture lookup counts, best-match cache hits, elapsed linking time, final texture matches, and total linking milliseconds.
+* **Verification**: Rebuilt with `powershell -ExecutionPolicy Bypass -File scripts\run_tests.ps1`; result: 0 build warnings/errors and all tests passing. The first test run exposed a locked debug EXE, which was stopped before the successful rebuild.
+
+### Day 42: F/A-18 GLB UV and Export Progress Slice
+* **GLB UV Orientation Repair**: Removed the extra GLB UV conversion pass and now writes the already-decoded Dagor/Python-style UVs directly. Export diagnostics now report `objShortUvPassthrough` and `objFloatUvPassthrough`, which should address reversed cockpit/body labels seen in the F/A-18 export.
+* **Descriptor DXP Payload Filtering**: Extended lightweight DXP metadata parsing to read block3 payload offsets/sizes. Descriptor linking now indexes only non-empty DXP entries and skips zero-payload placeholders, with descriptor linker/cache versions bumped so stale bad links are invalidated.
+* **Export-Side Texture Guard**: Model texture dependency export now prefers non-empty DXP content entries when resolving a matched texture name, avoiding duplicate-name placeholder entries during actual sidecar export.
+* **Reusable Export Progress UI**: Reused the generic progress-job window for model export, single texture export, and batch texture export. Export jobs now show staged status/log output, observe cancel requests at safe points, and expose a `Show in Explorer` button when a result path is available.
+* **Regression Coverage**: Added a descriptor-link test proving zero-payload DXP entries are not matched as texture dependencies.
+* **Verification**: Rebuilt with `powershell -ExecutionPolicy Bypass -File scripts\run_tests.ps1`; result: 0 build warnings/errors and all tests passing.

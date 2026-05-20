@@ -37,6 +37,11 @@ namespace DagorAssetsExtractor::Export
 
     bool ExportManifest::WriteToFile(const std::filesystem::path& path) const
     {
+        if (skipWrite)
+        {
+            return true;
+        }
+
         std::ofstream out(path);
         if (!out)
         {

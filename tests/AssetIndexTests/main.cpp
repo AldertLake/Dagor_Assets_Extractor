@@ -1241,12 +1241,13 @@ namespace
         return data;
     }
 
-    std::vector<uint8_t> MakeSyntheticDxpPack(const std::vector<std::string>& textureNames)
+    std::vector<uint8_t> MakeSyntheticDxpPackWithPayloadSizes(
+        const std::vector<std::pair<std::string, uint32_t>>& textures)
     {
         const size_t ddsHeaderStart = 0x100;
-        const size_t block3Start = ddsHeaderStart + textureNames.size() * 0x20;
-        const size_t payloadStart = block3Start + textureNames.size() * 0x18;
-        std::vector<uint8_t> data(payloadStart + textureNames.size() * 4, 0);
+        const size_t block3Start = ddsHeaderStart + textures.size() * 0x20;
+        const size_t payloadStart = block3Start + textures.size() * 0x18;
+        std::vector<uint8_t> data(payloadStart + textures.size() * 4, 0);
 
         auto put16 = [&data](size_t offset, uint16_t value) {
             data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
@@ -1263,19 +1264,20 @@ namespace
         data[1] = 'x';
         data[2] = 'P';
         data[3] = '2';
-        put16(0x8, static_cast<uint16_t>(textureNames.size()));
+        put16(0x8, static_cast<uint16_t>(textures.size()));
         put32(0x20, static_cast<uint32_t>(ddsHeaderStart - 0x10));
         put32(0x30, static_cast<uint32_t>(block3Start - 0x10));
 
         size_t nameOffset = 0x48;
-        for (const std::string& textureName : textureNames)
+        for (const auto& [textureName, payloadSize] : textures)
         {
+            (void)payloadSize;
             std::copy(textureName.begin(), textureName.end(), data.begin() + nameOffset);
             nameOffset += textureName.size();
             data[nameOffset++] = 0;
         }
 
-        for (size_t i = 0; i < textureNames.size(); ++i)
+        for (size_t i = 0; i < textures.size(); ++i)
         {
             const size_t headerOffset = ddsHeaderStart + i * 0x20;
             data[headerOffset + 0] = 0x44;
@@ -1292,7 +1294,7 @@ namespace
 
             const size_t tableOffset = block3Start + i * 0x18;
             put32(tableOffset + 0x0C, static_cast<uint32_t>(payloadStart + i * 4));
-            put32(tableOffset + 0x10, 4);
+            put32(tableOffset + 0x10, textures[i].second);
 
             const size_t payloadOffset = payloadStart + i * 4;
             data[payloadOffset + 0] = 0x10;
@@ -1302,6 +1304,17 @@ namespace
         }
 
         return data;
+    }
+
+    std::vector<uint8_t> MakeSyntheticDxpPack(const std::vector<std::string>& textureNames)
+    {
+        std::vector<std::pair<std::string, uint32_t>> textures;
+        textures.reserve(textureNames.size());
+        for (const std::string& textureName : textureNames)
+        {
+            textures.emplace_back(textureName, 4);
+        }
+        return MakeSyntheticDxpPackWithPayloadSizes(textures);
     }
 
     bool WriteBinaryFile(const fs::path& path, const std::vector<uint8_t>& data)
@@ -1471,6 +1484,59 @@ namespace
                 AssetIndex::LoadDescriptorResourceLinkCache(descriptorCachePath, tempDir, staleRecords, options);
             ok &= Expect(!staleCache.loaded && staleCache.fileFound && staleCache.rootMatched,
                 "Descriptor-link cache should invalidate when source records change");
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    bool TestDescriptorResourceLinksSkipZeroPayloadDxp()
+    {
+        bool ok = true;
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_DescriptorZeroDxpTest_" + std::to_string(stamp));
+        const fs::path resDir = tempDir / "content" / "base" / "res";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(resDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp descriptor zero-DXP test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        const fs::path descriptorPath = resDir / "riDesc.bin";
+        const fs::path grpPath = resDir / "sample_vehicle.grp";
+        const fs::path dxpPath = resDir / "zero_payload_textures.dxp.bin";
+
+        ok &= Expect(WriteBinaryFile(descriptorPath, MakeSyntheticGameResDescPayload()),
+            "Zero-payload DXP test should write synthetic descriptor");
+        ok &= Expect(WriteBinaryFile(grpPath, MakeSyntheticModernGrpPack("sample_tank", 0x77F8232Fu, "RIND")),
+            "Zero-payload DXP test should write synthetic GRP");
+        ok &= Expect(WriteBinaryFile(dxpPath, MakeSyntheticDxpPackWithPayloadSizes({ { "body_tex$hq*", 0 } })),
+            "Zero-payload DXP test should write synthetic DXP");
+
+        std::vector<AssetIndex::ResourceRecord> records;
+        records.push_back(MakeResourceRecord(descriptorPath, AssetIndex::AssetType::Descriptor));
+        records.push_back(MakeResourceRecord(grpPath, AssetIndex::AssetType::Grp));
+        records.push_back(MakeResourceRecord(dxpPath, AssetIndex::AssetType::Dxp));
+
+        const AssetIndex::DescriptorResourceLinkBuildResult descriptorLinks =
+            AssetIndex::BuildDescriptorResourceLinks(records);
+
+        ok &= Expect(descriptorLinks.links.size() == 1, "Zero-payload DXP test should expose one descriptor resource");
+        if (!descriptorLinks.links.empty())
+        {
+            const AssetIndex::DescriptorResourceLink& link = descriptorLinks.links[0];
+            ok &= Expect(link.textureLinks.size() == 1, "Zero-payload DXP test should preserve texture dependency");
+            if (!link.textureLinks.empty())
+            {
+                ok &= Expect(!link.textureLinks[0].matchedDxpPath.has_value(),
+                    "Descriptor linker should not match zero-payload DXP texture entries");
+                ok &= Expect(!link.textureLinks[0].matchedDxpEntryName.has_value(),
+                    "Descriptor linker should leave zero-payload DXP entry names unresolved");
+            }
         }
 
         fs::remove_all(tempDir, ec);
@@ -3391,6 +3457,7 @@ int main(int argc, char** argv)
     ok &= Expect(TestFixtureBlk(fixtureRoot), "fixture BLK parser test should pass");
     ok &= Expect(TestBlkResourceLinks(discovered.records), "fixture BLK resource link test should pass");
     ok &= Expect(TestDescriptorResourceLinks(), "descriptor resource link test should pass");
+    ok &= Expect(TestDescriptorResourceLinksSkipZeroPayloadDxp(), "descriptor zero-payload DXP link test should pass");
     ok &= Expect(TestDescriptorResourceLinksNonStaticGrpMatch(), "descriptor non-static GRP link test should pass");
     ok &= Expect(TestPackContentsFixtures(fixtureRoot), "fixture PackContents tests should pass");
 

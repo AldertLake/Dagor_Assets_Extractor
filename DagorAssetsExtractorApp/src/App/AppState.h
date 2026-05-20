@@ -30,6 +30,7 @@ namespace DagorAssetsExtractor::App
         std::string textureExportFormat = "DDS";
         std::string modelExportFormat = "GLB";
         bool exportTexturesWithModels = true;
+        bool exportJsonManifest = false;
         bool preserveOriginalDDS = true;
         bool indexCacheEnabled = true;
         size_t maxLoadedPackContents = 8;

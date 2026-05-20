@@ -13,6 +13,7 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <shellapi.h>
 #include <shlobj.h>
 #else
 typedef void* HWND;
@@ -35,6 +36,7 @@ namespace DagorAssetsExtractor::Platform {
     std::filesystem::path GetIndexCachePath();
     std::filesystem::path GetDescriptorLinksCachePath();
     std::filesystem::path GetDefaultExportRoot();
+    bool ShowPathInExplorer(const std::filesystem::path& path);
 
     std::optional<std::filesystem::path> BrowseForFolder(HWND owner, const wchar_t* title, const std::filesystem::path& initialPath);
     std::optional<std::filesystem::path> BrowseForFile(HWND owner, const wchar_t* title, const std::filesystem::path& initialPath);

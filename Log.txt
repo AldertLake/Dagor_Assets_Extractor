@@ -1,0 +1,222 @@
+[DagorExtractor] [INFO] Application started.
+[DagorExtractor] [INFO] Portable cache folder: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\cache
+[DagorExtractor] [INFO] Settings path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\cache\settings
+[DagorExtractor] [INFO] Index cache path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\cache\index-cache
+[DagorExtractor] [INFO] Descriptor-link cache path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\cache\descriptor-links-cache
+[DagorExtractor] [INFO] Loaded saved game folder: D:\SteamLibrary\steamapps\common\War Thunder
+[DagorExtractor] [INFO] Loaded 8495 cached records.
+[DagorExtractor] [INFO] Descriptor-link cache load scheduled: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\cache\descriptor-links-cache
+[DagorExtractor] [INFO] No descriptor-link cache file found. (0 ms)
+The thread 17888 has exited with code 0 (0x0).
+[DagorExtractor] [INFO] Building selected descriptor relationships: target=f_16c_block_50.grp, records=8495, blkLinks=not built, using universal metadata indexes.
+[DagorExtractor] [INFO] Descriptor link progress: BLK relationships: Parsing BLK resource-pack hints links=0 descriptors=0 grpPacks=0 dxpPacks=0
+[DagorExtractor] [INFO] Descriptor link progress: Descriptor pass: Parsing descriptor files [0/554] links=0 descriptors=0 grpPacks=0 dxpPacks=0
+The thread 16440 has exited with code 0 (0x0).
+The thread 18324 has exited with code 0 (0x0).
+The thread 2240 has exited with code 0 (0x0).
+[DagorExtractor] [INFO] Descriptor link progress: GRP index: Indexing GRP resource names [9/554] links=0 descriptors=9 grpPacks=0 dxpPacks=0
+The thread 13560 has exited with code 0 (0x0).
+[DagorExtractor] [INFO] Descriptor link progress: Selected scope: targetResources=1, targetTextures=113, dxpCandidates=543 [10/554] links=0 descriptors=9 grpPacks=1 dxpPacks=0
+[DagorExtractor] [INFO] Descriptor link progress: DXP index: Indexing DXP texture names [10/554] links=0 descriptors=9 grpPacks=1 dxpPacks=0
+[DagorExtractor] [INFO] Descriptor link progress: DXP index: j8m-hq.dxp.bin indexed 9/11 payload textures in 0 ms (8658 total) [260/554] links=0 descriptors=9 grpPacks=1 dxpPacks=250
+[DagorExtractor] [INFO] Descriptor link progress: DXP index: venom-hq.dxp.bin indexed 7/7 payload textures in 1 ms (14215 total) [510/554] links=0 descriptors=9 grpPacks=1 dxpPacks=500
+The thread 5788 has exited with code 0 (0x0).
+The thread 12732 has exited with code 0 (0x0).
+The thread 2296 has exited with code 0 (0x0).
+The thread 10512 has exited with code 0 (0x0).
+The thread 5836 has exited with code 0 (0x0).
+The thread 17812 has exited with code 0 (0x0).
+The thread 1840 has exited with code 0 (0x0).
+The thread 11576 has exited with code 0 (0x0).
+[DagorExtractor] [INFO] Descriptor link progress: Linking: Resolving descriptor resources to GRP/DXP indexes [553/554] links=0 descriptors=9 grpPacks=1 dxpPacks=543
+[DagorExtractor] [INFO] Descriptor link progress: Complete: Descriptor relationships built: links=1, textureLinks=772977, textureMatches=40059, uniqueTextureLookups=51908, textureLookupHits=721069, bestMatchCacheHits=0, linkingMs=65056 [554/554] links=1 descriptors=9 grpPacks=1 dxpPacks=543
+[DagorExtractor] [WARN] Descriptor relationships built: 1 resources, 1 GRP packs indexed, 543 DXP packs indexed.
+[DagorExtractor] [WARN] BLK relationship warning: Skipped large BLK file: dx12_cache_new.blk
+The thread 11592 has exited with code 0 (0x0).
+[DagorExtractor] [INFO] Parsing contents of f_16c_block_50.grp...
+[DagorExtractor] [INFO] Parsed 5 sub-assets from f_16c_block_50.grp
+The thread 19312 has exited with code 0 (0x0).
+[DagorExtractor] [INFO] Exporting model: f_16c_block_50_cockpit...
+[DagorExtractor] [INFO] GLB material texture export for f_16c_block_50_cockpit will use PNG only; DDS/TGA are not core glTF image formats and will not be linked into GLB materials.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\clbcatq.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\WindowsCodecs.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+[DagorExtractor] [INFO] Model material dependency summary for f_16c_block_50_cockpit: descriptorMaterials=81, descriptorTextures=113, materialTextureBindings=117, exportedTextures=61, assignedTextures=31, skippedBindings=56, gltfMaterialSlots=81
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\Debug\oo2core_6_win64.dll'
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel MatVData: payload=18983884 bytes, gvdOfs=128, gvdCnt=2, mvdFlag=0
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel GVD[0]: vCnt=970947, vStride=16, iPackedSz=3445955, iSz=6856020, iCnt=32, flags=0x220, storageFormat=3
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel GVD[1]: vCnt=96, vStride=24, iPackedSz=281, iSz=552, iCnt=68, flags=0x220, storageFormat=5
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel GVD[0] decoded vertices=970947, indices=3428010, blockStart=192, blockSize=18981107
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel GVD[1] decoded vertices=96, indices=276, blockStart=18981299, blockSize=2585
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: Phase1 header: payload=4535744, decompressedMvd=18983884, containerHeader=20, lodHdrInfo=0x58, lodHdrSize=88, riStructSize=160, texCnt=external, matCnt=external, vdataNum=2, mvdHdrSize=192, mvdHdrFlag=true
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel ModelData: offset=4458573, size=72, lodCount=1
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel scene nodes: blockOffset=4458661, blockSize=11416, nameIndicesOfs=6240, nameCount=517, skinNodesOfs=10376, skinNodeCount=517
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel LOD[0]: start=4470081, headerSize=32, rigidCount=516, skinCount=0, shaderMeshOfs=16544
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel LOD[0] ShaderMeshes end at 4535729
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel skinned resource count=0
+[DagorExtractor] [INFO] DynModel diagnostic for f_16c_block_50_cockpit: DynModel material index summary: uniqueRaw=80, maxRaw=80, mode=raw
+[DagorExtractor] [INFO] DynModel UV export summary for f_16c_block_50_cockpit: vertices=971043, objShortUvPassthrough=971043, objFloatUvPassthrough=0, zeroUv=8
+[DagorExtractor] [INFO] DynModel export summary for f_16c_block_50_cockpit: meshes=516, compactVertices=971043, indices=3428286, primitives=593
+[DagorExtractor] [INFO] DynModel material slot summary for f_16c_block_50_cockpit: primitiveMaterialSlots=80, maxSlot=80, descriptorMaterials=81, descriptorBindings=117
+[DagorExtractor] [INFO] Resolved skeleton f_16c_block_50_cockpit_skeleton (598 nodes) from f_16c_block_50.grp
+[DagorExtractor] [INFO] Writing DynModel GLB for f_16c_block_50_cockpit with skeletonNodes=598 to C:\Users\AldertLake\Documents\DagorAssetsExtractorExports\f_16c_block_50_cockpit.glb
+[DagorExtractor] [INFO] Exported model: f_16c_block_50_cockpit to C:\Users\AldertLake\Documents\DagorAssetsExtractorExports\f_16c_block_50_cockpit.glb
+The thread 17440 has exited with code 0 (0x0).
+The thread 21408 has exited with code 0 (0x0).
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\propsys.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\profapi.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\edputil.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\Windows.StateRepositoryPS.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\urlmon.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\iertutil.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\srvcli.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\netutils.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\sspicli.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\virtdisk.dll'. Symbol loading disabled by Include/Exclude setting.
+'DagorAssetsExtractor.exe' (Win32): Loaded 'C:\Windows\System32\wldp.dll'. Symbol loading disabled by Include/Exclude setting.
+The thread 4792 has exited with code 0 (0x0).
+The thread 12128 has exited with code 0 (0x0).
+The thread 14008 has exited with code 0 (0x0).
+The thread 15012 has exited with code 0 (0x0).
+The thread 18200 has exited with code 0 (0x0).
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Windows\System32\amdihk64.dll'
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Windows\System32\setupapi.dll'
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Windows\System32\DriverStore\FileRepository\u0197843.inf_amd64_82ec9e2b79afe28f\B025592\atidxx64.dll'
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Windows\System32\DriverStore\FileRepository\u0197843.inf_amd64_82ec9e2b79afe28f\B025592\atiuxp64.dll'
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Windows\System32\version.dll'
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Windows\System32\winmm.dll'
+'DagorAssetsExtractor.exe' (Win32): Unloaded 'C:\Windows\System32\DriverStore\FileRepository\u0197843.inf_amd64_82ec9e2b79afe28f\B025592\aticfx64.dll'
+The thread 12976 has exited with code 0 (0x0).
+The thread 14708 has exited with code 0 (0x0).
+The thread 6408 has exited with code 0 (0x0).
+The thread 19676 has exited with code 0 (0x0).
+The thread 4476 has exited with code 0 (0x0).
+The thread 19636 has exited with code 0 (0x0).
+The thread 6368 has exited with code 0 (0x0).
+The thread 18460 has exited with code 0 (0x0).
+The thread 10160 has exited with code 0 (0x0).
+The thread 17504 has exited with code 0 (0x0).
+The thread 20416 has exited with code 0 (0x0).
+The program '[14808] DagorAssetsExtractor.exe' has exited with code 0 (0x0).

@@ -1544,6 +1544,7 @@ namespace DagorAssetsExtractor::UI
         }
 
         ImGui::Checkbox("Export textures with models", &app.settings.exportTexturesWithModels);
+        ImGui::Checkbox("Export JSON manifest metadata alongside assets", &app.settings.exportJsonManifest);
         ImGui::Checkbox("Fallback to DDS when PNG/TGA conversion is unavailable", &app.settings.preserveOriginalDDS);
         ImGui::TextDisabled("Oodle-compressed DDSx textures use the bundled oo2core_6_win64.dll shipped with the app build.");
         ImGui::TextDisabled("PNG/TGA currently exports the top mip for BC1-BC5 plus R8, R8G8, RGBA8, BGRA8, RGBA16F, and RGBA32F DDSx textures.");

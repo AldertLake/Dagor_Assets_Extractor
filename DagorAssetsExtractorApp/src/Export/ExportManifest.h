@@ -18,6 +18,7 @@ namespace DagorAssetsExtractor::Export
         std::vector<std::string> unsupportedFields;
         std::string appVersion;
         std::string formatDecoderVersion;
+        bool skipWrite = false;
 
         bool WriteToFile(const std::filesystem::path& path) const;
     };

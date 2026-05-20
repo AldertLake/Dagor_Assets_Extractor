@@ -116,16 +116,18 @@ namespace DagorAssetsExtractor::Export
 
         std::array<float, 2> ConvertUvForGltf(float u, float v, DagorFormats::UvTransform transform)
         {
-            switch (transform)
-            {
-            case DagorFormats::UvTransform::ObjShortVFlipped:
-                return { u, 1.0f - v };
-            case DagorFormats::UvTransform::ObjFloatVNegated:
-                return { u, -v };
-            case DagorFormats::UvTransform::None:
-            default:
-                return { u, v };
-            }
+            (void)transform;
+            return { u, 1.0f - v };
+        }
+
+        void ConvertMatrixHandedness(std::array<float, 16>& m)
+        {
+            m[2] = -m[2];
+            m[6] = -m[6];
+            m[8] = -m[8];
+            m[9] = -m[9];
+            m[11] = -m[11];
+            m[14] = -m[14];
         }
 
         struct PackedStaticVertex
@@ -452,20 +454,20 @@ namespace DagorAssetsExtractor::Export
                     PackedStaticVertex packed{};
                     packed.x = v.x;
                     packed.y = v.y;
-                    packed.z = v.z;
+                    packed.z = -v.z;
                     packed.nx = v.nx;
                     packed.ny = v.ny;
-                    packed.nz = v.nz;
+                    packed.nz = -v.nz;
                     packed.u = uv[0];
                     packed.v = uv[1];
                     packedVertices.push_back(packed);
 
                     info.minX = std::min(info.minX, v.x);
                     info.minY = std::min(info.minY, v.y);
-                    info.minZ = std::min(info.minZ, v.z);
+                    info.minZ = std::min(info.minZ, -v.z);
                     info.maxX = std::max(info.maxX, v.x);
                     info.maxY = std::max(info.maxY, v.y);
-                    info.maxZ = std::max(info.maxZ, v.z);
+                    info.maxZ = std::max(info.maxZ, -v.z);
                 }
 
                 const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
@@ -488,7 +490,12 @@ namespace DagorAssetsExtractor::Export
 
             if (!mesh.indices.empty())
             {
-                const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(mesh.indices.data());
+                std::vector<uint32_t> flippedIndices = mesh.indices;
+                for (size_t i = 0; i + 2 < flippedIndices.size(); i += 3)
+                {
+                    std::swap(flippedIndices[i + 1], flippedIndices[i + 2]);
+                }
+                const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(flippedIndices.data());
                 binBuffer.insert(binBuffer.end(), indexBytes, indexBytes + info.indexByteLength);
             }
 
@@ -815,13 +822,9 @@ namespace DagorAssetsExtractor::Export
             };
         };
 
-        const bool useSkinning = !skeleton.empty() &&
-            std::any_of(lods.begin(), lods.end(), [](const DagorFormats::DynModelMesh& mesh)
-            {
-                return mesh.useSkinning;
-            });
-
-        const bool usesSkeletonNodes = useSkinning;
+        // Strip skeleton from DynModel per user request
+        const bool useSkinning = false;
+        const bool usesSkeletonNodes = false;
 
         std::unordered_map<std::string, size_t> skeletonNodeLookup;
         skeletonNodeLookup.reserve(skeleton.size());
@@ -851,6 +854,7 @@ namespace DagorAssetsExtractor::Export
                 }
 
                 meshNodeMatrices[i] = transposeMatrix(skeleton[it->second].worldTransform);
+                ConvertMatrixHandedness(meshNodeMatrices[i]);
                 hasMeshNodeMatrix[i] = true;
             }
         }
@@ -930,25 +934,25 @@ namespace DagorAssetsExtractor::Export
                     PackedSkinnedVertex packed{};
                     packed.x = v.x;
                     packed.y = v.y;
-                    packed.z = v.z;
+                    packed.z = -v.z;
                     packed.nx = v.nx;
                     packed.ny = v.ny;
-                    packed.nz = v.nz;
+                    packed.nz = -v.nz;
                     packed.u = uv[0];
                     packed.v = uv[1];
-                    for (size_t joint = 0; joint < 4; ++joint)
+                    for (int j = 0; j < 4; ++j)
                     {
-                        packed.jointIndices[joint] = v.jointIndices[joint];
-                        packed.jointWeights[joint] = v.jointWeights[joint];
+                        packed.jointIndices[j] = v.jointIndices[j];
+                        packed.jointWeights[j] = v.jointWeights[j];
                     }
                     packedVertices.push_back(packed);
 
                     info.minX = std::min(info.minX, v.x);
                     info.minY = std::min(info.minY, v.y);
-                    info.minZ = std::min(info.minZ, v.z);
+                    info.minZ = std::min(info.minZ, -v.z);
                     info.maxX = std::max(info.maxX, v.x);
                     info.maxY = std::max(info.maxY, v.y);
-                    info.maxZ = std::max(info.maxZ, v.z);
+                    info.maxZ = std::max(info.maxZ, -v.z);
                 }
 
                 const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
@@ -967,7 +971,12 @@ namespace DagorAssetsExtractor::Export
 
             if (!mesh.indices.empty())
             {
-                const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(mesh.indices.data());
+                std::vector<uint32_t> flippedIndices = mesh.indices;
+                for (size_t i = 0; i + 2 < flippedIndices.size(); i += 3)
+                {
+                    std::swap(flippedIndices[i + 1], flippedIndices[i + 2]);
+                }
+                const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(flippedIndices.data());
                 binBuffer.insert(binBuffer.end(), indexBytes, indexBytes + info.indexByteLength);
             }
 
@@ -984,7 +993,8 @@ namespace DagorAssetsExtractor::Export
             ibmByteLength = skeleton.size() * 16 * sizeof(float);
             for (const auto& node : skeleton)
             {
-                const std::array<float, 16> gltfInverseBind = transposeMatrix(node.inverseBindTransform);
+                std::array<float, 16> gltfInverseBind = transposeMatrix(node.inverseBindTransform);
+                ConvertMatrixHandedness(gltfInverseBind);
                 const uint8_t* matrixBytes = reinterpret_cast<const uint8_t*>(gltfInverseBind.data());
                 binBuffer.insert(binBuffer.end(), matrixBytes, matrixBytes + 16 * sizeof(float));
             }
@@ -1067,7 +1077,8 @@ namespace DagorAssetsExtractor::Export
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
                 const auto& node = skeleton[i];
-                const std::array<float, 16> gltfMatrix = transposeMatrix(node.localTransform);
+                std::array<float, 16> gltfMatrix = transposeMatrix(node.localTransform);
+                ConvertMatrixHandedness(gltfMatrix);
                 json << "    {\n";
                 json << "      \"name\": \"" << JsonEscape(node.name) << "\",\n";
                 json << "      \"matrix\": [";

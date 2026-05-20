@@ -1,5 +1,6 @@
 #include "Platform.h"
 
+#include <cstdint>
 #include <iterator>
 
 namespace DagorAssetsExtractor::Platform {
@@ -173,6 +174,48 @@ namespace DagorAssetsExtractor::Platform {
         }
 
         return fs::current_path() / L"exports";
+    }
+
+    bool ShowPathInExplorer(const fs::path& path)
+    {
+#if defined(_WIN32)
+        std::error_code ec;
+        fs::path target = path;
+        if (target.empty())
+        {
+            return false;
+        }
+
+        if (fs::is_regular_file(target, ec))
+        {
+            const std::wstring arguments = L"/select,\"" + target.wstring() + L"\"";
+            const HINSTANCE result = ShellExecuteW(
+                nullptr,
+                L"open",
+                L"explorer.exe",
+                arguments.c_str(),
+                nullptr,
+                SW_SHOWNORMAL);
+            return reinterpret_cast<std::intptr_t>(result) > 32;
+        }
+
+        if (!fs::exists(target, ec) && target.has_parent_path())
+        {
+            target = target.parent_path();
+        }
+
+        const HINSTANCE result = ShellExecuteW(
+            nullptr,
+            L"open",
+            target.wstring().c_str(),
+            nullptr,
+            nullptr,
+            SW_SHOWNORMAL);
+        return reinterpret_cast<std::intptr_t>(result) > 32;
+#else
+        (void)path;
+        return false;
+#endif
     }
 
     std::optional<fs::path> BrowseForFolder(HWND owner, const wchar_t* title, const fs::path& initialPath)

@@ -1438,6 +1438,7 @@ namespace DagorAssetsExtractor::Export
             manifest.outputFiles.push_back(Platform::PathToUtf8(outputPath.filename()));
             manifest.appVersion = "0.1.0-alpha";
             manifest.formatDecoderVersion = "DdsxReader v1.0";
+            manifest.skipWrite = !options.exportJsonManifest;
             manifest.decodeWarnings = result.warnings;
             manifest.unsupportedFields.push_back(
                 "Decoded DDS export requires " + std::string(header.CompressionName()) + " decompression.");
@@ -1763,6 +1764,7 @@ namespace DagorAssetsExtractor::Export
                         manifest.outputFiles.push_back(Platform::PathToUtf8(outputPath.filename()));
                         manifest.appVersion = "0.1.0-alpha";
                         manifest.formatDecoderVersion = "DdsxReader v1.0";
+                        manifest.skipWrite = !options.exportJsonManifest;
 
                         for (const std::string& warning : result.warnings)
                         {
@@ -1820,6 +1822,7 @@ namespace DagorAssetsExtractor::Export
                 manifest.outputFiles.push_back(Platform::PathToUtf8(outputPath.filename()));
                 manifest.appVersion = "0.1.0-alpha";
                 manifest.formatDecoderVersion = "DdsxReader v1.0";
+                manifest.skipWrite = !options.exportJsonManifest;
 
                 if (NeedsDX10Header(exportHeader.d3dFormat))
                 {
