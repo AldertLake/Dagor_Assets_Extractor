@@ -282,13 +282,23 @@ namespace DagorAssetsExtractor::Export
             }
 
             std::vector<int> textureIndices(materials.size(), -1);
-            std::vector<size_t> texturedMaterials;
+            std::vector<std::string> textureUris;
+            std::unordered_map<std::string, int> textureIndexByUri;
             for (size_t i = 0; i < materials.size(); ++i)
             {
                 if (!materials[i].diffuseTexturePath.empty())
                 {
-                    textureIndices[i] = static_cast<int>(texturedMaterials.size());
-                    texturedMaterials.push_back(i);
+                    const auto existing = textureIndexByUri.find(materials[i].diffuseTexturePath);
+                    if (existing != textureIndexByUri.end())
+                    {
+                        textureIndices[i] = existing->second;
+                        continue;
+                    }
+
+                    const int textureIndex = static_cast<int>(textureUris.size());
+                    textureIndexByUri.emplace(materials[i].diffuseTexturePath, textureIndex);
+                    textureUris.push_back(materials[i].diffuseTexturePath);
+                    textureIndices[i] = textureIndex;
                 }
             }
 
@@ -315,26 +325,25 @@ namespace DagorAssetsExtractor::Export
             }
             json << "  ],\n";
 
-            if (texturedMaterials.empty())
+            if (textureUris.empty())
             {
                 return;
             }
 
             json << "  \"textures\": [\n";
-            for (size_t i = 0; i < texturedMaterials.size(); ++i)
+            for (size_t i = 0; i < textureUris.size(); ++i)
             {
                 json << "    { \"sampler\": 0, \"source\": " << i << " }";
-                if (i + 1 < texturedMaterials.size()) json << ",";
+                if (i + 1 < textureUris.size()) json << ",";
                 json << "\n";
             }
             json << "  ],\n";
 
             json << "  \"images\": [\n";
-            for (size_t i = 0; i < texturedMaterials.size(); ++i)
+            for (size_t i = 0; i < textureUris.size(); ++i)
             {
-                const MaterialInfo& material = materials[texturedMaterials[i]];
-                json << "    { \"uri\": \"" << JsonEscape(material.diffuseTexturePath) << "\" }";
-                if (i + 1 < texturedMaterials.size()) json << ",";
+                json << "    { \"uri\": \"" << JsonEscape(textureUris[i]) << "\" }";
+                if (i + 1 < textureUris.size()) json << ",";
                 json << "\n";
             }
             json << "  ],\n";

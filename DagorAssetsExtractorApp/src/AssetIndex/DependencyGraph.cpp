@@ -4,6 +4,8 @@
 #include "Platform/Platform.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -11,8 +13,10 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -23,6 +27,7 @@ namespace DagorAssetsExtractor::AssetIndex
     namespace
     {
         constexpr size_t MaxWarnings = 12;
+        constexpr size_t MaxDescriptorIndexThreads = 8;
         constexpr int DescriptorLinkerVersion = 6;
         constexpr int DescriptorLinkCacheVersion = 3;
 
@@ -1082,6 +1087,246 @@ namespace DagorAssetsExtractor::AssetIndex
             return score;
         }
 
+        size_t DescriptorIndexWorkerCount(size_t recordCount)
+        {
+            if (recordCount == 0)
+            {
+                return 0;
+            }
+
+            const unsigned int hardwareThreads = std::thread::hardware_concurrency();
+            const size_t hardwareCount = hardwareThreads == 0
+                ? 1
+                : static_cast<size_t>(hardwareThreads);
+            return std::max<size_t>(
+                1,
+                std::min({ recordCount, hardwareCount, MaxDescriptorIndexThreads }));
+        }
+
+        long long ElapsedMilliseconds(std::chrono::steady_clock::time_point start)
+        {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count();
+        }
+
+        bool BuildGrpMetadataIndexParallel(
+            const std::vector<const ResourceRecord*>& grpRecords,
+            uintmax_t maxPackBytes,
+            DescriptorResourceLinkBuildResult& result,
+            const DescriptorResourceLinkBuildOptions& options,
+            std::vector<LightweightGrpEntry>& grpEntries,
+            std::unordered_map<std::string, std::vector<size_t>>& grpIndex,
+            size_t& workDone,
+            size_t totalWork)
+        {
+            if (grpRecords.empty())
+            {
+                return true;
+            }
+
+            const size_t stageBaseWork = workDone;
+            const size_t workerCount = DescriptorIndexWorkerCount(grpRecords.size());
+            std::atomic<size_t> nextIndex{ 0 };
+            std::atomic<size_t> filesDone{ 0 };
+            std::atomic<bool> cancelRequested{ false };
+            std::mutex stateMutex;
+
+            auto worker = [&]() {
+                while (!cancelRequested.load(std::memory_order_relaxed))
+                {
+                    const size_t recordIndex = nextIndex.fetch_add(1, std::memory_order_relaxed);
+                    if (recordIndex >= grpRecords.size())
+                    {
+                        break;
+                    }
+
+                    const ResourceRecord& record = *grpRecords[recordIndex];
+                    const auto parseStart = std::chrono::steady_clock::now();
+                    std::vector<LightweightGrpEntry> localEntries;
+                    std::string error;
+                    const bool parsed = ParseGrpMetadataForLinking(record.path, maxPackBytes, localEntries, error);
+                    const long long elapsedMs = ElapsedMilliseconds(parseStart);
+
+                    std::lock_guard<std::mutex> lock(stateMutex);
+                    if (parsed)
+                    {
+                        const size_t before = grpEntries.size();
+                        grpEntries.insert(
+                            grpEntries.end(),
+                            std::make_move_iterator(localEntries.begin()),
+                            std::make_move_iterator(localEntries.end()));
+                        for (size_t i = before; i < grpEntries.size(); ++i)
+                        {
+                            AddIndexKeys<LightweightGrpEntry>(grpIndex, grpEntries[i].name, i);
+                        }
+                        ++result.grpPacksParsed;
+                    }
+                    else if (!error.empty())
+                    {
+                        AddWarning(result, error);
+                    }
+
+                    const size_t completed = filesDone.fetch_add(1, std::memory_order_relaxed) + 1;
+                    std::string item = Platform::PathToUtf8(record.path.filename());
+                    if (parsed)
+                    {
+                        item += " indexed " + std::to_string(localEntries.size()) +
+                            " resources in " + std::to_string(elapsedMs) +
+                            " ms (" + std::to_string(grpEntries.size()) + " total)";
+                    }
+                    else
+                    {
+                        item += " failed in " + std::to_string(elapsedMs) + " ms";
+                    }
+
+                    if (!ReportDescriptorProgress(
+                            result,
+                            options,
+                            "GRP index",
+                            std::move(item),
+                            stageBaseWork + completed,
+                            totalWork))
+                    {
+                        cancelRequested.store(true, std::memory_order_relaxed);
+                    }
+                }
+            };
+
+            std::vector<std::thread> workers;
+            workers.reserve(workerCount);
+            for (size_t i = 0; i < workerCount; ++i)
+            {
+                workers.emplace_back(worker);
+            }
+            for (std::thread& thread : workers)
+            {
+                thread.join();
+            }
+
+            workDone = stageBaseWork + filesDone.load(std::memory_order_relaxed);
+            return !result.canceled;
+        }
+
+        bool BuildDxpMetadataIndexParallel(
+            const std::vector<const ResourceRecord*>& dxpRecords,
+            const std::vector<std::vector<std::string>>& focusedTextureKeySets,
+            DescriptorResourceLinkBuildResult& result,
+            const DescriptorResourceLinkBuildOptions& options,
+            std::vector<LightweightDxpEntry>& dxpEntries,
+            std::unordered_map<std::string, std::vector<size_t>>& dxpIndex,
+            size_t& workDone,
+            size_t totalWork)
+        {
+            if (dxpRecords.empty())
+            {
+                return true;
+            }
+
+            const size_t stageBaseWork = workDone;
+            const size_t workerCount = DescriptorIndexWorkerCount(dxpRecords.size());
+            std::atomic<size_t> nextIndex{ 0 };
+            std::atomic<size_t> filesDone{ 0 };
+            std::atomic<bool> stopRequested{ false };
+            std::atomic<bool> matchedFocusedTextures{ false };
+            std::mutex stateMutex;
+
+            auto worker = [&]() {
+                while (!stopRequested.load(std::memory_order_relaxed))
+                {
+                    const size_t recordIndex = nextIndex.fetch_add(1, std::memory_order_relaxed);
+                    if (recordIndex >= dxpRecords.size())
+                    {
+                        break;
+                    }
+
+                    const ResourceRecord& record = *dxpRecords[recordIndex];
+                    const auto parseStart = std::chrono::steady_clock::now();
+                    std::vector<LightweightDxpEntry> localEntries;
+                    std::string error;
+                    const bool parsed = ParseDxpMetadataForLinking(record.path, localEntries, error);
+                    const long long elapsedMs = ElapsedMilliseconds(parseStart);
+
+                    std::lock_guard<std::mutex> lock(stateMutex);
+                    if (parsed)
+                    {
+                        const size_t before = dxpEntries.size();
+                        dxpEntries.insert(
+                            dxpEntries.end(),
+                            std::make_move_iterator(localEntries.begin()),
+                            std::make_move_iterator(localEntries.end()));
+                        for (size_t i = before; i < dxpEntries.size(); ++i)
+                        {
+                            AddIndexKeys<LightweightDxpEntry>(dxpIndex, dxpEntries[i].name, i);
+                        }
+                        ++result.dxpPacksParsed;
+                    }
+                    else if (!error.empty())
+                    {
+                        AddWarning(result, error);
+                    }
+
+                    const size_t completed = filesDone.fetch_add(1, std::memory_order_relaxed) + 1;
+                    std::string item = Platform::PathToUtf8(record.path.filename());
+                    if (parsed)
+                    {
+                        item += " indexed " + std::to_string(localEntries.size()) +
+                            " textures in " + std::to_string(elapsedMs) +
+                            " ms (" + std::to_string(dxpEntries.size()) + " total)";
+                    }
+                    else
+                    {
+                        item += " failed in " + std::to_string(elapsedMs) + " ms";
+                    }
+
+                    if (!ReportDescriptorProgress(
+                            result,
+                            options,
+                            "DXP index",
+                            std::move(item),
+                            stageBaseWork + completed,
+                            totalWork))
+                    {
+                        stopRequested.store(true, std::memory_order_relaxed);
+                        continue;
+                    }
+
+                    if (!focusedTextureKeySets.empty() &&
+                        !matchedFocusedTextures.load(std::memory_order_relaxed) &&
+                        AllTextureKeySetsIndexed(focusedTextureKeySets, dxpIndex))
+                    {
+                        matchedFocusedTextures.store(true, std::memory_order_relaxed);
+                        stopRequested.store(true, std::memory_order_relaxed);
+                        if (!ReportDescriptorProgress(
+                                result,
+                                options,
+                                "DXP index",
+                                "Selected texture set matched after " +
+                                    std::to_string(result.dxpPacksParsed) + " DXP pack" +
+                                    (result.dxpPacksParsed == 1 ? "" : "s"),
+                                stageBaseWork + completed,
+                                totalWork))
+                        {
+                            result.canceled = true;
+                        }
+                    }
+                }
+            };
+
+            std::vector<std::thread> workers;
+            workers.reserve(workerCount);
+            for (size_t i = 0; i < workerCount; ++i)
+            {
+                workers.emplace_back(worker);
+            }
+            for (std::thread& thread : workers)
+            {
+                thread.join();
+            }
+
+            workDone = stageBaseWork + filesDone.load(std::memory_order_relaxed);
+            return !result.canceled;
+        }
+
         const LightweightGrpEntry* FindBestGrpEntry(
             const SubAssetRecord& descriptorEntry,
             const fs::path& descriptorPath,
@@ -1455,35 +1700,17 @@ namespace DagorAssetsExtractor::AssetIndex
             return result;
         }
 
-        for (const ResourceRecord* record : grpRecords)
+        if (!BuildGrpMetadataIndexParallel(
+                grpRecords,
+                options.maxPackBytes,
+                result,
+                options,
+                grpEntries,
+                grpIndex,
+                workDone,
+                totalWork))
         {
-            const size_t before = grpEntries.size();
-            std::string error;
-            if (ParseGrpMetadataForLinking(record->path, options.maxPackBytes, grpEntries, error))
-            {
-                ++result.grpPacksParsed;
-                for (size_t i = before; i < grpEntries.size(); ++i)
-                {
-                    AddIndexKeys<LightweightGrpEntry>(grpIndex, grpEntries[i].name, i);
-                }
-            }
-            else
-            {
-                AddWarning(result, error);
-            }
-
-            ++workDone;
-            if (!ReportDescriptorProgress(
-                    result,
-                    options,
-                    "GRP index",
-                    Platform::PathToUtf8(record->path.filename()) + " (" +
-                        std::to_string(grpEntries.size()) + " resources indexed)",
-                    workDone,
-                    totalWork))
-            {
-                return result;
-            }
+            return result;
         }
 
         std::vector<std::string> focusedResourceNames;
@@ -1558,51 +1785,17 @@ namespace DagorAssetsExtractor::AssetIndex
             return result;
         }
 
-        for (const ResourceRecord* record : dxpRecords)
+        if (!BuildDxpMetadataIndexParallel(
+                dxpRecords,
+                focusedTextureKeySets,
+                result,
+                options,
+                dxpEntries,
+                dxpIndex,
+                workDone,
+                totalWork))
         {
-            const size_t before = dxpEntries.size();
-            std::string error;
-            if (ParseDxpMetadataForLinking(record->path, dxpEntries, error))
-            {
-                ++result.dxpPacksParsed;
-                for (size_t i = before; i < dxpEntries.size(); ++i)
-                {
-                    AddIndexKeys<LightweightDxpEntry>(dxpIndex, dxpEntries[i].name, i);
-                }
-            }
-            else
-            {
-                AddWarning(result, error);
-            }
-
-            ++workDone;
-            if (!ReportDescriptorProgress(
-                    result,
-                    options,
-                    "DXP index",
-                    Platform::PathToUtf8(record->path.filename()) + " (" +
-                        std::to_string(dxpEntries.size()) + " textures indexed)",
-                    workDone,
-                    totalWork))
-            {
-                return result;
-            }
-
-            if (!focusedTextureKeySets.empty() && AllTextureKeySetsIndexed(focusedTextureKeySets, dxpIndex))
-            {
-                if (!ReportDescriptorProgress(
-                        result,
-                        options,
-                        "DXP index",
-                        "Selected texture set matched after " + std::to_string(result.dxpPacksParsed) +
-                            " DXP pack" + (result.dxpPacksParsed == 1 ? "" : "s"),
-                        workDone,
-                        totalWork))
-                {
-                    return result;
-                }
-                break;
-            }
+            return result;
         }
 
         if (!ReportDescriptorProgress(

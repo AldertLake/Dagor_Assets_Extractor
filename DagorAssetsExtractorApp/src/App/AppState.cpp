@@ -990,6 +990,16 @@ namespace DagorAssetsExtractor::App
         auto allRecords = SnapshotRecords(app.scan);
         auto textureExportOptions = GetTextureExportOptions(app);
         textureExportOptions.outputDir = exportRoot;
+        const bool exportGlb = AssetIndex::ToLowerAscii(format) == "glb";
+        if (exportGlb && exportTextures)
+        {
+            textureExportOptions.format = "PNG";
+            textureExportOptions.preserveOriginalDDS = false;
+            AddLog(app,
+                LogLevel::Info,
+                "GLB material texture export for " + entry.name +
+                " will use PNG only; DDS/TGA are not core glTF image formats and will not be linked into GLB materials.");
+        }
 
         app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, exportTextures, descriptorLinks, allRecords, textureExportOptions]() {
             try
@@ -1095,7 +1105,11 @@ namespace DagorAssetsExtractor::App
                                     }
                                     else
                                     {
-                                        manifest.decodeWarnings.push_back("Failed to export texture dependency: " + texLink.textureName + " (" + texResult.error + ")");
+                                        const std::string warning =
+                                            "Failed to export texture dependency: " + texLink.textureName +
+                                            " (" + texResult.error + ")";
+                                        manifest.decodeWarnings.push_back(warning);
+                                        AddLog(app, LogLevel::Warning, warning);
                                     }
                                 }
                             }
