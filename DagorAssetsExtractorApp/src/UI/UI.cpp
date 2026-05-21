@@ -1,4 +1,5 @@
 #include "UI/UI.h"
+#include "UI/UiAssets.h"
 #include "App/AppState.h"
 #include "Platform/Platform.h"
 #include "AssetIndex/AssetIndex.h"
@@ -219,6 +220,155 @@ namespace DagorAssetsExtractor::UI
         }
     }
 
+    constexpr float kPanelIconSpacing = 6.0f;
+    constexpr float kRowIconSize = 16.0f;
+    constexpr float kButtonIconSpacing = 6.0f;
+
+    float GetInlineIconSize()
+    {
+        return std::max(12.0f, ImGui::GetTextLineHeight());
+    }
+
+    ImVec2 CalcButtonSize(const char* label)
+    {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        return ImVec2(
+            textSize.x + style.FramePadding.x * 2.0f,
+            textSize.y + style.FramePadding.y * 2.0f);
+    }
+
+    ImVec2 CalcIconButtonSize(const char* label, bool hasIcon)
+    {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        const float iconSize = hasIcon ? GetInlineIconSize() : 0.0f;
+        const float width = textSize.x + style.FramePadding.x * 2.0f + (hasIcon ? iconSize + kButtonIconSpacing : 0.0f);
+        const float height = std::max(textSize.y, iconSize) + style.FramePadding.y * 2.0f;
+        return ImVec2(width, height);
+    }
+
+    void DrawPanelTitle(UiIconId iconId, const char* title)
+    {
+        const UiIcon* icon = GetUiIcon(iconId);
+        ImGui::BeginGroup();
+        ImGui::AlignTextToFramePadding();
+        if (icon && icon->view != nullptr)
+        {
+            const float iconSize = GetInlineIconSize();
+            const ImVec2 textSize = ImGui::CalcTextSize(title);
+            const ImGuiStyle& style = ImGui::GetStyle();
+            const ImVec2 cursor = ImGui::GetCursorScreenPos();
+            const float iconY = cursor.y + style.FramePadding.y + ((textSize.y - iconSize) * 0.5f);
+            ImGui::GetWindowDrawList()->AddImage(
+                reinterpret_cast<ImTextureID>(icon->view),
+                ImVec2(cursor.x, iconY),
+                ImVec2(cursor.x + iconSize, iconY + iconSize));
+            ImGui::Dummy(ImVec2(iconSize, iconSize));
+            ImGui::SameLine(0.0f, kPanelIconSpacing);
+        }
+        ImGui::TextUnformatted(title);
+        ImGui::EndGroup();
+    }
+
+    void DrawInlineIconLabel(UiIconId iconId, const char* label)
+    {
+        const UiIcon* icon = GetUiIcon(iconId);
+        if (icon && icon->view != nullptr)
+        {
+            ImGui::Image(reinterpret_cast<ImTextureID>(icon->view), ImVec2(kRowIconSize, kRowIconSize));
+            ImGui::SameLine(0.0f, 6.0f);
+        }
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+    }
+
+    bool DrawIconTextButton(const char* id, UiIconId iconId, const char* label)
+    {
+        const UiIcon* icon = GetUiIcon(iconId);
+        const bool hasIcon = icon != nullptr && icon->view != nullptr;
+        const float iconSize = hasIcon ? GetInlineIconSize() : 0.0f;
+        const ImVec2 size = CalcIconButtonSize(label, hasIcon);
+        const bool pressed = ImGui::Button(id, size);
+
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        if (hasIcon)
+        {
+            const float iconY = min.y + (size.y - iconSize) * 0.5f;
+            drawList->AddImage(
+                reinterpret_cast<ImTextureID>(icon->view),
+                ImVec2(min.x + style.FramePadding.x, iconY),
+                ImVec2(min.x + style.FramePadding.x + iconSize, iconY + iconSize));
+        }
+
+        const float textX = min.x + style.FramePadding.x + (hasIcon ? iconSize + kButtonIconSpacing : 0.0f);
+        const float textY = min.y + (size.y - textSize.y) * 0.5f;
+        drawList->AddText(ImVec2(textX, textY), ImGui::GetColorU32(ImGuiCol_Text), label);
+        return pressed;
+    }
+
+    UiIconId GetSubAssetIconId(const AssetIndex::SubAssetRecord& entry, AssetType containerType)
+    {
+        if (containerType == AssetType::Dxp)
+        {
+            return UiIconId::Texture;
+        }
+
+        std::string typeToken = AssetIndex::ToLowerAscii(entry.formatInfo);
+        if (typeToken.empty())
+        {
+            typeToken = AssetIndex::ToLowerAscii(entry.name);
+        }
+
+        const auto contains = [&](const char* needle) -> bool
+        {
+            return typeToken.find(needle) != std::string::npos;
+        };
+
+        if (contains("physobj"))
+        {
+            return UiIconId::Physics;
+        }
+        if (contains("collision"))
+        {
+            return UiIconId::Collision;
+        }
+        if (contains("dynmodel"))
+        {
+            return UiIconId::DynModel;
+        }
+        if (contains("geomnodetree"))
+        {
+            return UiIconId::GeomNodeTree;
+        }
+        if (contains("rendinst"))
+        {
+            return UiIconId::RendInst;
+        }
+        if (contains("anim2data"))
+        {
+            return UiIconId::Anim2Data;
+        }
+        if (contains("character"))
+        {
+            return UiIconId::Character;
+        }
+        if (contains("animgraph"))
+        {
+            return UiIconId::AnimGraph;
+        }
+        if (contains("texture") || contains("tex"))
+        {
+            return UiIconId::Texture;
+        }
+
+        return UiIconId::Invalid;
+    }
+
     void DrawValidationSummary(const AssetIndex::ValidationResult& validation)
     {
         ImGui::TextColored(validation.IsValid() ? ImVec4(0.43f, 0.86f, 0.55f, 1.0f) : ImVec4(1.0f, 0.49f, 0.42f, 1.0f),
@@ -330,9 +480,14 @@ namespace DagorAssetsExtractor::UI
             app.validation.IsValid() ? ImVec4(0.43f, 0.86f, 0.55f, 1.0f) : ImVec4(1.0f, 0.49f, 0.42f, 1.0f),
             app.validation.IsValid() ? "Ready" : "Game folder required");
 
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 185.0f);
+        const UiIcon* rebuildIcon = GetUiIcon(UiIconId::Rebuild);
+        const bool rebuildHasIcon = rebuildIcon != nullptr && rebuildIcon->view != nullptr;
+        const ImVec2 rebuildButtonSize = CalcIconButtonSize("Rebuild Index", rebuildHasIcon);
+        const ImVec2 cancelButtonSize = CalcButtonSize("Cancel");
+        const float buttonsWidth = rebuildButtonSize.x + ImGui::GetStyle().ItemSpacing.x + cancelButtonSize.x;
+        ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x - buttonsWidth));
         ImGui::BeginDisabled(!app.validation.IsValid() || app.scan.running.load());
-        if (ImGui::Button("Rebuild Index", ImVec2(110.0f, 0.0f)))
+        if (DrawIconTextButton("##rebuild_index", UiIconId::Rebuild, "Rebuild Index"))
         {
             App::StartScan(app);
         }
@@ -340,7 +495,7 @@ namespace DagorAssetsExtractor::UI
 
         ImGui::SameLine();
         ImGui::BeginDisabled(!app.scan.running.load());
-        if (ImGui::Button("Cancel", ImVec2(70.0f, 0.0f)))
+        if (ImGui::Button("Cancel", cancelButtonSize))
         {
             app.scan.cancelRequested.store(true);
         }
@@ -451,7 +606,7 @@ namespace DagorAssetsExtractor::UI
 
     void DrawLeftPanel(AppState& app, const std::vector<ResourceRecord>& records)
     {
-        ImGui::TextUnformatted("Game Install");
+        DrawPanelTitle(UiIconId::GameInstall, "Game Install");
         ImGui::Separator();
         if (app.settings.gameRoot.empty())
         {
@@ -529,7 +684,7 @@ namespace DagorAssetsExtractor::UI
 
     void DrawContentBrowser(AppState& app, const std::shared_ptr<const std::vector<ResourceRecord>>& recordsPtr)
     {
-        ImGui::TextUnformatted("Content Browser");
+        DrawPanelTitle(UiIconId::ContentBrowser, "Content Browser");
         ImGui::Separator();
 
         ImGui::SetNextItemWidth(-1.0f);
@@ -908,14 +1063,10 @@ namespace DagorAssetsExtractor::UI
                         {
                             ImGui::SetTooltip("The matched GRP entry name is missing.");
                         }
-                        else if (!link.matchedGrpClassName.empty())
-                        {
-                            ImGui::SetTooltip("Only RendInst static meshes and DynModel skinned meshes can be exported right now. This descriptor resolves to %s.",
-                                link.matchedGrpClassName.c_str());
-                        }
                         else
                         {
-                            ImGui::SetTooltip("Only RendInst and DynModel meshes can be exported right now.");
+                            std::string tooltip = AssetIndex::GetUnsupportedExportTooltip(link.matchedGrpClassId, link.matchedGrpClassName);
+                            ImGui::SetTooltip("%s", tooltip.c_str());
                         }
                     }
                     ImGui::EndDisabled();
@@ -1053,7 +1204,7 @@ namespace DagorAssetsExtractor::UI
 
     void DrawInspector(AppState& app, const std::vector<ResourceRecord>& records)
     {
-        ImGui::TextUnformatted("Inspector");
+        DrawPanelTitle(UiIconId::Inspect, "Inspector");
         ImGui::Separator();
 
         const std::optional<ResourceRecord> selected = FindSelectedRecord(app, records);
@@ -1205,7 +1356,7 @@ namespace DagorAssetsExtractor::UI
                             if (isDesc)
                             {
                                 ImGui::TableSetColumnIndex(0);
-                                ImGui::TextUnformatted(entry.name.c_str());
+                                DrawInlineIconLabel(GetSubAssetIconId(entry, selected->type), entry.name.c_str());
 
                                 ImGui::TableSetColumnIndex(1);
                                 ImGui::Text("0x%X", entry.resId);
@@ -1260,7 +1411,7 @@ namespace DagorAssetsExtractor::UI
                             else
                             {
                                 ImGui::TableSetColumnIndex(0);
-                                ImGui::TextUnformatted(entry.name.c_str());
+                                DrawInlineIconLabel(GetSubAssetIconId(entry, selected->type), entry.name.c_str());
 
                                 ImGui::TableSetColumnIndex(1);
                                 ImGui::Text("0x%X", entry.offset);
@@ -1284,42 +1435,49 @@ namespace DagorAssetsExtractor::UI
                                 if (hasActions)
                                 {
                                     ImGui::TableSetColumnIndex((isDxp || isGrp) ? 4 : 3);
-                                    std::string btnLabel = "Export##" + entry.name;
-                                    const bool canExportStatic = AssetIndex::CanExportGrpEntryAsStaticModel(entry);
-                                    const bool canExportSkinned = AssetIndex::CanExportGrpEntryAsSkinnedModel(entry);
-                                    const bool canExportModel = !isGrp || canExportStatic || canExportSkinned;
                                     
-                                    ImGui::BeginDisabled(isGrp && !canExportModel);
-                                    if (ImGui::Button(btnLabel.c_str()))
+                                    const bool exportSupported = AssetIndex::IsExportSupported(entry, selected->type);
+                                    if (exportSupported)
                                     {
-                                        if (isDxp)
+                                        std::string btnLabel = "Export##" + entry.name;
+                                        const bool canExportSkinned = AssetIndex::CanExportGrpEntryAsSkinnedModel(entry);
+                                        
+                                        if (ImGui::Button(btnLabel.c_str()))
                                         {
-                                            App::RequestTextureExport(app, selected->path, entry);
-                                        }
-                                        else if (isGrp)
-                                        {
-                                            if (canExportSkinned)
+                                            if (isDxp)
                                             {
-                                                App::OpenDynModelExportModal(app, selected->path, entry);
+                                                App::RequestTextureExport(app, selected->path, entry);
                                             }
-                                            else
+                                            else if (isGrp)
                                             {
-                                                App::RequestModelExport(app, selected->path, entry);
+                                                if (canExportSkinned)
+                                                {
+                                                    App::OpenDynModelExportModal(app, selected->path, entry);
+                                                }
+                                                else
+                                                {
+                                                    App::RequestModelExport(app, selected->path, entry);
+                                                }
                                             }
                                         }
                                     }
-                                    if (isGrp && !canExportModel && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                                    else
                                     {
-                                        if (!entry.formatInfo.empty())
+                                        ImGui::AlignTextToFramePadding();
+                                        ImGui::TextUnformatted("Source");
+                                        if (ImGui::IsItemHovered())
                                         {
-                                            ImGui::SetTooltip("Only RendInst static meshes and DynModel skinned meshes can be exported right now. This entry is %s.", entry.formatInfo.c_str());
-                                        }
-                                        else
-                                        {
-                                            ImGui::SetTooltip("Only RendInst and DynModel meshes can be exported right now.");
+                                            if (isGrp)
+                                            {
+                                                std::string tooltip = AssetIndex::GetUnsupportedExportTooltip(entry);
+                                                ImGui::SetTooltip("%s", tooltip.c_str());
+                                            }
+                                            else if (isDxp)
+                                            {
+                                                ImGui::SetTooltip("Direct export from the list is not supported for textures. Use 'Batch Export All' above.");
+                                            }
                                         }
                                     }
-                                    ImGui::EndDisabled();
                                 }
                             }
                             ImGui::PopID();
@@ -1368,7 +1526,7 @@ namespace DagorAssetsExtractor::UI
 
     void DrawJobAndLogPanel(AppState& app)
     {
-        ImGui::TextUnformatted("Jobs and Logs");
+        DrawPanelTitle(UiIconId::Log, "Jobs and Logs");
         ImGui::Separator();
         ImGui::Text("Scan: %s", App::GetScanStatus(app.scan).c_str());
         ImGui::SameLine();
@@ -1612,11 +1770,18 @@ namespace DagorAssetsExtractor::UI
             return;
         }
 
-        ImGui::TextWrapped("Lightweight read-only browser and exporter foundation for local Dagor resource packs.");
+        ImGui::TextWrapped("Dagor Assets Extractor is a read-only desktop browser and exporter for War Thunder Dagor resource packs.");
         ImGui::Separator();
-        ImGui::BulletText("Current build: app shell, settings, validation, resource discovery, pack contents, BLK preview.");
-        ImGui::BulletText("Game files are only scanned and are not modified.");
-        ImGui::BulletText("Texture and model parsing/export are future milestones.");
+        ImGui::BulletText("Scans the local game install and builds a searchable content browser.");
+        ImGui::BulletText("Inspects GRP, DXP, VROMFS, descriptor, and BLK data without modifying game files.");
+        ImGui::BulletText("Exports readable textures and models for modding workflows.");
+        ImGui::Spacing();
+        if (DrawIconTextButton("##about_github", UiIconId::Github, "Open Source on GitHub"))
+        {
+            Platform::OpenUrl(L"https://github.com/AldertLake/Dagor_Assets_Extractor");
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Credit: AldertLake");
         ImGui::End();
     }
 

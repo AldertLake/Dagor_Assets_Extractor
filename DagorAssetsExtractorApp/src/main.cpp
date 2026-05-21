@@ -25,6 +25,25 @@ namespace
     IDXGISwapChain* GSwapChain = nullptr;
     ID3D11RenderTargetView* GMainRenderTargetView = nullptr;
 
+    HICON LoadWindowIcon(const std::filesystem::path& path, int width, int height)
+    {
+        const std::wstring filePath = path.wstring();
+        HICON icon = reinterpret_cast<HICON>(LoadImageW(
+            nullptr,
+            filePath.c_str(),
+            IMAGE_ICON,
+            width,
+            height,
+            LR_LOADFROMFILE));
+
+        if (icon == nullptr)
+        {
+            icon = LoadIconW(nullptr, IDI_APPLICATION);
+        }
+
+        return icon;
+    }
+
     void CreateRenderTarget()
     {
         ID3D11Texture2D* backBuffer = nullptr;
@@ -166,6 +185,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     windowClass.lpfnWndProc = WndProc;
     windowClass.hInstance = instance;
     windowClass.lpszClassName = L"DagorAssetsExtractorWindowClass";
+    const std::filesystem::path uiAssetPath = DagorAssetsExtractor::Platform::GetUiAssetPath();
+    windowClass.hIcon = LoadWindowIcon(uiAssetPath / L"DAE.ico", GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
+    windowClass.hIconSm = LoadWindowIcon(uiAssetPath / L"DAE.ico", GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
 
     if (RegisterClassExW(&windowClass) == 0)
     {
@@ -199,6 +221,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         return 1;
     }
 
+    SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(windowClass.hIcon));
+    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(windowClass.hIconSm));
+
     if (!CreateDeviceD3D(hwnd))
     {
         CleanupDeviceD3D();
@@ -222,6 +247,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(GDevice, GDeviceContext);
+    DagorAssetsExtractor::UI::InitializeUiAssets(GDevice);
 
     AppState app;
     app.hwnd = hwnd;
@@ -294,6 +320,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     DagorAssetsExtractor::App::StopScan(app);
     DagorAssetsExtractor::App::WaitForBackgroundJobs(app);
 
+    DagorAssetsExtractor::UI::ShutdownUiAssets();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();

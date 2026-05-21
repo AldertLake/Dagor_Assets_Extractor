@@ -63,7 +63,10 @@
       <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>if exist "$(ProjectDir)..\third_party\oo2core_6_win64.dll" copy /Y "$(ProjectDir)..\third_party\oo2core_6_win64.dll" "$(OutDir)oo2core_6_win64.dll" &gt;nul</Command>
+      <Command>if exist "$(ProjectDir)..\third_party\oo2core_6_win64.dll" copy /Y "$(ProjectDir)..\third_party\oo2core_6_win64.dll" "$(OutDir)oo2core_6_win64.dll" &gt;nul
+robocopy "$(ProjectDir)assets\ui" "$(OutDir)assets\ui" /E /NFL /NDL /NJH /NJS /NP /XO
+if %ERRORLEVEL% LEQ 7 exit /b 0
+exit /b %ERRORLEVEL%</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -85,7 +88,10 @@
       <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>if exist "$(ProjectDir)..\third_party\oo2core_6_win64.dll" copy /Y "$(ProjectDir)..\third_party\oo2core_6_win64.dll" "$(OutDir)oo2core_6_win64.dll" &gt;nul</Command>
+      <Command>if exist "$(ProjectDir)..\third_party\oo2core_6_win64.dll" copy /Y "$(ProjectDir)..\third_party\oo2core_6_win64.dll" "$(OutDir)oo2core_6_win64.dll" &gt;nul
+robocopy "$(ProjectDir)assets\ui" "$(OutDir)assets\ui" /E /NFL /NDL /NJH /NJS /NP /XO
+if %ERRORLEVEL% LEQ 7 exit /b 0
+exit /b %ERRORLEVEL%</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -117,6 +123,7 @@
     <ClCompile Include="src\Export\TextureExporter.cpp" />
     <ClCompile Include="src\Export\ModelExporter.cpp" />
     <ClCompile Include="src\UI\UI.cpp" />
+    <ClCompile Include="src\UI\UiAssets.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_demo.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_draw.cpp" />
@@ -151,11 +158,16 @@
     <ClInclude Include="src\Export\TextureExporter.h" />
     <ClInclude Include="src\Export\ModelExporter.h" />
     <ClInclude Include="src\UI\UI.h" />
+    <ClInclude Include="src\UI\UiAssets.h" />
     <ClInclude Include="..\third_party\imgui\imgui.h" />
     <ClInclude Include="..\third_party\imgui\imgui_internal.h" />
     <ClInclude Include="..\third_party\imgui\imconfig.h" />
     <ClInclude Include="..\third_party\imgui\backends\imgui_impl_dx11.h" />
     <ClInclude Include="..\third_party\imgui\backends\imgui_impl_win32.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\source\**\*.*" />
+    <None Include="assets\ui\**\*.*" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

@@ -84,6 +84,63 @@ namespace DagorAssetsExtractor::AssetIndex
         return entry.grpClassId == kDynModelGameResClassId;
     }
 
+    bool IsExportSupported(const SubAssetRecord& entry, AssetType containerType)
+    {
+        if (containerType == AssetType::Grp)
+        {
+            return CanExportGrpEntryAsStaticModel(entry) || CanExportGrpEntryAsSkinnedModel(entry);
+        }
+        else if (containerType == AssetType::Dxp)
+        {
+            return true;
+        }
+        return false;
+    }
+
+    std::string GetUnsupportedExportTooltip(uint32_t grpClassId, const std::string& fallbackClassName)
+    {
+        switch (grpClassId)
+        {
+        case kGeomNodeTreeGameResClassId:
+            return "Skeletal rigs / skeleton hierarchies are engine-only resources and cannot be exported as 3D meshes.";
+        case kAnim2DataGameResClassId:
+        case kAnimBnlGameResClassId:
+        case kAnimGraphGameResClassId:
+            return "Animations and animation structures are engine-only assets and cannot be exported directly.";
+        case kCollisionGameResClassId:
+            return "Collision geometry is an engine-only resource and cannot be exported as a 3D mesh.";
+        case kPhysSysGameResClassId:
+        case kPhysObjGameResClassId:
+        case kRagdollGameResClassId:
+        case kFastPhysDataGameResClassId:
+            return "Physics parameters and physics objects are engine-only resources and cannot be exported.";
+        case kCharacterGameResClassId:
+            return "Character metadata definitions are engine-only resources and cannot be exported.";
+        case kEffectGameResClassId:
+            return "Particle effects are engine-only assets and cannot be exported.";
+        default:
+        {
+            std::string name = fallbackClassName;
+            if (name.empty())
+            {
+                name = DescribeGrpClassId(grpClassId);
+            }
+            if (name.empty())
+            {
+                char classIdText[32] = {};
+                std::snprintf(classIdText, sizeof(classIdText), "class 0x%08X", grpClassId);
+                name = classIdText;
+            }
+            return "This engine asset type (" + name + ") is an internal resource and cannot be exported.";
+        }
+        }
+    }
+
+    std::string GetUnsupportedExportTooltip(const SubAssetRecord& entry)
+    {
+        return GetUnsupportedExportTooltip(entry.grpClassId, entry.formatInfo);
+    }
+
     // -- PackContentsCache ----------------------------------------------------
 
     std::shared_ptr<const PackContents> PackContentsCache::Get(const fs::path& packPath) const

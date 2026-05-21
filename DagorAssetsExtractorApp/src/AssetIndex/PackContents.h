@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AssetIndex/AssetIndex.h"
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
@@ -122,6 +123,13 @@ namespace DagorAssetsExtractor::AssetIndex
 
     // Whether the current tool can export this GRP entry as a skinned model.
     bool CanExportGrpEntryAsSkinnedModel(const SubAssetRecord& entry);
+
+    // Check if sub-asset export is supported for the given entry and container type.
+    bool IsExportSupported(const SubAssetRecord& entry, AssetType containerType);
+
+    // Get an informative tooltip message describing why export is unsupported for this sub-asset.
+    std::string GetUnsupportedExportTooltip(const SubAssetRecord& entry);
+    std::string GetUnsupportedExportTooltip(uint32_t grpClassId, const std::string& fallbackClassName);
 
     // Parse the contents of a GameRes descriptor file (.bin) from disk.
     // Returns a PackContents with entries populated, or with error set.

@@ -363,3 +363,11 @@ AI models picking up the next coding task should prioritize the following object
 * **Reusable Export Progress UI**: Reused the generic progress-job window for model export, single texture export, and batch texture export. Export jobs now show staged status/log output, observe cancel requests at safe points, and expose a `Show in Explorer` button when a result path is available.
 * **Regression Coverage**: Added a descriptor-link test proving zero-payload DXP entries are not matched as texture dependencies.
 * **Verification**: Rebuilt with `powershell -ExecutionPolicy Bypass -File scripts\run_tests.ps1`; result: 0 build warnings/errors and all tests passing.
+
+### Day 43: UI Icon Styling and Branding Slice
+* **Asset Bundle Import**: Copied the provided UI artwork into `DagorAssetsExtractorApp/assets/source` and generated runtime PNG copies in `DagorAssetsExtractorApp/assets/ui` so the app can ship the requested icons without needing an SVG renderer at runtime.
+* **Panel and Button Styling**: Added icon-aware panel headers for Game Install, Content Browser, Inspector, and Jobs and Logs. The header `Rebuild Index` control now uses the requested rebuild icon.
+* **Sub-Asset Type Icons**: Added per-row icons in the sub-assets table for textures, PhysObj, collision, DynModel, GeomNodeTree, RendInst, Anim2Data, Character, and AnimGraph, with the Invalid icon as fallback.
+* **Branding / About**: Set the application window icon from `DAE.ico` and updated the About window with a GitHub action button plus AldertLake credit and a clearer open-source description.
+* **Build Output**: Added the runtime icon bundle copy step to the VCXPROJ so `assets/ui` is present beside the exe in Debug and Release builds.
+* **Verification**: Built `Debug|x64` successfully with MSBuild. `scripts/run_tests.ps1` still reports unrelated existing exporter/model test failures that are outside this UI slice.

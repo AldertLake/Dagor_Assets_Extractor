@@ -146,6 +146,11 @@ namespace DagorAssetsExtractor::Platform {
         return fs::current_path();
     }
 
+    fs::path GetUiAssetPath()
+    {
+        return GetExecutableDirectory() / L"assets" / L"ui";
+    }
+
     fs::path GetCacheRootPath()
     {
         return GetExecutableDirectory() / L"cache";
@@ -214,6 +219,29 @@ namespace DagorAssetsExtractor::Platform {
         return reinterpret_cast<std::intptr_t>(result) > 32;
 #else
         (void)path;
+        return false;
+#endif
+    }
+
+    bool OpenUrl(std::wstring_view url)
+    {
+#if defined(_WIN32)
+        if (url.empty())
+        {
+            return false;
+        }
+
+        const std::wstring wideUrl(url);
+        const HINSTANCE result = ShellExecuteW(
+            nullptr,
+            L"open",
+            wideUrl.c_str(),
+            nullptr,
+            nullptr,
+            SW_SHOWNORMAL);
+        return reinterpret_cast<std::intptr_t>(result) > 32;
+#else
+        (void)url;
         return false;
 #endif
     }

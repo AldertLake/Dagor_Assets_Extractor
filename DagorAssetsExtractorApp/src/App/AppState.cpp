@@ -1041,11 +1041,9 @@ namespace DagorAssetsExtractor::App
             !AssetIndex::CanExportGrpEntryAsStaticModel(entry) && 
             !AssetIndex::CanExportGrpEntryAsSkinnedModel(entry))
         {
-            const std::string className = AssetIndex::DescribeGrpClassId(entry.grpClassId);
+            const std::string reason = AssetIndex::GetUnsupportedExportTooltip(entry);
             AddLog(app, LogLevel::Warning,
-                "Skipped export for " + entry.name + ": " +
-                (className.empty() ? std::string("unsupported GRP entry type") : className) +
-                ". Only RendInst and DynModel meshes can be exported right now.");
+                "Skipped export for " + entry.name + ": " + reason);
             return;
         }
 
@@ -1647,7 +1645,7 @@ namespace DagorAssetsExtractor::App
                     {
                         message += "unsupported GRP payload";
                     }
-                    message += " (magic " + FormatPayloadMagic(payload) + "). Only RendInst and DynModel meshes can be exported right now.";
+                    message += " (magic " + FormatPayloadMagic(payload) + "). " + AssetIndex::GetUnsupportedExportTooltip(entry);
                     AddLog(app, LogLevel::Warning, message);
 
                     // Add detailed diagnostics dump

@@ -31,12 +31,14 @@ namespace DagorAssetsExtractor::Platform {
     std::optional<std::filesystem::path> GetKnownFolderPathDocuments();
 
     std::filesystem::path GetExecutableDirectory();
+    std::filesystem::path GetUiAssetPath();
     std::filesystem::path GetCacheRootPath();
     std::filesystem::path GetSettingsPath();
     std::filesystem::path GetIndexCachePath();
     std::filesystem::path GetDescriptorLinksCachePath();
     std::filesystem::path GetDefaultExportRoot();
     bool ShowPathInExplorer(const std::filesystem::path& path);
+    bool OpenUrl(std::wstring_view url);
 
     std::optional<std::filesystem::path> BrowseForFolder(HWND owner, const wchar_t* title, const std::filesystem::path& initialPath);
     std::optional<std::filesystem::path> BrowseForFile(HWND owner, const wchar_t* title, const std::filesystem::path& initialPath);
