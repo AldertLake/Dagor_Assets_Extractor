@@ -143,6 +143,16 @@ namespace DagorAssetsExtractor::App
         std::vector<LogEntry> logs;
     };
 
+    struct PendingDynModelExport
+    {
+        std::filesystem::path packPath;
+        AssetIndex::SubAssetRecord entry;
+        bool includeTextures = true;
+        bool includeSkeletonRig = true;
+        bool includeAnimations = false;
+        bool openRequested = false;
+    };
+
     struct AppState
     {
         void* hwnd = nullptr; // Using void* to avoid Windows.h include here
@@ -199,6 +209,7 @@ namespace DagorAssetsExtractor::App
         BlkResourceLinkState blkLinks;
         DescriptorResourceLinkState descriptorLinks;
         ProgressJobState progressJob;
+        std::optional<PendingDynModelExport> pendingDynModelExport;
         Jobs::JobSystem backgroundJobs;
     };
 
@@ -225,7 +236,10 @@ namespace DagorAssetsExtractor::App
     void RequestPackContents(AppState& app, const std::filesystem::path& packPath, AssetIndex::AssetType type);
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
+    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel);
     void RequestModelExportByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName);
+    void OpenDynModelExportModal(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
+    bool OpenDynModelExportModalByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName);
     void RequestBatchTextureExport(AppState& app, const std::filesystem::path& packPath, std::shared_ptr<const AssetIndex::PackContents> contents);
     bool IsOodleAvailable(const AppState& app);
     std::shared_ptr<const BlkPreview> SnapshotBlkPreview(AppState& app, const std::filesystem::path& path);

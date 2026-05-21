@@ -889,7 +889,14 @@ namespace DagorAssetsExtractor::UI
                     ImGui::BeginDisabled(!canExportUnifiedModel);
                     if (ImGui::Button("Export Model"))
                     {
-                        App::RequestModelExportByName(app, *link.matchedGrpPath, *link.matchedGrpEntryName);
+                        if (link.matchedGrpEntryCanExportSkinnedModel)
+                        {
+                            App::OpenDynModelExportModalByName(app, *link.matchedGrpPath, *link.matchedGrpEntryName);
+                        }
+                        else
+                        {
+                            App::RequestModelExportByName(app, *link.matchedGrpPath, *link.matchedGrpEntryName);
+                        }
                     }
                     if (!canExportUnifiedModel && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     {
@@ -1291,7 +1298,14 @@ namespace DagorAssetsExtractor::UI
                                         }
                                         else if (isGrp)
                                         {
-                                            App::RequestModelExport(app, selected->path, entry);
+                                            if (canExportSkinned)
+                                            {
+                                                App::OpenDynModelExportModal(app, selected->path, entry);
+                                            }
+                                            else
+                                            {
+                                                App::RequestModelExport(app, selected->path, entry);
+                                            }
                                         }
                                     }
                                     if (isGrp && !canExportModel && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -1606,6 +1620,77 @@ namespace DagorAssetsExtractor::UI
         ImGui::End();
     }
 
+    void DrawDynModelExportModal(AppState& app)
+    {
+        if (!app.pendingDynModelExport)
+        {
+            return;
+        }
+
+        App::PendingDynModelExport& pending = *app.pendingDynModelExport;
+        if (pending.openRequested)
+        {
+            ImGui::OpenPopup("Export Dynamic Model");
+            pending.openRequested = false;
+        }
+
+        if (!ImGui::BeginPopupModal("Export Dynamic Model", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            return;
+        }
+
+        ImGui::Text("Model: %s", pending.entry.name.c_str());
+        ImGui::Spacing();
+
+        ImGui::Checkbox("Include textures", &pending.includeTextures);
+
+        ImGui::BeginDisabled(true);
+        ImGui::Checkbox("Include skeleton / rig", &pending.includeSkeletonRig);
+        const bool skeletonHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+        ImGui::EndDisabled();
+        if (skeletonHovered)
+        {
+            ImGui::SetTooltip("Rig export is not yet implemented.");
+        }
+
+        if (!pending.includeSkeletonRig)
+        {
+            pending.includeAnimations = false;
+        }
+
+        ImGui::BeginDisabled(true);
+        ImGui::Checkbox("Include animations", &pending.includeAnimations);
+        const bool animationHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+        ImGui::EndDisabled();
+        if (animationHovered)
+        {
+            ImGui::SetTooltip("Animation export is not yet implemented. Requires skeleton.");
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::Button("Cancel", ImVec2(110.0f, 0.0f)))
+        {
+            app.pendingDynModelExport.reset();
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Export", ImVec2(110.0f, 0.0f)))
+        {
+            const App::PendingDynModelExport confirmed = pending;
+            app.pendingDynModelExport.reset();
+            ImGui::CloseCurrentPopup();
+            App::RequestModelExport(app, confirmed.packPath, confirmed.entry, confirmed.includeTextures);
+            ImGui::EndPopup();
+            return;
+        }
+
+        ImGui::EndPopup();
+    }
+
     void DrawFirstRunModal(AppState& app)
     {
         if (!app.firstRunPromptOpen)
@@ -1755,6 +1840,7 @@ namespace DagorAssetsExtractor::UI
         DrawSettingsWindow(app);
         DrawAboutWindow(app);
         DrawFirstRunModal(app);
+        DrawDynModelExportModal(app);
         DrawProgressJobWindow(app);
     }
 }

@@ -1031,7 +1031,11 @@ namespace DagorAssetsExtractor::App
         });
     }
 
-    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
+    void RequestModelExportInternal(
+        AppState& app,
+        const std::filesystem::path& packPath,
+        const AssetIndex::SubAssetRecord& entry,
+        std::optional<bool> dynModelIncludeTexturesOverride)
     {
         if (entry.grpClassId != 0 && 
             !AssetIndex::CanExportGrpEntryAsStaticModel(entry) && 
@@ -1045,6 +1049,15 @@ namespace DagorAssetsExtractor::App
             return;
         }
 
+        if (AssetIndex::CanExportGrpEntryAsSkinnedModel(entry) && !dynModelIncludeTexturesOverride.has_value())
+        {
+            AddLog(app,
+                LogLevel::Warning,
+                "Skipped DynModel export for " + entry.name +
+                ": dynamic model export options were not confirmed.");
+            return;
+        }
+
         AddLog(app, LogLevel::Info, "Exporting model: " + entry.name + "...");
 
         std::string safeName = entry.name;
@@ -1054,25 +1067,16 @@ namespace DagorAssetsExtractor::App
 
         std::filesystem::path exportRoot = app.settings.exportRoot / safeName;
         std::string format = app.settings.modelExportFormat;
-        bool exportTextures = app.settings.exportTexturesWithModels;
+        bool globalExportTextures = app.settings.exportTexturesWithModels;
         bool exportJsonManifest = app.settings.exportJsonManifest;
         
         auto descriptorLinks = SnapshotDescriptorResourceLinks(app);
         auto allRecords = SnapshotRecords(app.scan);
-        auto textureExportOptions = GetTextureExportOptions(app);
-        textureExportOptions.outputDir = exportRoot / "Textures";
+        auto baseTextureExportOptions = GetTextureExportOptions(app);
+        baseTextureExportOptions.outputDir = exportRoot / "Textures";
         const bool exportGlb = AssetIndex::ToLowerAscii(format) == "glb";
-        if (exportGlb && exportTextures)
-        {
-            textureExportOptions.format = "PNG";
-            textureExportOptions.preserveOriginalDDS = false;
-            AddLog(app,
-                LogLevel::Info,
-                "GLB material texture export for " + entry.name +
-                " will use PNG only; DDS/TGA are not core glTF image formats and will not be linked into GLB materials.");
-        }
 
-        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, exportTextures, exportJsonManifest, descriptorLinks, allRecords, textureExportOptions]() {
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, dynModelIncludeTexturesOverride]() {
             try
             {
                 std::ifstream file(packPath, std::ios::binary);
@@ -1103,6 +1107,40 @@ namespace DagorAssetsExtractor::App
                 manifest.sourceResource = entry.name;
                 manifest.appVersion = "1.0.0";
                 manifest.skipWrite = !exportJsonManifest;
+
+                // Determine asset type using the GRP classId first (reliable),
+                // then fall back to payload magic bytes for legacy GRP entries.
+                constexpr uint32_t kDynModelClassId = 0xB4B7D9C4u;
+                constexpr uint32_t kRendInstClassId = 0x77F8232Fu;
+
+                const bool isDynModel = (entry.grpClassId == kDynModelClassId) ||
+                                        (entry.grpClassId == 0 && HasDynModelMagic(payload));
+                const bool isRendInst = !isDynModel &&
+                                        (entry.grpClassId == kRendInstClassId ||
+                                         entry.grpClassId == 0 && HasRendInstMagic(payload));
+
+                if (isDynModel && !dynModelIncludeTexturesOverride.has_value())
+                {
+                    AddLog(app,
+                        LogLevel::Warning,
+                        "Skipped DynModel export for " + entry.name +
+                        ": dynamic model export options were not confirmed.");
+                    return;
+                }
+
+                const bool exportTextures = isDynModel
+                    ? dynModelIncludeTexturesOverride.value()
+                    : globalExportTextures;
+                auto textureExportOptions = baseTextureExportOptions;
+                if (exportGlb && exportTextures)
+                {
+                    textureExportOptions.format = "PNG";
+                    textureExportOptions.preserveOriginalDDS = false;
+                    AddLog(app,
+                        LogLevel::Info,
+                        "GLB material texture export for " + entry.name +
+                        " will use PNG only; DDS/TGA are not core glTF image formats and will not be linked into GLB materials.");
+                }
 
                 std::vector<Export::MaterialInfo> materials;
                 
@@ -1291,17 +1329,6 @@ namespace DagorAssetsExtractor::App
 
                 bool success = false;
                 fs::path outPath;
-
-                // Determine asset type using the GRP classId first (reliable),
-                // then fall back to payload magic bytes for legacy GRP entries.
-                constexpr uint32_t kDynModelClassId = 0xB4B7D9C4u;
-                constexpr uint32_t kRendInstClassId = 0x77F8232Fu;
-
-                const bool isDynModel = (entry.grpClassId == kDynModelClassId) || 
-                                        (entry.grpClassId == 0 && HasDynModelMagic(payload));
-                const bool isRendInst = !isDynModel && 
-                                        (entry.grpClassId == kRendInstClassId || 
-                                         entry.grpClassId == 0 && HasRendInstMagic(payload));
 
                 if (isRendInst || (!isDynModel && HasRendInstMagic(payload)))
                 {
@@ -1650,6 +1677,83 @@ namespace DagorAssetsExtractor::App
         });
     }
 
+    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
+    {
+        RequestModelExportInternal(app, packPath, entry, std::nullopt);
+    }
+
+    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel)
+    {
+        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel);
+    }
+
+    void OpenDynModelExportModal(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
+    {
+        if (!AssetIndex::CanExportGrpEntryAsSkinnedModel(entry))
+        {
+            AddLog(app,
+                LogLevel::Warning,
+                "Could not open dynamic export options for " + entry.name + ": the GRP entry is not a DynModel.");
+            return;
+        }
+
+        PendingDynModelExport pending;
+        pending.packPath = packPath;
+        pending.entry = entry;
+        pending.includeTextures = true;
+        pending.includeSkeletonRig = true;
+        pending.includeAnimations = false;
+        pending.openRequested = true;
+        app.pendingDynModelExport = std::move(pending);
+    }
+
+    bool OpenDynModelExportModalByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName)
+    {
+        auto contents = app.packContentsCache.Get(packPath);
+        if (!contents)
+        {
+            auto newContents = AssetIndex::ParseGrpContents(packPath);
+            if (newContents)
+            {
+                app.packContentsCache.Put(packPath, newContents);
+                contents = newContents;
+            }
+        }
+
+        if (!contents || !contents->error.empty())
+        {
+            AddLog(app,
+                LogLevel::Error,
+                "Could not parse GRP contents for DynModel export options from " +
+                    Platform::PathToUtf8(packPath.filename()) +
+                    (contents ? ": " + contents->error : ""));
+            return false;
+        }
+
+        auto it = std::find_if(contents->entries.begin(), contents->entries.end(), [&](const auto& e) {
+            return e.name == entryName;
+        });
+
+        if (it == contents->entries.end())
+        {
+            AddLog(app,
+                LogLevel::Error,
+                "Could not find DynModel " + entryName + " in " + Platform::PathToUtf8(packPath.filename()));
+            return false;
+        }
+
+        if (!AssetIndex::CanExportGrpEntryAsSkinnedModel(*it))
+        {
+            AddLog(app,
+                LogLevel::Warning,
+                "Could not open dynamic export options for " + entryName + ": the resolved GRP entry is not a DynModel.");
+            return false;
+        }
+
+        OpenDynModelExportModal(app, packPath, *it);
+        return true;
+    }
+
     void RequestModelExportByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName)
     {
         AddLog(app, LogLevel::Info, "Resolving model " + entryName + " in " + Platform::PathToUtf8(packPath.filename()) + "...");
@@ -1679,6 +1783,15 @@ namespace DagorAssetsExtractor::App
             if (it == contents->entries.end())
             {
                 AddLog(app, LogLevel::Error, "Could not find model " + entryName + " in " + Platform::PathToUtf8(packPath.filename()));
+                return;
+            }
+
+            if (AssetIndex::CanExportGrpEntryAsSkinnedModel(*it))
+            {
+                AddLog(app,
+                    LogLevel::Warning,
+                    "Skipped DynModel export for " + entryName +
+                    ": dynamic model export options must be confirmed in the Export Dynamic Model popup.");
                 return;
             }
 
