@@ -152,12 +152,12 @@ namespace DagorAssetsExtractor::Export
             float nz;
             float u;
             float v;
-            uint8_t jointIndices[4];
+            uint16_t jointIndices[4];
             float jointWeights[4];
         };
 
         static_assert(sizeof(PackedStaticVertex) == 32);
-        static_assert(sizeof(PackedSkinnedVertex) == 52);
+        static_assert(sizeof(PackedSkinnedVertex) == 56);
 
         template <typename TVertex>
         size_t RepairNormals(std::vector<TVertex>& vertices, const std::vector<uint32_t>& indices)
@@ -236,6 +236,114 @@ namespace DagorAssetsExtractor::Export
             }
 
             return repaired;
+        }
+
+        template <typename TVertex>
+        void RecomputePackedNormals(std::vector<TVertex>& vertices, const std::vector<uint32_t>& indices)
+        {
+            if (vertices.empty())
+            {
+                return;
+            }
+
+            std::vector<std::array<float, 3>> accumulated(vertices.size(), { 0.0f, 0.0f, 0.0f });
+            for (size_t i = 0; i + 2 < indices.size(); i += 3)
+            {
+                const uint32_t i0 = indices[i];
+                const uint32_t i1 = indices[i + 1];
+                const uint32_t i2 = indices[i + 2];
+                if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size() ||
+                    i0 == i1 || i1 == i2 || i0 == i2)
+                {
+                    continue;
+                }
+
+                const auto& a = vertices[i0];
+                const auto& b = vertices[i1];
+                const auto& c = vertices[i2];
+                const float abx = b.x - a.x;
+                const float aby = b.y - a.y;
+                const float abz = b.z - a.z;
+                const float acx = c.x - a.x;
+                const float acy = c.y - a.y;
+                const float acz = c.z - a.z;
+                float nx = (aby * acz) - (abz * acy);
+                float ny = (abz * acx) - (abx * acz);
+                float nz = (abx * acy) - (aby * acx);
+                if (!NormalizeVector(nx, ny, nz))
+                {
+                    continue;
+                }
+
+                accumulated[i0][0] += nx;
+                accumulated[i0][1] += ny;
+                accumulated[i0][2] += nz;
+                accumulated[i1][0] += nx;
+                accumulated[i1][1] += ny;
+                accumulated[i1][2] += nz;
+                accumulated[i2][0] += nx;
+                accumulated[i2][1] += ny;
+                accumulated[i2][2] += nz;
+            }
+
+            for (size_t i = 0; i < vertices.size(); ++i)
+            {
+                float faceNx = accumulated[i][0];
+                float faceNy = accumulated[i][1];
+                float faceNz = accumulated[i][2];
+                const bool hasFaceNormal = NormalizeVector(faceNx, faceNy, faceNz);
+
+                float nx = faceNx;
+                float ny = faceNy;
+                float nz = faceNz;
+                if (!hasFaceNormal)
+                {
+                    nx = vertices[i].nx;
+                    ny = vertices[i].ny;
+                    nz = vertices[i].nz;
+                    if (!NormalizeVector(nx, ny, nz))
+                    {
+                        nx = 0.0f;
+                        ny = 0.0f;
+                        nz = 1.0f;
+                    }
+                }
+
+                vertices[i].nx = nx;
+                vertices[i].ny = ny;
+                vertices[i].nz = nz;
+            }
+        }
+
+        void NormalizeJointWeights(PackedSkinnedVertex& vertex)
+        {
+            float sum = 0.0f;
+            for (float weight : vertex.jointWeights)
+            {
+                if (std::isfinite(weight) && weight > 0.0f)
+                {
+                    sum += weight;
+                }
+            }
+
+            if (sum <= 1e-8f)
+            {
+                vertex.jointIndices[0] = 0;
+                vertex.jointIndices[1] = 0;
+                vertex.jointIndices[2] = 0;
+                vertex.jointIndices[3] = 0;
+                vertex.jointWeights[0] = 1.0f;
+                vertex.jointWeights[1] = 0.0f;
+                vertex.jointWeights[2] = 0.0f;
+                vertex.jointWeights[3] = 0.0f;
+                return;
+            }
+
+            const float invSum = 1.0f / sum;
+            for (float& weight : vertex.jointWeights)
+            {
+                weight = (std::isfinite(weight) && weight > 0.0f) ? (weight * invSum) : 0.0f;
+            }
         }
 
         template <typename TMesh>
@@ -756,7 +864,8 @@ namespace DagorAssetsExtractor::Export
         const std::vector<DagorFormats::DynModelMesh>& lods_in,
         const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
         const ExportManifest& manifest,
-        const std::vector<MaterialInfo>& materials)
+        const std::vector<MaterialInfo>& materials,
+        bool includeSkeletonRig)
     {
         std::ofstream debugLog("scratch/export_debug.txt", std::ios::app);
         debugLog << "[ExportToGlb DynModel] Exporting to " << path.string() << std::endl;
@@ -822,13 +931,19 @@ namespace DagorAssetsExtractor::Export
             };
         };
 
-        // Strip skeleton from DynModel per user request
-        const bool useSkinning = false;
-        const bool usesSkeletonNodes = false;
+        const auto makeGltfMatrix = [&](const std::array<float, 16>& matrix)
+        {
+            std::array<float, 16> gltfMatrix = transposeMatrix(matrix);
+            ConvertMatrixHandedness(gltfMatrix);
+            return gltfMatrix;
+        };
+
+        const bool hasPlacementSkeleton = !skeleton.empty();
+        const bool emitSkeletonNodes = includeSkeletonRig && hasPlacementSkeleton;
 
         std::unordered_map<std::string, size_t> skeletonNodeLookup;
         skeletonNodeLookup.reserve(skeleton.size());
-        if (!skeleton.empty())
+        if (hasPlacementSkeleton)
         {
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
@@ -836,66 +951,99 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
-        std::vector<std::array<float, 16>> meshNodeMatrices(lods.size());
-        std::vector<bool> hasMeshNodeMatrix(lods.size(), false);
-        if (!skeleton.empty())
+        constexpr uint16_t kNoJoint = std::numeric_limits<uint16_t>::max();
+
+        const auto resolveJoint = [&](const DagorFormats::DynModelMesh& mesh) -> uint16_t
         {
-            for (size_t i = 0; i < lods.size(); ++i)
+            if (!hasPlacementSkeleton || mesh.parentNodeName.empty())
             {
-                if (lods[i].useSkinning || lods[i].parentNodeName.empty())
-                {
-                    continue;
-                }
-
-                const auto it = skeletonNodeLookup.find(lods[i].parentNodeName);
-                if (it == skeletonNodeLookup.end())
-                {
-                    continue;
-                }
-
-                meshNodeMatrices[i] = transposeMatrix(skeleton[it->second].worldTransform);
-                ConvertMatrixHandedness(meshNodeMatrices[i]);
-                hasMeshNodeMatrix[i] = true;
+                return kNoJoint;
             }
+
+            const auto it = skeletonNodeLookup.find(mesh.parentNodeName);
+            if (it == skeletonNodeLookup.end())
+            {
+                debugLog << "  DynModel mesh " << mesh.name
+                         << " has no matching skeleton node for parent '"
+                         << mesh.parentNodeName << "'." << std::endl;
+                return kNoJoint;
+            }
+            if (it->second > std::numeric_limits<uint16_t>::max())
+            {
+                debugLog << "  DynModel mesh " << mesh.name
+                         << " resolved to skeleton node " << it->second
+                         << ", which exceeds glTF unsigned-short joint index range." << std::endl;
+                return kNoJoint;
+            }
+
+            return static_cast<uint16_t>(it->second);
+        };
+
+        const auto hasOnlyRootWeights = [](const DagorFormats::DynModelMesh& mesh)
+        {
+            return std::all_of(
+                mesh.vertices.begin(),
+                mesh.vertices.end(),
+                [](const DagorFormats::SkinnedVertex& vertex)
+                {
+                    return vertex.jointIndices[0] == 0 &&
+                        vertex.jointIndices[1] == 0 &&
+                        vertex.jointIndices[2] == 0 &&
+                        vertex.jointIndices[3] == 0 &&
+                        std::fabs(vertex.jointWeights[0] - 1.0f) <= 1e-5f &&
+                        std::fabs(vertex.jointWeights[1]) <= 1e-5f &&
+                        std::fabs(vertex.jointWeights[2]) <= 1e-5f &&
+                        std::fabs(vertex.jointWeights[3]) <= 1e-5f;
+                });
+        };
+
+        struct DynExportMesh
+        {
+            DagorFormats::DynModelMesh mesh;
+            bool skinned = false;
+            bool hasParentJoint = false;
+            uint16_t parentJoint = 0;
+            bool hasNodeMatrix = false;
+            std::array<float, 16> nodeMatrix = {};
+        };
+
+        std::vector<DynExportMesh> exportMeshes;
+        exportMeshes.reserve(lods.size());
+        for (const auto& mesh : lods)
+        {
+            DynExportMesh exportMesh;
+            exportMesh.mesh = mesh;
+            const uint16_t jointIndex = resolveJoint(mesh);
+            const bool hasPlaceholderSkinWeights = mesh.useSkinning && hasOnlyRootWeights(mesh);
+
+            if (emitSkeletonNodes && mesh.useSkinning && !hasPlaceholderSkinWeights)
+            {
+                exportMesh.skinned = true;
+            }
+            else if (emitSkeletonNodes && jointIndex != kNoJoint)
+            {
+                exportMesh.hasParentJoint = true;
+                exportMesh.parentJoint = jointIndex;
+            }
+            else if (!emitSkeletonNodes && jointIndex != kNoJoint && (!mesh.useSkinning || hasPlaceholderSkinWeights))
+            {
+                exportMesh.hasNodeMatrix = true;
+                exportMesh.nodeMatrix = makeGltfMatrix(skeleton[jointIndex].worldTransform);
+            }
+
+            exportMeshes.push_back(std::move(exportMesh));
         }
 
-        std::vector<std::vector<size_t>> attachedMeshChildren(skeleton.size());
-        std::vector<bool> meshAttachedToSkeleton(lods.size(), false);
-
-        if (useSkinning)
+        if (exportMeshes.empty())
         {
-            for (auto& mesh : lods)
-            {
-                if (!mesh.useSkinning || mesh.parentNodeName.empty())
-                {
-                    continue;
-                }
-
-                const auto it = skeletonNodeLookup.find(mesh.parentNodeName);
-                if (it == skeletonNodeLookup.end() || it->second > 255)
-                {
-                    debugLog << "  Skinned mesh " << mesh.name
-                             << " has no matching skeleton node for parent '"
-                             << mesh.parentNodeName << "'; preserving parsed joint data." << std::endl;
-                    continue;
-                }
-
-                const uint8_t jointIndex = static_cast<uint8_t>(it->second);
-                for (auto& vertex : mesh.vertices)
-                {
-                    vertex.jointIndices[0] = jointIndex;
-                    vertex.jointIndices[1] = 0;
-                    vertex.jointIndices[2] = 0;
-                    vertex.jointIndices[3] = 0;
-                    vertex.jointWeights[0] = 1.0f;
-                    vertex.jointWeights[1] = 0.0f;
-                    vertex.jointWeights[2] = 0.0f;
-                    vertex.jointWeights[3] = 0.0f;
-                }
-            }
+            debugLog << "[ExportToGlb DynModel] Failed: no exportable meshes after skeleton layout preparation." << std::endl;
+            return false;
         }
 
-        const size_t vertexAccessorCountPerMesh = useSkinning ? 5 : 3;
+        const bool useSkinning = std::any_of(
+            exportMeshes.begin(),
+            exportMeshes.end(),
+            [](const DynExportMesh& mesh) { return mesh.skinned; });
 
         struct LodBinInfo
         {
@@ -913,15 +1061,22 @@ namespace DagorAssetsExtractor::Export
         };
 
         std::vector<LodBinInfo> binInfos;
-        binInfos.reserve(lods.size());
+        binInfos.reserve(exportMeshes.size());
 
         std::vector<uint8_t> binBuffer;
         
-        for (const auto& mesh : lods)
+        for (size_t meshIndex = 0; meshIndex < exportMeshes.size(); ++meshIndex)
         {
+            const DynExportMesh& exportMesh = exportMeshes[meshIndex];
+            const auto& mesh = exportMesh.mesh;
             LodBinInfo info;
             info.vertByteOffset = binBuffer.size();
             info.vertByteLength = mesh.vertices.size() * sizeof(PackedSkinnedVertex);
+            std::vector<uint32_t> flippedIndices = mesh.indices;
+            for (size_t i = 0; i + 2 < flippedIndices.size(); i += 3)
+            {
+                std::swap(flippedIndices[i + 1], flippedIndices[i + 2]);
+            }
 
             if (!mesh.vertices.empty())
             {
@@ -931,30 +1086,47 @@ namespace DagorAssetsExtractor::Export
                 for (const auto& v : mesh.vertices)
                 {
                     const auto uv = ConvertUvForGltf(v.u, v.v, v.uvTransform);
+                    float px = v.x;
+                    float py = v.y;
+                    float pz = v.z;
+                    float nx = v.nx;
+                    float ny = v.ny;
+                    float nz = v.nz;
+
                     PackedSkinnedVertex packed{};
-                    packed.x = v.x;
-                    packed.y = v.y;
-                    packed.z = -v.z;
-                    packed.nx = v.nx;
-                    packed.ny = v.ny;
-                    packed.nz = -v.nz;
+                    packed.x = px;
+                    packed.y = py;
+                    packed.z = -pz;
+                    packed.nx = nx;
+                    packed.ny = ny;
+                    packed.nz = -nz;
                     packed.u = uv[0];
                     packed.v = uv[1];
-                    for (int j = 0; j < 4; ++j)
+                    if (exportMesh.skinned)
                     {
-                        packed.jointIndices[j] = v.jointIndices[j];
-                        packed.jointWeights[j] = v.jointWeights[j];
+                        for (int j = 0; j < 4; ++j)
+                        {
+                            uint16_t jointIndex = static_cast<uint16_t>(v.jointIndices[j]);
+                            if (jointIndex >= skeleton.size())
+                            {
+                                jointIndex = 0;
+                            }
+                            packed.jointIndices[j] = jointIndex;
+                            packed.jointWeights[j] = v.jointWeights[j];
+                        }
+                        NormalizeJointWeights(packed);
                     }
                     packedVertices.push_back(packed);
 
-                    info.minX = std::min(info.minX, v.x);
-                    info.minY = std::min(info.minY, v.y);
-                    info.minZ = std::min(info.minZ, -v.z);
-                    info.maxX = std::max(info.maxX, v.x);
-                    info.maxY = std::max(info.maxY, v.y);
-                    info.maxZ = std::max(info.maxZ, -v.z);
+                    info.minX = std::min(info.minX, packed.x);
+                    info.minY = std::min(info.minY, packed.y);
+                    info.minZ = std::min(info.minZ, packed.z);
+                    info.maxX = std::max(info.maxX, packed.x);
+                    info.maxY = std::max(info.maxY, packed.y);
+                    info.maxZ = std::max(info.maxZ, packed.z);
                 }
 
+                RecomputePackedNormals(packedVertices, flippedIndices);
                 const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
                 binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
             }
@@ -969,13 +1141,8 @@ namespace DagorAssetsExtractor::Export
             info.indexByteOffset = binBuffer.size();
             info.indexByteLength = mesh.indices.size() * sizeof(uint32_t);
 
-            if (!mesh.indices.empty())
+            if (!flippedIndices.empty())
             {
-                std::vector<uint32_t> flippedIndices = mesh.indices;
-                for (size_t i = 0; i + 2 < flippedIndices.size(); i += 3)
-                {
-                    std::swap(flippedIndices[i + 1], flippedIndices[i + 2]);
-                }
                 const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(flippedIndices.data());
                 binBuffer.insert(binBuffer.end(), indexBytes, indexBytes + info.indexByteLength);
             }
@@ -1001,19 +1168,44 @@ namespace DagorAssetsExtractor::Export
             while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
         }
 
-        // Pre-calculate accessor indices for indices
-        std::vector<std::vector<size_t>> indexAccessorIndices(lods.size());
-        size_t currentAccessor = lods.size() * vertexAccessorCountPerMesh;
-        for (size_t i = 0; i < lods.size(); ++i)
+        struct AccessorInfo
         {
-            size_t primCount = lods[i].primitives.size();
-            if (primCount == 0) primCount = 1; // Default primitive
-            for (size_t p = 0; p < primCount; ++p)
+            size_t position = 0;
+            size_t normal = 0;
+            size_t uv = 0;
+            size_t joints = 0;
+            size_t weights = 0;
+            std::vector<size_t> indices;
+        };
+
+        std::vector<AccessorInfo> accessorInfos(exportMeshes.size());
+        size_t currentAccessor = 0;
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
+        {
+            accessorInfos[i].position = currentAccessor++;
+            accessorInfos[i].normal = currentAccessor++;
+            accessorInfos[i].uv = currentAccessor++;
+            if (exportMeshes[i].skinned)
             {
-                indexAccessorIndices[i].push_back(currentAccessor++);
+                accessorInfos[i].joints = currentAccessor++;
+                accessorInfos[i].weights = currentAccessor++;
             }
         }
-        size_t ibmAccessorIndex = currentAccessor;
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
+        {
+            size_t primCount = exportMeshes[i].mesh.primitives.size();
+            if (primCount == 0) primCount = 1;
+            accessorInfos[i].indices.reserve(primCount);
+            for (size_t p = 0; p < primCount; ++p)
+            {
+                accessorInfos[i].indices.push_back(currentAccessor++);
+            }
+        }
+        size_t ibmAccessorIndex = 0;
+        if (useSkinning)
+        {
+            ibmAccessorIndex = currentAccessor++;
+        }
         const std::vector<MaterialInfo> effectiveMaterials = BuildEffectiveMaterials(lods, materials);
 
         // Generate JSON
@@ -1027,58 +1219,53 @@ namespace DagorAssetsExtractor::Export
         json << "  \"scene\": 0,\n";
         json << "  \"scenes\": [\n";
         json << "    {\n";
-        json << "      \"nodes\": [0]\n"; // Root of everything (skeleton root + meshes)
+        json << "      \"nodes\": [";
+        bool firstSceneNode = true;
+        if (emitSkeletonNodes)
+        {
+            for (size_t i = 0; i < skeleton.size(); ++i)
+            {
+                if (skeleton[i].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex)
+                {
+                    if (!firstSceneNode) json << ", ";
+                    json << i;
+                    firstSceneNode = false;
+                }
+            }
+        }
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
+        {
+            if (exportMeshes[i].hasParentJoint)
+            {
+                continue;
+            }
+            if (!firstSceneNode) json << ", ";
+            json << (emitSkeletonNodes ? skeleton.size() + i : i);
+            firstSceneNode = false;
+        }
+        json << "]\n";
         json << "    }\n";
         json << "  ],\n";
 
         // Nodes definition
         json << "  \"nodes\": [\n";
-        // Node 0: Global root
-        json << "    {\n";
-        json << "      \"name\": \"Root\",\n";
-        json << "      \"children\": [";
-        if (usesSkeletonNodes)
+        bool firstNode = true;
+        const auto writeNodeSeparator = [&]()
         {
-            bool first = true;
-            for (size_t i = 0; i < skeleton.size(); ++i)
+            if (!firstNode)
             {
-                if (skeleton[i].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex)
-                {
-                    if (!first) json << ", ";
-                    json << (i + 1);
-                    first = false;
-                }
+                json << ",\n";
             }
-            for (size_t i = 0; i < lods.size(); ++i)
-            {
-                if (meshAttachedToSkeleton[i])
-                {
-                    continue;
-                }
-                if (!first) json << ", ";
-                json << (skeleton.size() + 1 + i);
-                first = false;
-            }
-        }
-        else
-        {
-            // Mesh nodes only
-            for (size_t i = 0; i < lods.size(); ++i)
-            {
-                json << (i + 1);
-                if (i + 1 < lods.size()) json << ", ";
-            }
-        }
-        json << "]\n";
-        json << "    },\n";
+            firstNode = false;
+        };
 
-        if (usesSkeletonNodes)
+        if (emitSkeletonNodes)
         {
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
                 const auto& node = skeleton[i];
-                std::array<float, 16> gltfMatrix = transposeMatrix(node.localTransform);
-                ConvertMatrixHandedness(gltfMatrix);
+                std::array<float, 16> gltfMatrix = makeGltfMatrix(node.localTransform);
+                writeNodeSeparator();
                 json << "    {\n";
                 json << "      \"name\": \"" << JsonEscape(node.name) << "\",\n";
                 json << "      \"matrix\": [";
@@ -1090,14 +1277,17 @@ namespace DagorAssetsExtractor::Export
                 json << "]";
 
                 std::vector<size_t> childNodes;
-                childNodes.reserve(node.childIndices.size() + attachedMeshChildren[i].size());
+                childNodes.reserve(node.childIndices.size());
                 for (uint16_t childIndex : node.childIndices)
                 {
-                    childNodes.push_back(static_cast<size_t>(childIndex) + 1);
+                    childNodes.push_back(static_cast<size_t>(childIndex));
                 }
-                for (size_t meshIndex : attachedMeshChildren[i])
+                for (size_t meshIndex = 0; meshIndex < exportMeshes.size(); ++meshIndex)
                 {
-                    childNodes.push_back(skeleton.size() + 1 + meshIndex);
+                    if (exportMeshes[meshIndex].hasParentJoint && exportMeshes[meshIndex].parentJoint == i)
+                    {
+                        childNodes.push_back(skeleton.size() + meshIndex);
+                    }
                 }
 
                 if (!childNodes.empty())
@@ -1111,46 +1301,58 @@ namespace DagorAssetsExtractor::Export
                     json << "]";
                 }
                 json << "\n";
-                json << "    },\n";
+                json << "    }";
             }
         }
 
         // Mesh nodes
-        for (size_t i = 0; i < lods.size(); ++i)
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
         {
+            writeNodeSeparator();
             json << "    {\n";
-            json << "      \"name\": \"" << JsonEscape(lods[i].name) << "\",\n";
+            json << "      \"name\": \"" << JsonEscape(exportMeshes[i].mesh.name) << "\",\n";
             json << "      \"mesh\": " << i;
-            if (hasMeshNodeMatrix[i])
+            if (exportMeshes[i].skinned)
+            {
+                json << ",\n      \"skin\": 0";
+            }
+            if (exportMeshes[i].hasNodeMatrix)
             {
                 json << ",\n      \"matrix\": [";
                 for (int m = 0; m < 16; ++m)
                 {
-                    json << JsonFloat(meshNodeMatrices[i][m]);
+                    json << JsonFloat(exportMeshes[i].nodeMatrix[m]);
                     if (m < 15) json << ", ";
                 }
                 json << "]";
             }
-            if (useSkinning && lods[i].useSkinning)
-            {
-                json << ",\n      \"skin\": 0";
-            }
             json << "\n";
             json << "    }";
-            if (i + 1 < lods.size()) json << ",";
-            json << "\n";
         }
+        json << "\n";
         json << "  ],\n";
 
         if (useSkinning)
         {
             json << "  \"skins\": [\n";
             json << "    {\n";
+            std::vector<size_t> skeletonRootNodes;
+            for (size_t i = 0; i < skeleton.size(); ++i)
+            {
+                if (skeleton[i].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex)
+                {
+                    skeletonRootNodes.push_back(i);
+                }
+            }
+            if (skeletonRootNodes.size() == 1)
+            {
+                json << "      \"skeleton\": " << skeletonRootNodes.front() << ",\n";
+            }
             json << "      \"inverseBindMatrices\": " << ibmAccessorIndex << ",\n"; // Accessor index
             json << "      \"joints\": [";
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
-                json << (i + 1);
+                json << i;
                 if (i + 1 < skeleton.size()) json << ", ";
             }
             json << "]\n";
@@ -1160,9 +1362,10 @@ namespace DagorAssetsExtractor::Export
 
         // Meshes definition
         json << "  \"meshes\": [\n";
-        for (size_t i = 0; i < lods.size(); ++i)
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
         {
-            const auto& mesh = lods[i];
+            const DynExportMesh& exportMesh = exportMeshes[i];
+            const auto& mesh = exportMesh.mesh;
             json << "    {\n";
             json << "      \"name\": \"" << JsonEscape(mesh.name) << "\",\n";
             json << "      \"primitives\": [\n";
@@ -1170,23 +1373,22 @@ namespace DagorAssetsExtractor::Export
             for (size_t p = 0; p < mesh.primitives.size(); ++p)
             {
                 const auto& prim = mesh.primitives[p];
-                const size_t accessorBase = i * vertexAccessorCountPerMesh;
                 json << "        {\n";
                 json << "          \"attributes\": {\n";
-                json << "            \"POSITION\": " << accessorBase << ",\n";
-                json << "            \"NORMAL\": " << (accessorBase + 1) << ",\n";
-                json << "            \"TEXCOORD_0\": " << (accessorBase + 2) << "";
-                if (useSkinning && mesh.useSkinning)
+                json << "            \"POSITION\": " << accessorInfos[i].position << ",\n";
+                json << "            \"NORMAL\": " << accessorInfos[i].normal << ",\n";
+                json << "            \"TEXCOORD_0\": " << accessorInfos[i].uv;
+                if (exportMesh.skinned)
                 {
-                    json << ",\n            \"JOINTS_0\": " << (accessorBase + 3) << ",\n";
-                    json << "            \"WEIGHTS_0\": " << (accessorBase + 4) << "\n";
+                    json << ",\n            \"JOINTS_0\": " << accessorInfos[i].joints << ",\n";
+                    json << "            \"WEIGHTS_0\": " << accessorInfos[i].weights << "\n";
                 }
                 else
                 {
                     json << "\n";
                 }
                 json << "          },\n";
-                json << "          \"indices\": " << indexAccessorIndices[i][p] << ",\n";
+                json << "          \"indices\": " << accessorInfos[i].indices[p] << ",\n";
                 
                 if (!effectiveMaterials.empty())
                 {
@@ -1202,7 +1404,7 @@ namespace DagorAssetsExtractor::Export
             }
             json << "      ]\n";
             json << "    }";
-            if (i + 1 < lods.size()) json << ",";
+            if (i + 1 < exportMeshes.size()) json << ",";
             json << "\n";
         }
         json << "  ],\n";
@@ -1212,7 +1414,7 @@ namespace DagorAssetsExtractor::Export
         // BufferViews
         json << "  \"bufferViews\": [\n";
         // Vertex bufferViews
-        for (size_t i = 0; i < lods.size(); ++i)
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
         {
             json << "    {\n";
             json << "      \"buffer\": 0,\n";
@@ -1223,7 +1425,7 @@ namespace DagorAssetsExtractor::Export
             json << "    },\n";
         }
         // Index bufferViews
-        for (size_t i = 0; i < lods.size(); ++i)
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
         {
             json << "    {\n";
             json << "      \"buffer\": 0,\n";
@@ -1231,7 +1433,7 @@ namespace DagorAssetsExtractor::Export
             json << "      \"byteLength\": " << binInfos[i].indexByteLength << ",\n";
             json << "      \"target\": 34963\n";
             json << "    }";
-            if (i + 1 < lods.size() || useSkinning) json << ",\n";
+            if (i + 1 < exportMeshes.size() || useSkinning) json << ",\n";
             else json << "\n";
         }
         if (useSkinning)
@@ -1247,44 +1449,56 @@ namespace DagorAssetsExtractor::Export
 
         // Accessors
         json << "  \"accessors\": [\n";
-        for (size_t i = 0; i < lods.size(); ++i)
+        bool firstAccessor = true;
+        const auto writeAccessorSeparator = [&]()
         {
-            const auto& mesh = lods[i];
+            if (!firstAccessor)
+            {
+                json << ",\n";
+            }
+            firstAccessor = false;
+        };
+
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
+        {
+            const DynExportMesh& exportMesh = exportMeshes[i];
+            const auto& mesh = exportMesh.mesh;
             const auto& info = binInfos[i];
 
-            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\", \"max\": [" << JsonFloat(info.maxX) << "," << JsonFloat(info.maxY) << "," << JsonFloat(info.maxZ) << "], \"min\": [" << JsonFloat(info.minX) << "," << JsonFloat(info.minY) << "," << JsonFloat(info.minZ) << "] },\n";
-            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 12, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\" },\n";
+            writeAccessorSeparator();
+            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\", \"max\": [" << JsonFloat(info.maxX) << "," << JsonFloat(info.maxY) << "," << JsonFloat(info.maxZ) << "], \"min\": [" << JsonFloat(info.minX) << "," << JsonFloat(info.minY) << "," << JsonFloat(info.minZ) << "] }";
+            writeAccessorSeparator();
+            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 12, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\" }";
+            writeAccessorSeparator();
             json << "    { \"bufferView\": " << i << ", \"byteOffset\": 24, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC2\" }";
-            if (useSkinning)
+            if (exportMesh.skinned)
             {
-                json << ",\n";
-                json << "    { \"bufferView\": " << i << ", \"byteOffset\": 32, \"componentType\": 5121, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC4\" },\n";
-                json << "    { \"bufferView\": " << i << ", \"byteOffset\": 36, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC4\" },\n";
-            }
-            else
-            {
-                json << ",\n";
+                writeAccessorSeparator();
+                json << "    { \"bufferView\": " << i << ", \"byteOffset\": 32, \"componentType\": 5123, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC4\" }";
+                writeAccessorSeparator();
+                json << "    { \"bufferView\": " << i << ", \"byteOffset\": 40, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC4\" }";
             }
         }
 
         // Index accessors
-        for (size_t i = 0; i < lods.size(); ++i)
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
         {
-            const auto& mesh = lods[i];
+            const auto& mesh = exportMeshes[i].mesh;
             for (size_t p = 0; p < mesh.primitives.size(); ++p)
             {
                 const auto& prim = mesh.primitives[p];
-                json << "    { \"bufferView\": " << (lods.size() + i) << ", \"byteOffset\": " << (prim.firstIndex * sizeof(uint32_t)) << ", \"componentType\": 5125, \"count\": " << prim.indexCount << ", \"type\": \"SCALAR\" }";
-                if (i + 1 < lods.size() || p + 1 < mesh.primitives.size() || useSkinning) json << ",\n";
-                else json << "\n";
+                writeAccessorSeparator();
+                json << "    { \"bufferView\": " << (exportMeshes.size() + i) << ", \"byteOffset\": " << (prim.firstIndex * sizeof(uint32_t)) << ", \"componentType\": 5125, \"count\": " << prim.indexCount << ", \"type\": \"SCALAR\" }";
             }
         }
 
         if (useSkinning)
         {
             // IBM accessor
-            json << "    { \"bufferView\": " << (lods.size() * 2) << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }\n";
+            writeAccessorSeparator();
+            json << "    { \"bufferView\": " << (exportMeshes.size() * 2) << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }";
         }
+        json << "\n";
         json << "  ],\n";
 
         json << "  \"buffers\": [ { \"byteLength\": " << binBuffer.size() << " } ]\n";

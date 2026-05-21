@@ -84,24 +84,6 @@ namespace DagorFormats
             return std::string(reinterpret_cast<const char*>(data.data() + offset), end - offset);
         }
 
-        std::array<float, 16> MultiplyAffine(const std::array<float, 16>& lhs, const std::array<float, 16>& rhs)
-        {
-            std::array<float, 16> result = {};
-            for (size_t row = 0; row < 4; ++row)
-            {
-                for (size_t col = 0; col < 4; ++col)
-                {
-                    float sum = 0.0f;
-                    for (size_t k = 0; k < 4; ++k)
-                    {
-                        sum += lhs[row * 4 + k] * rhs[k * 4 + col];
-                    }
-                    result[row * 4 + col] = sum;
-                }
-            }
-            return result;
-        }
-
         bool InvertAffine(const std::array<float, 16>& matrix, std::array<float, 16>& inverse)
         {
             const float m00 = matrix[0];
@@ -245,6 +227,7 @@ namespace DagorFormats
             const size_t nodeOffset = static_cast<size_t>(nodeIndex) * kOldNodeSize;
             GeomNodeTreeNode& node = m_nodes[nodeIndex];
             node.localTransform = ReadMatrix(rawData, nodeOffset);
+            node.worldTransform = ReadMatrix(rawData, nodeOffset + kMatrixByteSize);
 
             const uint32_t childOffset = ReadU32(rawData, nodeOffset + (kMatrixByteSize * 2));
             const uint32_t childCount = ReadU32(rawData, nodeOffset + (kMatrixByteSize * 2) + sizeof(uint32_t));
@@ -315,11 +298,7 @@ namespace DagorFormats
 
             states[nodeIndex] = VisitState::Visiting;
             GeomNodeTreeNode& node = m_nodes[nodeIndex];
-            if (node.parentIndex == GeomNodeTreeNode::InvalidIndex)
-            {
-                node.worldTransform = node.localTransform;
-            }
-            else
+            if (node.parentIndex != GeomNodeTreeNode::InvalidIndex)
             {
                 if (node.parentIndex >= nodeCount)
                 {
@@ -327,7 +306,6 @@ namespace DagorFormats
                 }
 
                 self(self, node.parentIndex);
-                node.worldTransform = MultiplyAffine(m_nodes[node.parentIndex].worldTransform, node.localTransform);
             }
 
             if (!InvertAffine(node.worldTransform, node.inverseBindTransform))

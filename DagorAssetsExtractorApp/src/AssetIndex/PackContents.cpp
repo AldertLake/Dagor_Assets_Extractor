@@ -3,6 +3,7 @@
 #include "DagorFormats/DxpReader.h"
 #include "DagorFormats/DdsxReader.h"
 #include "DagorFormats/GrpReader.h"
+#include "DagorFormats/Anim2DataReader.h"
 #include "DagorFormats/GameResDescReader.h"
 #include "DagorFormats/GeomNodeTreeReader.h"
 
@@ -455,6 +456,44 @@ namespace DagorAssetsExtractor::AssetIndex
                     catch (const std::exception&)
                     {
                         entry.formatInfo = "GeomNodeTree (metadata unavailable)";
+                    }
+                }
+                else if (file.classId == kAnim2DataGameResClassId)
+                {
+                    try
+                    {
+                        DagorFormats::Anim2DataReader animReader(reader.GetFileData(file));
+                        animReader.Parse();
+                        const DagorFormats::Anim2DataInfo& info = animReader.GetInfo();
+
+                        entry.animVersion = info.version;
+                        entry.animChannelCount = static_cast<uint32_t>(info.channels.size());
+                        entry.animNodeCount = static_cast<uint32_t>(info.nodeNames.size());
+                        entry.animLabelCount = static_cast<uint32_t>(info.labels.size());
+                        entry.animAdditive = info.additive;
+
+                        std::ostringstream summary;
+                        summary << "Anim2Data ANIM 0x" << std::hex << std::uppercase << info.version << std::dec
+                                << ", channels=" << entry.animChannelCount
+                                << ", nodes=" << entry.animNodeCount;
+                        if (entry.animLabelCount > 0)
+                        {
+                            summary << ", labels=" << entry.animLabelCount;
+                        }
+                        if (entry.animAdditive)
+                        {
+                            summary << ", additive";
+                        }
+                        if (info.compressed)
+                        {
+                            summary << ", compressed";
+                        }
+
+                        entry.formatInfo = summary.str();
+                    }
+                    catch (const std::exception&)
+                    {
+                        entry.formatInfo = "Anim2Data (metadata unavailable)";
                     }
                 }
 

@@ -237,6 +237,7 @@ namespace DagorAssetsExtractor::App
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel);
+    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel, bool includeSkeletonRigForDynModel);
     void RequestModelExportByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName);
     void OpenDynModelExportModal(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     bool OpenDynModelExportModalByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName);

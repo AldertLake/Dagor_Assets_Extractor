@@ -33,7 +33,8 @@ namespace DagorAssetsExtractor::Export
             const std::vector<DagorFormats::DynModelMesh>& lods,
             const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
             const ExportManifest& manifest,
-            const std::vector<MaterialInfo>& materials = {});
+            const std::vector<MaterialInfo>& materials = {},
+            bool includeSkeletonRig = true);
 
         // Export a single LOD to OBJ format
         static bool ExportToObj(

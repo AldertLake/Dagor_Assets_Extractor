@@ -113,6 +113,9 @@
     <ClCompile Include="src\DagorFormats\GrpReader.cpp">
       <Filter>Source Files\DagorFormats</Filter>
     </ClCompile>
+    <ClCompile Include="src\DagorFormats\Anim2DataReader.cpp">
+      <Filter>Source Files\DagorFormats</Filter>
+    </ClCompile>
     <ClCompile Include="src\DagorFormats\GameResDescReader.cpp">
       <Filter>Source Files\DagorFormats</Filter>
     </ClCompile>
@@ -203,6 +206,9 @@
       <Filter>Header Files\DagorFormats</Filter>
     </ClInclude>
     <ClInclude Include="src\DagorFormats\GrpReader.h">
+      <Filter>Header Files\DagorFormats</Filter>
+    </ClInclude>
+    <ClInclude Include="src\DagorFormats\Anim2DataReader.h">
       <Filter>Header Files\DagorFormats</Filter>
     </ClInclude>
     <ClInclude Include="src\DagorFormats\GameResDescReader.h">

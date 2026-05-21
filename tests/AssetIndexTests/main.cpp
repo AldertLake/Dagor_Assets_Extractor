@@ -8,6 +8,7 @@
 #include "DagorFormats/DdsxReader.h"
 #include "DagorFormats/BlkReader.h"
 #include "DagorFormats/GrpReader.h"
+#include "DagorFormats/Anim2DataReader.h"
 #include "DagorFormats/GameResDescReader.h"
 #include "DagorFormats/GeomNodeTreeReader.h"
 #include "Jobs/JobSystem.h"
@@ -919,6 +920,81 @@ namespace
             std::vector<uint8_t>(payloadMagic.begin(), payloadMagic.end()));
     }
 
+    std::vector<uint8_t> MakeSyntheticAnim2DataPayload()
+    {
+        std::vector<uint8_t> dump(80, 0);
+        auto put32 = [](std::vector<uint8_t>& data, size_t offset, uint32_t value)
+        {
+            if (data.size() < offset + sizeof(uint32_t))
+            {
+                data.resize(offset + sizeof(uint32_t));
+            }
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
+        auto put64 = [&](std::vector<uint8_t>& data, size_t offset, uint64_t value)
+        {
+            put32(data, offset, static_cast<uint32_t>(value & 0xFFFFFFFFu));
+            put32(data, offset + sizeof(uint32_t), static_cast<uint32_t>(value >> 32));
+        };
+        auto patchableTab = [](uint32_t offset, uint32_t count)
+        {
+            return (static_cast<uint64_t>(count) << 32) | offset;
+        };
+        auto appendPatchableTab = [&](std::vector<uint8_t>& data, uint32_t offset, uint32_t count)
+        {
+            put64(data, data.size(), patchableTab(offset, count));
+            put64(data, data.size(), 0);
+        };
+
+        constexpr uint32_t nodeNameTableOffset = 40;
+        constexpr uint32_t nodeNameOffset = 48;
+        constexpr uint32_t noteTrackOffset = 56;
+        constexpr uint32_t labelNameOffset = 72;
+
+        put32(dump, 16, 1); // nodeNum
+        put32(dump, 20, 1); // CHTYPE_POSITION
+        put64(dump, 32, nodeNameTableOffset);
+        put64(dump, nodeNameTableOffset, nodeNameOffset);
+        const std::string nodeName = "root";
+        std::copy(nodeName.begin(), nodeName.end(), dump.begin() + nodeNameOffset);
+
+        put64(dump, noteTrackOffset, labelNameOffset);
+        put32(dump, noteTrackOffset + 8, 60 << 8);
+        const std::string labelName = "start";
+        std::copy(labelName.begin(), labelName.end(), dump.begin() + labelNameOffset);
+
+        std::vector<uint8_t> payload;
+        put32(payload, 0, 0x4D494E41u); // ANIM
+        put32(payload, 4, 0x300u);
+        put32(payload, 8, 16u);
+        put32(payload, 12, static_cast<uint32_t>(dump.size()));
+        payload.insert(payload.end(), dump.begin(), dump.end());
+        appendPatchableTab(payload, 0, 1); // chanPoint3
+        appendPatchableTab(payload, 0, 0); // chanQuat
+        appendPatchableTab(payload, 0, 0); // chanReal
+        appendPatchableTab(payload, noteTrackOffset, 1);
+        return payload;
+    }
+
+    bool TestAnim2DataReader()
+    {
+        bool ok = true;
+        const std::vector<uint8_t> payload = MakeSyntheticAnim2DataPayload();
+        DagorFormats::Anim2DataReader reader(payload);
+        reader.Parse();
+        const DagorFormats::Anim2DataInfo& info = reader.GetInfo();
+        ok &= Expect(info.version == 0x300u, "Anim2DataReader should parse ANIM 0x300");
+        ok &= Expect(info.channels.size() == 1, "Anim2DataReader should expose one channel");
+        ok &= Expect(info.nodeNames.size() == 1 && info.nodeNames[0] == "root",
+            "Anim2DataReader should expose channel node names");
+        ok &= Expect(info.labels.size() == 1 && info.labels[0].name == "start",
+            "Anim2DataReader should expose note-track labels");
+        return ok;
+    }
+
     bool TestGeomNodeTreeReader()
     {
         bool ok = true;
@@ -977,7 +1053,7 @@ namespace
             WriteBinaryFile(rendInstPath, MakeSyntheticModernGrpPack("static_mesh", 0x77F8232Fu, "RIND")),
             "Modern RendInst GRP fixture should be written");
         ok &= Expect(
-            WriteBinaryFile(animPath, MakeSyntheticModernGrpPack("anim_tree", 0x40C586F9u, "A2D!")),
+            WriteBinaryFile(animPath, MakeSyntheticModernGrpPack("anim_tree", 0x40C586F9u, MakeSyntheticAnim2DataPayload())),
             "Modern Anim2Data GRP fixture should be written");
         ok &= Expect(
             WriteBinaryFile(skeletonPath, MakeSyntheticModernGrpPack("tank_skeleton", 0x56F81B6Du, MakeSyntheticGeomNodeTreePayload())),
@@ -1008,7 +1084,12 @@ namespace
             {
                 const AssetIndex::SubAssetRecord& entry = animContents->entries[0];
                 ok &= Expect(entry.grpClassId == 0x40C586F9u, "Modern Anim2Data GRP should preserve class id");
-                ok &= Expect(entry.formatInfo == "Anim2Data", "Modern Anim2Data GRP should label class name");
+                ok &= Expect(entry.animVersion == 0x300u, "Modern Anim2Data GRP should expose ANIM version");
+                ok &= Expect(entry.animChannelCount == 1, "Modern Anim2Data GRP should expose channel count");
+                ok &= Expect(entry.animNodeCount == 1, "Modern Anim2Data GRP should expose animated node count");
+                ok &= Expect(entry.animLabelCount == 1, "Modern Anim2Data GRP should expose note label count");
+                ok &= Expect(entry.formatInfo.find("Anim2Data ANIM 0x300") != std::string::npos,
+                    "Modern Anim2Data GRP should summarize ANIM metadata");
                 ok &= Expect(!AssetIndex::CanExportGrpEntryAsStaticModel(entry), "Anim2Data GRP entry should not be exportable as a static model");
             }
         }
@@ -3319,13 +3400,72 @@ namespace
         fs::path glbPath = tempDir / "test_skinned.glb";
 
         std::vector<DagorFormats::GeomNodeTreeNode> skeleton;
-        DagorFormats::GeomNodeTreeNode n0; n0.name = "root"; n0.parentIndex = DagorFormats::GeomNodeTreeNode::InvalidIndex;
+        const auto identityMatrix = []()
+        {
+            std::array<float, 16> matrix = {};
+            matrix[0] = 1.0f;
+            matrix[5] = 1.0f;
+            matrix[10] = 1.0f;
+            matrix[15] = 1.0f;
+            return matrix;
+        };
+        const auto translationMatrix = [&](float x, float y, float z)
+        {
+            std::array<float, 16> matrix = identityMatrix();
+            matrix[3] = x;
+            matrix[7] = y;
+            matrix[11] = z;
+            return matrix;
+        };
+        DagorFormats::GeomNodeTreeNode n0; n0.name = "root"; n0.parentIndex = DagorFormats::GeomNodeTreeNode::InvalidIndex; n0.childIndices = { 1, 2 };
         DagorFormats::GeomNodeTreeNode n1; n1.name = "bone1"; n1.parentIndex = 0;
         DagorFormats::GeomNodeTreeNode n2; n2.name = "bone2"; n2.parentIndex = 0;
+        n0.localTransform = n0.worldTransform = n0.inverseBindTransform = identityMatrix();
+        n1.localTransform = n1.worldTransform = translationMatrix(2.0f, 0.0f, 0.0f);
+        n1.inverseBindTransform = translationMatrix(-2.0f, 0.0f, 0.0f);
+        n2.localTransform = n2.worldTransform = n2.inverseBindTransform = identityMatrix();
         skeleton = { n0, n1, n2 };
 
         DagorAssetsExtractor::Export::ExportManifest manifest;
         manifest.sourceResource = "skinned_test";
+
+        const auto readFirstExportedNormal = [](const fs::path& path) -> std::optional<std::array<float, 3>>
+        {
+            std::ifstream file(path, std::ios::binary);
+            std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            if (bytes.size() < 28)
+            {
+                return std::nullopt;
+            }
+
+            auto readU32 = [&](size_t offset) -> uint32_t
+            {
+                return static_cast<uint32_t>(bytes[offset]) |
+                    (static_cast<uint32_t>(bytes[offset + 1]) << 8) |
+                    (static_cast<uint32_t>(bytes[offset + 2]) << 16) |
+                    (static_cast<uint32_t>(bytes[offset + 3]) << 24);
+            };
+
+            const uint32_t jsonLength = readU32(12);
+            const size_t binHeaderOffset = 20u + jsonLength;
+            if (binHeaderOffset > bytes.size() || bytes.size() - binHeaderOffset < 8)
+            {
+                return std::nullopt;
+            }
+
+            const uint32_t binLength = readU32(binHeaderOffset);
+            const size_t binOffset = binHeaderOffset + 8;
+            constexpr size_t normalByteOffset = 12;
+            if (binOffset > bytes.size() || bytes.size() - binOffset < binLength ||
+                binLength < normalByteOffset + (sizeof(float) * 3))
+            {
+                return std::nullopt;
+            }
+
+            std::array<float, 3> normal = {};
+            std::memcpy(normal.data(), bytes.data() + binOffset + normalByteOffset, sizeof(float) * normal.size());
+            return normal;
+        };
 
         bool success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(glbPath, reader.GetLods(), skeleton, manifest);
         ok &= Expect(success, "Skinned ModelExporter should export GLB successfully");
@@ -3339,6 +3479,81 @@ namespace
             ok &= Expect(content.find("\"JOINTS_0\":") != std::string::npos, "GLB should contain JOINTS_0 attribute");
             ok &= Expect(content.find("\"WEIGHTS_0\":") != std::string::npos, "GLB should contain WEIGHTS_0 attribute");
             ok &= Expect(content.find("\"inverseBindMatrices\":") != std::string::npos, "GLB should contain inverseBindMatrices");
+            ok &= Expect(content.find("\"name\": \"Root\"") == std::string::npos,
+                "Skinned GLB should not wrap skinned mesh nodes under an artificial root");
+            ok &= Expect(content.find("\"nodes\": [0]\n") == std::string::npos,
+                "Skinned GLB scene should keep mesh nodes at scene root to avoid NODE_SKINNED_MESH_NON_ROOT");
+        }
+
+        DagorFormats::DynModelMesh rigidMesh;
+        rigidMesh.name = "synthetic_rigid_bone_part";
+        rigidMesh.parentNodeName = "bone1";
+        rigidMesh.useSkinning = false;
+        rigidMesh.vertices = { v0, v1, v2 };
+        rigidMesh.indices = { 0, 1, 2 };
+        rigidMesh.primitives.push_back({ 0, 0, 3 });
+
+        fs::path rigidRigGlbPath = tempDir / "test_rigid_rig.glb";
+        bool rigidRigSuccess = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(rigidRigGlbPath, { rigidMesh }, skeleton, manifest);
+        ok &= Expect(rigidRigSuccess, "Rigid DynModel part should export parented to skeleton when skeleton is provided");
+        if (fs::exists(rigidRigGlbPath))
+        {
+            std::ifstream file(rigidRigGlbPath, std::ios::binary);
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            ok &= Expect(content.find("\"skins\":") == std::string::npos, "Rigid-only rig GLB should avoid skinning every rigid vertex");
+            ok &= Expect(content.find("\"skin\": 0") == std::string::npos, "Rigid-only rig mesh node should not reference a skin");
+            ok &= Expect(content.find("\"JOINTS_0\":") == std::string::npos, "Rigid-only rig GLB should not contain JOINTS_0");
+            ok &= Expect(content.find("\"WEIGHTS_0\":") == std::string::npos, "Rigid-only rig GLB should not contain WEIGHTS_0");
+            ok &= Expect(content.find("\"name\": \"bone1\"") != std::string::npos, "Rigid-only rig GLB should emit matching skeleton bone nodes");
+            ok &= Expect(content.find("\"children\": [3]") != std::string::npos, "Rigid-only rig GLB should parent the rigid mesh under its matching bone");
+            ok &= Expect(content.find("\"name\": \"Root\"") == std::string::npos,
+                "Rigid rig GLB should not create an artificial root node");
+        }
+
+        fs::path meshOnlyPlacementGlbPath = tempDir / "test_mesh_only_placement.glb";
+        bool meshOnlyPlacementSuccess = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(meshOnlyPlacementGlbPath, { rigidMesh }, skeleton, manifest, {}, false);
+        ok &= Expect(meshOnlyPlacementSuccess, "Mesh-only DynModel export should still use skeleton placement metadata");
+        if (fs::exists(meshOnlyPlacementGlbPath))
+        {
+            std::ifstream file(meshOnlyPlacementGlbPath, std::ios::binary);
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            ok &= Expect(content.find("\"skins\":") == std::string::npos, "Mesh-only placement GLB should not contain skins");
+            ok &= Expect(content.find("\"JOINTS_0\":") == std::string::npos, "Mesh-only placement GLB should not contain JOINTS_0");
+            ok &= Expect(content.find("\"name\": \"bone1\"") == std::string::npos, "Mesh-only placement GLB should not emit skeleton nodes");
+            ok &= Expect(content.find("\"matrix\":") != std::string::npos, "Mesh-only placement GLB should keep the rigid part node transform");
+        }
+
+        fs::path noRigGlbPath = tempDir / "test_no_rig.glb";
+        bool noRigSuccess = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(noRigGlbPath, reader.GetLods(), {}, manifest);
+        ok &= Expect(noRigSuccess, "Skinned ModelExporter should still export mesh-only GLB without skeleton");
+        if (fs::exists(noRigGlbPath))
+        {
+            std::ifstream file(noRigGlbPath, std::ios::binary);
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            ok &= Expect(content.find("\"skins\":") == std::string::npos, "Mesh-only GLB should not contain skins");
+            ok &= Expect(content.find("\"JOINTS_0\":") == std::string::npos, "Mesh-only GLB should not contain JOINTS_0");
+            ok &= Expect(content.find("\"WEIGHTS_0\":") == std::string::npos, "Mesh-only GLB should not contain WEIGHTS_0");
+        }
+
+        DagorFormats::DynModelMesh flippedNormalMesh = mesh;
+        flippedNormalMesh.name = "synthetic_flipped_normal_triangle";
+        for (DagorFormats::SkinnedVertex& vertex : flippedNormalMesh.vertices)
+        {
+            vertex.nz = -1.0f;
+        }
+
+        fs::path flippedNormalGlbPath = tempDir / "test_flipped_normal_repair.glb";
+        bool flippedNormalSuccess = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(flippedNormalGlbPath, { flippedNormalMesh }, {}, manifest);
+        ok &= Expect(flippedNormalSuccess, "DynModel exporter should write flipped-normal regression GLB");
+        if (fs::exists(flippedNormalGlbPath))
+        {
+            const std::optional<std::array<float, 3>> normal = readFirstExportedNormal(flippedNormalGlbPath);
+            ok &= Expect(normal.has_value(), "Flipped-normal regression should read first GLB normal");
+            if (normal)
+            {
+                ok &= Expect((*normal)[2] < -0.9f,
+                    "DynModel exporter should orient normals to the final GLB triangle winding");
+            }
         }
 
         std::error_code ec;
@@ -3413,6 +3628,7 @@ int main(int argc, char** argv)
     ok &= Expect(TestBinaryBlkReader(), "Binary BlkReader tests should pass");
     ok &= Expect(TestBlkReader(), "BlkReader tests should pass");
     ok &= Expect(TestGameResDescReader(), "GameResDescReader tests should pass");
+    ok &= Expect(TestAnim2DataReader(), "Anim2DataReader tests should pass");
     ok &= Expect(TestGeomNodeTreeReader(), "GeomNodeTreeReader tests should pass");
     ok &= Expect(TestGrpPackContentsMetadata(), "GRP PackContents metadata tests should pass");
     ok &= Expect(TestJobSystem(), "JobSystem tests should pass");

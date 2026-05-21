@@ -110,6 +110,7 @@ exit /b %ERRORLEVEL%</Command>
     <ClCompile Include="src\DagorFormats\VromfsReader.cpp" />
     <ClCompile Include="src\DagorFormats\DxpReader.cpp" />
     <ClCompile Include="src\DagorFormats\GrpReader.cpp" />
+    <ClCompile Include="src\DagorFormats\Anim2DataReader.cpp" />
     <ClCompile Include="src\DagorFormats\DynModelReader.cpp" />
     <ClCompile Include="src\DagorFormats\GameResDescReader.cpp" />
     <ClCompile Include="src\DagorFormats\GeomNodeTreeReader.cpp" />
@@ -145,6 +146,7 @@ exit /b %ERRORLEVEL%</Command>
     <ClInclude Include="src\DagorFormats\VromfsReader.h" />
     <ClInclude Include="src\DagorFormats\DxpReader.h" />
     <ClInclude Include="src\DagorFormats\GrpReader.h" />
+    <ClInclude Include="src\DagorFormats\Anim2DataReader.h" />
     <ClInclude Include="src\DagorFormats\DynModelReader.h" />
     <ClInclude Include="src\DagorFormats\GameResDescReader.h" />
     <ClInclude Include="src\DagorFormats\GeomNodeTreeReader.h" />

@@ -1809,13 +1809,10 @@ namespace DagorAssetsExtractor::UI
 
         ImGui::Checkbox("Include textures", &pending.includeTextures);
 
-        ImGui::BeginDisabled(true);
         ImGui::Checkbox("Include skeleton / rig", &pending.includeSkeletonRig);
-        const bool skeletonHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
-        ImGui::EndDisabled();
-        if (skeletonHovered)
+        if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Rig export is not yet implemented.");
+            ImGui::SetTooltip("Exports GeomNodeTree bones and binds skinned meshes when a matching skeleton is found.");
         }
 
         if (!pending.includeSkeletonRig)
@@ -1829,7 +1826,7 @@ namespace DagorAssetsExtractor::UI
         ImGui::EndDisabled();
         if (animationHovered)
         {
-            ImGui::SetTooltip("Animation export is not yet implemented. Requires skeleton.");
+            ImGui::SetTooltip("Anim2Data metadata is parsed, but GLB animation curves require ACL track sampling before export can be enabled.");
         }
 
         ImGui::Separator();
@@ -1848,7 +1845,7 @@ namespace DagorAssetsExtractor::UI
             const App::PendingDynModelExport confirmed = pending;
             app.pendingDynModelExport.reset();
             ImGui::CloseCurrentPopup();
-            App::RequestModelExport(app, confirmed.packPath, confirmed.entry, confirmed.includeTextures);
+            App::RequestModelExport(app, confirmed.packPath, confirmed.entry, confirmed.includeTextures, confirmed.includeSkeletonRig);
             ImGui::EndPopup();
             return;
         }

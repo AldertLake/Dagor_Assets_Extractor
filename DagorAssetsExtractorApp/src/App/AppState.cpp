@@ -1035,7 +1035,8 @@ namespace DagorAssetsExtractor::App
         AppState& app,
         const std::filesystem::path& packPath,
         const AssetIndex::SubAssetRecord& entry,
-        std::optional<bool> dynModelIncludeTexturesOverride)
+        std::optional<bool> dynModelIncludeTexturesOverride,
+        std::optional<bool> dynModelIncludeSkeletonRigOverride)
     {
         if (entry.grpClassId != 0 && 
             !AssetIndex::CanExportGrpEntryAsStaticModel(entry) && 
@@ -1074,7 +1075,7 @@ namespace DagorAssetsExtractor::App
         baseTextureExportOptions.outputDir = exportRoot / "Textures";
         const bool exportGlb = AssetIndex::ToLowerAscii(format) == "glb";
 
-        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, dynModelIncludeTexturesOverride]() {
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, dynModelIncludeTexturesOverride, dynModelIncludeSkeletonRigOverride]() {
             try
             {
                 std::ifstream file(packPath, std::ios::binary);
@@ -1129,6 +1130,9 @@ namespace DagorAssetsExtractor::App
                 const bool exportTextures = isDynModel
                     ? dynModelIncludeTexturesOverride.value()
                     : globalExportTextures;
+                const bool includeSkeletonRig = isDynModel
+                    ? dynModelIncludeSkeletonRigOverride.value_or(true)
+                    : false;
                 auto textureExportOptions = baseTextureExportOptions;
                 if (exportGlb && exportTextures)
                 {
@@ -1471,150 +1475,156 @@ namespace DagorAssetsExtractor::App
                     manifest.assetType = "DynModel Skinned Model";
                     manifest.formatDecoderVersion = "DynModelReader v1.0";
 
-                    // Try to resolve skeleton
                     std::vector<DagorFormats::GeomNodeTreeNode> skeleton;
                     std::string skeletonName;
-                    constexpr uint32_t kGeomNodeTreeClassId = 0x56F81B6Du;
-
-                    auto loadSkeletonEntry = [&](const fs::path& skeletonPackPath,
-                                                 const AssetIndex::SubAssetRecord& skeletonEntry,
-                                                 const std::string& sourceDescription) -> bool
                     {
-                        std::ifstream skelFile(skeletonPackPath, std::ios::binary);
-                        if (!skelFile)
-                        {
-                            AddLog(app, LogLevel::Warning, "Could not open skeleton pack: " + Platform::PathToUtf8(skeletonPackPath));
-                            return false;
-                        }
+                        constexpr uint32_t kGeomNodeTreeClassId = 0x56F81B6Du;
 
-                        skelFile.seekg(static_cast<std::streamoff>(skeletonEntry.offset), std::ios::beg);
-                        std::vector<uint8_t> skelPayload(skeletonEntry.size);
-                        if (!skelFile.read(reinterpret_cast<char*>(skelPayload.data()), static_cast<std::streamsize>(skelPayload.size())))
+                        auto loadSkeletonEntry = [&](const fs::path& skeletonPackPath,
+                                                     const AssetIndex::SubAssetRecord& skeletonEntry,
+                                                     const std::string& sourceDescription) -> bool
                         {
-                            AddLog(app, LogLevel::Warning, "Could not read skeleton payload: " + skeletonEntry.name);
-                            return false;
-                        }
-
-                        DagorFormats::GeomNodeTreeReader skelReader(skelPayload);
-                        skelReader.Parse();
-                        skeleton = skelReader.GetNodes();
-                        manifest.decodeWarnings.push_back("Resolved skeleton " + skeletonEntry.name + " from " + sourceDescription);
-                        AddLog(app,
-                            LogLevel::Info,
-                            "Resolved skeleton " + skeletonEntry.name +
-                            " (" + std::to_string(skeleton.size()) + " nodes) from " + sourceDescription);
-                        return true;
-                    };
-                    
-                    // If we have a descriptor link, it might specify a skeleton
-                    // Since I haven't added skeletonName to DescriptorResourceLink yet,
-                    // I'll try to find it from the descriptor directly if available.
-                    if (matchedLink)
-                    {
-                        // We need to re-parse the descriptor to get skeletonName
-                        // or better, use the name of the resource itself as a hint.
-                        auto descContents = AssetIndex::ParseDescriptorContents(matchedLink->descriptorPath);
-                        if (descContents)
-                        {
-                            for (const auto& descEntry : descContents->entries)
+                            std::ifstream skelFile(skeletonPackPath, std::ios::binary);
+                            if (!skelFile)
                             {
-                                if (descEntry.name == matchedLink->resourceName)
-                                {
-                                    skeletonName = descEntry.skeletonName;
-                                    break;
-                                }
+                                AddLog(app, LogLevel::Warning, "Could not open skeleton pack: " + Platform::PathToUtf8(skeletonPackPath));
+                                return false;
                             }
-                        }
-                    }
 
-                    std::vector<std::string> skeletonCandidates;
-                    if (!skeletonName.empty())
-                    {
-                        skeletonCandidates.push_back(skeletonName);
-                    }
-
-                    const std::string sameNameSkeleton = entry.name + "_skeleton";
-                    if (std::find(skeletonCandidates.begin(), skeletonCandidates.end(), sameNameSkeleton) == skeletonCandidates.end())
-                    {
-                        skeletonCandidates.push_back(sameNameSkeleton);
-                    }
-
-                    auto samePackContents = app.packContentsCache.Get(packPath);
-                    if (!samePackContents)
-                    {
-                        auto newContents = AssetIndex::ParseGrpContents(packPath);
-                        if (newContents)
-                        {
-                            app.packContentsCache.Put(packPath, newContents);
-                            samePackContents = newContents;
-                        }
-                    }
-
-                    if (samePackContents)
-                    {
-                        for (const std::string& candidate : skeletonCandidates)
-                        {
-                            auto it = std::find_if(samePackContents->entries.begin(), samePackContents->entries.end(), [&](const auto& e) {
-                                return e.name == candidate && (e.grpClassId == kGeomNodeTreeClassId || e.grpClassId == 0);
-                            });
-
-                            if (it != samePackContents->entries.end() &&
-                                loadSkeletonEntry(packPath, *it, packPath.filename().string()))
+                            skelFile.seekg(static_cast<std::streamoff>(skeletonEntry.offset), std::ios::beg);
+                            std::vector<uint8_t> skelPayload(skeletonEntry.size);
+                            if (!skelFile.read(reinterpret_cast<char*>(skelPayload.data()), static_cast<std::streamsize>(skelPayload.size())))
                             {
-                                skeletonName = it->name;
-                                break;
+                                AddLog(app, LogLevel::Warning, "Could not read skeleton payload: " + skeletonEntry.name);
+                                return false;
                             }
-                        }
-                    }
 
-                    if (skeleton.empty() && !skeletonName.empty() && allRecords)
-                    {
-                        AddLog(app, LogLevel::Info, "Resolving skeleton " + skeletonName + " for " + entry.name + "...");
-                        // Find GRP containing this skeleton
-                        bool skeletonFound = false;
-                        for (const auto& record : *allRecords)
+                            DagorFormats::GeomNodeTreeReader skelReader(skelPayload);
+                            skelReader.Parse();
+                            skeleton = skelReader.GetNodes();
+                            manifest.decodeWarnings.push_back("Resolved skeleton " + skeletonEntry.name + " from " + sourceDescription);
+                            AddLog(app,
+                                LogLevel::Info,
+                                "Resolved skeleton " + skeletonEntry.name +
+                                " (" + std::to_string(skeleton.size()) + " nodes) from " + sourceDescription);
+                            return true;
+                        };
+
+                        if (matchedLink)
                         {
-                            if (record.type == AssetIndex::AssetType::Grp)
+                            auto descContents = AssetIndex::ParseDescriptorContents(matchedLink->descriptorPath);
+                            if (descContents)
                             {
-                                auto grpContents = app.packContentsCache.Get(record.path);
-                                if (!grpContents)
+                                for (const auto& descEntry : descContents->entries)
                                 {
-                                    auto newContents = AssetIndex::ParseGrpContents(record.path);
-                                    if (newContents)
+                                    if (descEntry.name == matchedLink->resourceName)
                                     {
-                                        app.packContentsCache.Put(record.path, newContents);
-                                        grpContents = newContents;
-                                    }
-                                }
-
-                                if (grpContents)
-                                {
-                                    auto it = std::find_if(grpContents->entries.begin(), grpContents->entries.end(), [&](const auto& e) {
-                                        return e.name == skeletonName;
-                                    });
-
-                                    if (it != grpContents->entries.end())
-                                    {
-                                        if (loadSkeletonEntry(record.path, *it, record.path.filename().string()))
-                                        {
-                                            skeletonFound = true;
-                                        }
+                                        skeletonName = descEntry.skeletonName;
                                         break;
                                     }
                                 }
                             }
                         }
 
-                        if (!skeletonFound)
+                        std::vector<std::string> skeletonCandidates;
+                        if (!skeletonName.empty())
                         {
-                            manifest.decodeWarnings.push_back("Could not resolve skeleton resource: " + skeletonName);
+                            skeletonCandidates.push_back(skeletonName);
+                        }
+
+                        const std::string sameNameSkeleton = entry.name + "_skeleton";
+                        if (std::find(skeletonCandidates.begin(), skeletonCandidates.end(), sameNameSkeleton) == skeletonCandidates.end())
+                        {
+                            skeletonCandidates.push_back(sameNameSkeleton);
+                        }
+
+                        auto samePackContents = app.packContentsCache.Get(packPath);
+                        if (!samePackContents)
+                        {
+                            auto newContents = AssetIndex::ParseGrpContents(packPath);
+                            if (newContents)
+                            {
+                                app.packContentsCache.Put(packPath, newContents);
+                                samePackContents = newContents;
+                            }
+                        }
+
+                        if (samePackContents)
+                        {
+                            for (const std::string& candidate : skeletonCandidates)
+                            {
+                                auto it = std::find_if(samePackContents->entries.begin(), samePackContents->entries.end(), [&](const auto& e) {
+                                    return e.name == candidate && (e.grpClassId == kGeomNodeTreeClassId || e.grpClassId == 0);
+                                });
+
+                                if (it != samePackContents->entries.end() &&
+                                    loadSkeletonEntry(packPath, *it, packPath.filename().string()))
+                                {
+                                    skeletonName = it->name;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (skeleton.empty() && !skeletonName.empty() && allRecords)
+                        {
+                            AddLog(app, LogLevel::Info, "Resolving skeleton " + skeletonName + " for " + entry.name + "...");
+                            bool skeletonFound = false;
+                            for (const auto& record : *allRecords)
+                            {
+                                if (record.type == AssetIndex::AssetType::Grp)
+                                {
+                                    auto grpContents = app.packContentsCache.Get(record.path);
+                                    if (!grpContents)
+                                    {
+                                        auto newContents = AssetIndex::ParseGrpContents(record.path);
+                                        if (newContents)
+                                        {
+                                            app.packContentsCache.Put(record.path, newContents);
+                                            grpContents = newContents;
+                                        }
+                                    }
+
+                                    if (grpContents)
+                                    {
+                                        auto it = std::find_if(grpContents->entries.begin(), grpContents->entries.end(), [&](const auto& e) {
+                                            return e.name == skeletonName;
+                                        });
+
+                                        if (it != grpContents->entries.end())
+                                        {
+                                            if (loadSkeletonEntry(record.path, *it, record.path.filename().string()))
+                                            {
+                                                skeletonFound = true;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!skeletonFound)
+                            {
+                                manifest.decodeWarnings.push_back("Could not resolve skeleton resource: " + skeletonName);
+                            }
+                        }
+
+                        if (skeleton.empty())
+                        {
+                            manifest.decodeWarnings.push_back("No skeleton resolved; rigid DynModel parts will not receive scene-node transforms.");
+                            AddLog(app, LogLevel::Warning, "No skeleton resolved for " + entry.name + "; GLB part placement may be incorrect.");
                         }
                     }
 
-                    if (skeleton.empty())
+                    if (!includeSkeletonRig)
                     {
-                        manifest.decodeWarnings.push_back("No skeleton resolved; rigid DynModel parts will not receive scene-node transforms.");
-                        AddLog(app, LogLevel::Warning, "No skeleton resolved for " + entry.name + "; GLB part placement may be incorrect.");
+                        AddLog(app,
+                            LogLevel::Info,
+                            skeleton.empty()
+                                ? ("Skeleton / rig export disabled for " + entry.name +
+                                   "; no skeleton placement metadata was resolved.")
+                                : ("Skeleton / rig export disabled for " + entry.name +
+                                   "; using resolved skeleton only for rigid part placement metadata."));
                     }
 
                     if (format == "GLB" || format == "glb")
@@ -1625,8 +1635,9 @@ namespace DagorAssetsExtractor::App
                             LogLevel::Info,
                             "Writing DynModel GLB for " + entry.name +
                             " with skeletonNodes=" + std::to_string(skeleton.size()) +
+                            ", includeSkeletonRig=" + std::string(includeSkeletonRig ? "true" : "false") +
                             " to " + Platform::PathToUtf8(outPath));
-                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, dynLods, skeleton, manifest, materials);
+                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, dynLods, skeleton, manifest, materials, includeSkeletonRig);
                     }
                     else
                     {
@@ -1677,12 +1688,17 @@ namespace DagorAssetsExtractor::App
 
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
     {
-        RequestModelExportInternal(app, packPath, entry, std::nullopt);
+        RequestModelExportInternal(app, packPath, entry, std::nullopt, std::nullopt);
     }
 
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel)
     {
-        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel);
+        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel, true);
+    }
+
+    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel, bool includeSkeletonRigForDynModel)
+    {
+        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel, includeSkeletonRigForDynModel);
     }
 
     void OpenDynModelExportModal(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)

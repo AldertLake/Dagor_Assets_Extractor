@@ -30,6 +30,11 @@ namespace DagorAssetsExtractor::AssetIndex
         uint32_t    skeletonNodeCount = 0;
         uint32_t    skeletonImportantNodeCount = 0;
         std::string skeletonRootName;
+        uint32_t    animVersion = 0;
+        uint32_t    animChannelCount = 0;
+        uint32_t    animNodeCount = 0;
+        uint32_t    animLabelCount = 0;
+        bool        animAdditive = false;
 
         // DDSx-specific fields (only populated for DXP texture sub-assets)
         uint16_t    texWidth   = 0;
