@@ -30,6 +30,7 @@ namespace DagorAssetsExtractor::App
         std::string textureExportFormat = "DDS";
         std::string modelExportFormat = "GLB";
         bool exportTexturesWithModels = true;
+        bool embedTexturesInGlb = true;
         bool exportJsonManifest = false;
         bool preserveOriginalDDS = true;
         bool indexCacheEnabled = true;
@@ -238,6 +239,7 @@ namespace DagorAssetsExtractor::App
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel, bool includeSkeletonRigForDynModel);
+    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel, bool includeSkeletonRigForDynModel, bool includeAnimationsForDynModel);
     void RequestModelExportByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName);
     void OpenDynModelExportModal(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     bool OpenDynModelExportModalByName(AppState& app, const std::filesystem::path& packPath, const std::string& entryName);

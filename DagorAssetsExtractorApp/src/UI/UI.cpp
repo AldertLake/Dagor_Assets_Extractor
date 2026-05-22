@@ -1716,6 +1716,11 @@ namespace DagorAssetsExtractor::UI
         }
 
         ImGui::Checkbox("Export textures with models", &app.settings.exportTexturesWithModels);
+        ImGui::Checkbox("Embed textures inside GLB", &app.settings.embedTexturesInGlb);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Stores PNG/JPEG material textures as GLB bufferViews instead of external image URIs.");
+        }
         ImGui::Checkbox("Export JSON manifest metadata alongside assets", &app.settings.exportJsonManifest);
         ImGui::Checkbox("Fallback to DDS when PNG/TGA conversion is unavailable", &app.settings.preserveOriginalDDS);
         ImGui::TextDisabled("Oodle-compressed DDSx textures use the bundled oo2core_6_win64.dll shipped with the app build.");
@@ -1820,13 +1825,13 @@ namespace DagorAssetsExtractor::UI
             pending.includeAnimations = false;
         }
 
-        ImGui::BeginDisabled(true);
+        ImGui::BeginDisabled(!pending.includeSkeletonRig);
         ImGui::Checkbox("Include animations", &pending.includeAnimations);
         const bool animationHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
         ImGui::EndDisabled();
         if (animationHovered)
         {
-            ImGui::SetTooltip("Anim2Data metadata is parsed, but GLB animation curves require ACL track sampling before export can be enabled.");
+            ImGui::SetTooltip("Exports matched Anim2Data ACL tracks as glTF animation channels. Requires skeleton / rig export so curves can target bones.");
         }
 
         ImGui::Separator();
@@ -1845,7 +1850,7 @@ namespace DagorAssetsExtractor::UI
             const App::PendingDynModelExport confirmed = pending;
             app.pendingDynModelExport.reset();
             ImGui::CloseCurrentPopup();
-            App::RequestModelExport(app, confirmed.packPath, confirmed.entry, confirmed.includeTextures, confirmed.includeSkeletonRig);
+            App::RequestModelExport(app, confirmed.packPath, confirmed.entry, confirmed.includeTextures, confirmed.includeSkeletonRig, confirmed.includeAnimations);
             ImGui::EndPopup();
             return;
         }

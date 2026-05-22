@@ -7,6 +7,7 @@
 #include "DagorFormats/RendInstReader.h"
 #include "DagorFormats/DynModelReader.h"
 #include "DagorFormats/GeomNodeTreeReader.h"
+#include "DagorFormats/Anim2DataReader.h"
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -544,6 +545,10 @@ namespace DagorAssetsExtractor::App
             {
                 settings.exportTexturesWithModels = ParseBool(value, settings.exportTexturesWithModels);
             }
+            else if (key == "embedTexturesInGlb")
+            {
+                settings.embedTexturesInGlb = ParseBool(value, settings.embedTexturesInGlb);
+            }
             else if (key == "exportJsonManifest")
             {
                 settings.exportJsonManifest = ParseBool(value, settings.exportJsonManifest);
@@ -613,6 +618,7 @@ namespace DagorAssetsExtractor::App
         file << "textureExportFormat=" << settings.textureExportFormat << '\n';
         file << "modelExportFormat=" << settings.modelExportFormat << '\n';
         file << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
+        file << "embedTexturesInGlb=" << (settings.embedTexturesInGlb ? "true" : "false") << '\n';
         file << "exportJsonManifest=" << (settings.exportJsonManifest ? "true" : "false") << '\n';
         file << "preserveOriginalDDS=" << (settings.preserveOriginalDDS ? "true" : "false") << '\n';
         file << "indexCacheEnabled=" << (settings.indexCacheEnabled ? "true" : "false") << '\n';
@@ -1013,6 +1019,471 @@ namespace DagorAssetsExtractor::App
         return relativePath.generic_string();
     }
 
+    std::string NormalizePathKey(const fs::path& path)
+    {
+        return ToLowerLocal(Platform::PathToUtf8(path.lexically_normal()));
+    }
+
+    bool SamePathKey(const fs::path& left, const fs::path& right)
+    {
+        return NormalizePathKey(left) == NormalizePathKey(right);
+    }
+
+    std::string NormalizeAssetNameForMatch(std::string_view value)
+    {
+        std::string normalized = ToLowerLocal(value);
+        const size_t slash = normalized.find_last_of("/\\");
+        if (slash != std::string::npos)
+        {
+            normalized.erase(0, slash + 1);
+        }
+
+        const size_t dot = normalized.find_last_of('.');
+        if (dot != std::string::npos)
+        {
+            normalized.erase(dot);
+        }
+
+        for (char& c : normalized)
+        {
+            if (!std::isalnum(static_cast<unsigned char>(c)))
+            {
+                c = '_';
+            }
+        }
+        while (normalized.find("__") != std::string::npos)
+        {
+            const size_t pos = normalized.find("__");
+            normalized.replace(pos, 2, "_");
+        }
+
+        constexpr std::string_view suffixes[] = {
+            "_dynmodel",
+            "_dynamic",
+            "_model",
+            "_skeleton",
+            "_anim_tree",
+            "_anim",
+            "_a2d"
+        };
+        for (std::string_view suffix : suffixes)
+        {
+            if (normalized.size() > suffix.size() &&
+                normalized.compare(normalized.size() - suffix.size(), suffix.size(), suffix) == 0)
+            {
+                normalized.erase(normalized.size() - suffix.size());
+                break;
+            }
+        }
+        return normalized;
+    }
+
+    std::vector<std::string> SplitNameTokens(const std::string& normalized)
+    {
+        std::vector<std::string> tokens;
+        size_t start = 0;
+        while (start < normalized.size())
+        {
+            const size_t end = normalized.find('_', start);
+            const size_t length = (end == std::string::npos ? normalized.size() : end) - start;
+            if (length >= 3)
+            {
+                tokens.push_back(normalized.substr(start, length));
+            }
+            if (end == std::string::npos)
+            {
+                break;
+            }
+            start = end + 1;
+        }
+        return tokens;
+    }
+
+    int NameAffinityScore(std::string_view modelName, std::string_view candidateName)
+    {
+        const std::string model = NormalizeAssetNameForMatch(modelName);
+        const std::string candidate = NormalizeAssetNameForMatch(candidateName);
+        if (model.empty() || candidate.empty())
+        {
+            return 0;
+        }
+        if (model == candidate)
+        {
+            return 100;
+        }
+        if (candidate.find(model) != std::string::npos || model.find(candidate) != std::string::npos)
+        {
+            return 80;
+        }
+
+        size_t commonPrefix = 0;
+        const size_t commonLimit = std::min(model.size(), candidate.size());
+        while (commonPrefix < commonLimit && model[commonPrefix] == candidate[commonPrefix])
+        {
+            ++commonPrefix;
+        }
+        int score = commonPrefix >= 5 ? static_cast<int>(40 + std::min<size_t>(commonPrefix, 20)) : 0;
+
+        const std::vector<std::string> modelTokens = SplitNameTokens(model);
+        const std::vector<std::string> candidateTokens = SplitNameTokens(candidate);
+        size_t sharedTokens = 0;
+        for (const std::string& modelToken : modelTokens)
+        {
+            if (std::find(candidateTokens.begin(), candidateTokens.end(), modelToken) != candidateTokens.end())
+            {
+                ++sharedTokens;
+            }
+        }
+        if (sharedTokens > 0)
+        {
+            score = std::max(score, static_cast<int>(25 + (sharedTokens * 12)));
+        }
+        return score;
+    }
+
+    std::optional<std::vector<uint8_t>> ReadSubAssetPayload(
+        const fs::path& packPath,
+        const AssetIndex::SubAssetRecord& entry,
+        std::string& error)
+    {
+        std::ifstream file(packPath, std::ios::binary);
+        if (!file)
+        {
+            error = "could not open pack " + Platform::PathToUtf8(packPath);
+            return std::nullopt;
+        }
+
+        file.seekg(static_cast<std::streamoff>(entry.offset), std::ios::beg);
+        std::vector<uint8_t> payload(entry.size);
+        if (!file.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size())))
+        {
+            error = "could not read payload for " + entry.name;
+            return std::nullopt;
+        }
+        return payload;
+    }
+
+    struct AnimationCandidate
+    {
+        fs::path packPath;
+        AssetIndex::SubAssetRecord entry;
+        int score = 0;
+        std::string source;
+    };
+
+    void AddAnimationCandidate(
+        std::vector<AnimationCandidate>& candidates,
+        const fs::path& packPath,
+        const AssetIndex::SubAssetRecord& entry,
+        int score,
+        std::string source)
+    {
+        constexpr uint32_t kAnim2DataClassId = 0x40C586F9u;
+        if (entry.grpClassId != kAnim2DataClassId)
+        {
+            return;
+        }
+
+        const std::string pathKey = NormalizePathKey(packPath);
+        for (AnimationCandidate& candidate : candidates)
+        {
+            if (NormalizePathKey(candidate.packPath) == pathKey && candidate.entry.name == entry.name)
+            {
+                if (score > candidate.score)
+                {
+                    candidate.score = score;
+                    candidate.source = std::move(source);
+                }
+                return;
+            }
+        }
+
+        AnimationCandidate candidate;
+        candidate.packPath = packPath;
+        candidate.entry = entry;
+        candidate.score = score;
+        candidate.source = std::move(source);
+        candidates.push_back(std::move(candidate));
+    }
+
+    void AddAnimationCandidateByName(
+        AppState& app,
+        std::vector<AnimationCandidate>& candidates,
+        const fs::path& packPath,
+        const std::string& entryName,
+        int score,
+        std::string source)
+    {
+        auto contents = app.packContentsCache.Get(packPath);
+        if (!contents)
+        {
+            auto newContents = AssetIndex::ParseGrpContents(packPath);
+            if (newContents)
+            {
+                app.packContentsCache.Put(packPath, newContents);
+                contents = newContents;
+            }
+        }
+        if (!contents)
+        {
+            return;
+        }
+
+        const auto it = std::find_if(contents->entries.begin(), contents->entries.end(), [&](const auto& candidate) {
+            return candidate.name == entryName;
+        });
+        if (it != contents->entries.end())
+        {
+            AddAnimationCandidate(candidates, packPath, *it, score, std::move(source));
+        }
+    }
+
+    std::vector<Export::AnimationClip> ResolveAnimationClipsForDynModel(
+        AppState& app,
+        const fs::path& packPath,
+        const AssetIndex::SubAssetRecord& modelEntry,
+        const AssetIndex::DescriptorResourceLink* matchedLink,
+        const std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>>& descriptorLinks,
+        const std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>>& allRecords,
+        Export::ExportManifest& manifest)
+    {
+        constexpr uint32_t kAnim2DataClassId = 0x40C586F9u;
+        std::vector<AnimationCandidate> candidates;
+
+        if (matchedLink && descriptorLinks)
+        {
+            for (const AssetIndex::DescriptorResourceLink& link : *descriptorLinks)
+            {
+                if (link.matchedGrpClassId != kAnim2DataClassId ||
+                    !link.matchedGrpPath ||
+                    !link.matchedGrpEntryName ||
+                    !SamePathKey(link.descriptorPath, matchedLink->descriptorPath))
+                {
+                    continue;
+                }
+
+                int score = 70 + (NameAffinityScore(modelEntry.name, link.resourceName) / 3);
+                if (SamePathKey(*link.matchedGrpPath, packPath))
+                {
+                    score += 15;
+                }
+                AddAnimationCandidateByName(
+                    app,
+                    candidates,
+                    *link.matchedGrpPath,
+                    *link.matchedGrpEntryName,
+                    score,
+                    "descriptor link " + Platform::PathToUtf8(link.descriptorPath.filename()));
+            }
+        }
+
+        auto samePackContents = app.packContentsCache.Get(packPath);
+        if (!samePackContents)
+        {
+            auto newContents = AssetIndex::ParseGrpContents(packPath);
+            if (newContents)
+            {
+                app.packContentsCache.Put(packPath, newContents);
+                samePackContents = newContents;
+            }
+        }
+        if (samePackContents)
+        {
+            for (const AssetIndex::SubAssetRecord& candidate : samePackContents->entries)
+            {
+                if (candidate.grpClassId != kAnim2DataClassId)
+                {
+                    continue;
+                }
+
+                const int nameScore = NameAffinityScore(modelEntry.name, candidate.name);
+                AddAnimationCandidate(
+                    candidates,
+                    packPath,
+                    candidate,
+                    35 + nameScore,
+                    "same GRP pack");
+            }
+        }
+
+        if (allRecords)
+        {
+            const std::string modelName = NormalizeAssetNameForMatch(modelEntry.name);
+            for (const AssetIndex::ResourceRecord& record : *allRecords)
+            {
+                if (record.type != AssetIndex::AssetType::Grp || SamePathKey(record.path, packPath))
+                {
+                    continue;
+                }
+
+                const std::string packStem = NormalizeAssetNameForMatch(record.path.stem().string());
+                int packScore = NameAffinityScore(modelName, packStem);
+                if (packScore < 35 && (!matchedLink || !SamePathKey(record.path.parent_path(), matchedLink->descriptorPath.parent_path())))
+                {
+                    continue;
+                }
+
+                auto contents = app.packContentsCache.Get(record.path);
+                if (!contents)
+                {
+                    auto newContents = AssetIndex::ParseGrpContents(record.path);
+                    if (newContents)
+                    {
+                        app.packContentsCache.Put(record.path, newContents);
+                        contents = newContents;
+                    }
+                }
+                if (!contents)
+                {
+                    continue;
+                }
+
+                for (const AssetIndex::SubAssetRecord& candidate : contents->entries)
+                {
+                    if (candidate.grpClassId != kAnim2DataClassId)
+                    {
+                        continue;
+                    }
+
+                    const int entryScore = NameAffinityScore(modelEntry.name, candidate.name);
+                    const int score = packScore + entryScore;
+                    if (score >= 45)
+                    {
+                        AddAnimationCandidate(
+                            candidates,
+                            record.path,
+                            candidate,
+                            score,
+                            "name-affinity GRP search");
+                    }
+                }
+            }
+        }
+
+        std::sort(candidates.begin(), candidates.end(), [](const AnimationCandidate& left, const AnimationCandidate& right) {
+            if (left.score != right.score)
+            {
+                return left.score > right.score;
+            }
+            return left.entry.name < right.entry.name;
+        });
+
+        if (candidates.size() > 12)
+        {
+            manifest.decodeWarnings.push_back(
+                "Animation resolver found " + std::to_string(candidates.size()) +
+                " Anim2Data candidates; exporting the 12 highest-scored matches.");
+            candidates.resize(12);
+        }
+
+        AddLog(app,
+            LogLevel::Info,
+            "Anim2Data resolver for " + modelEntry.name +
+            ": candidates=" + std::to_string(candidates.size()));
+
+        std::vector<Export::AnimationClip> resolvedClips;
+        for (const AnimationCandidate& candidate : candidates)
+        {
+            AddLog(app,
+                LogLevel::Info,
+                "Anim2Data candidate for " + modelEntry.name +
+                ": " + candidate.entry.name +
+                " from " + Platform::PathToUtf8(candidate.packPath.filename()) +
+                " score=" + std::to_string(candidate.score) +
+                " source=" + candidate.source);
+
+            std::string readError;
+            std::optional<std::vector<uint8_t>> payload = ReadSubAssetPayload(candidate.packPath, candidate.entry, readError);
+            if (!payload)
+            {
+                const std::string warning = "Could not read Anim2Data candidate " + candidate.entry.name + ": " + readError;
+                manifest.decodeWarnings.push_back(warning);
+                AddLog(app, LogLevel::Warning, warning);
+                continue;
+            }
+
+            try
+            {
+                DagorFormats::Anim2DataReader animReader(*payload);
+                animReader.Parse();
+                const DagorFormats::Anim2DataInfo& animInfo = animReader.GetInfo();
+
+                size_t curveTrackCount = 0;
+                for (const DagorFormats::Anim2DataClipInfo& animClip : animInfo.clips)
+                {
+                    if (animClip.nodes.empty())
+                    {
+                        continue;
+                    }
+
+                    Export::AnimationClip exportClip;
+                    exportClip.name = candidate.entry.name;
+                    if (!animClip.name.empty() && animInfo.clips.size() > 1)
+                    {
+                        exportClip.name += "_" + animClip.name;
+                    }
+                    exportClip.diagnostics = animClip.warnings;
+                    exportClip.diagnostics.insert(exportClip.diagnostics.end(), animInfo.decodeWarnings.begin(), animInfo.decodeWarnings.end());
+                    exportClip.nodeTracks.reserve(animClip.nodes.size());
+
+                    for (const DagorFormats::Anim2DataNodeAnimation& nodeAnim : animClip.nodes)
+                    {
+                        Export::AnimationNodeTrack track;
+                        track.nodeName = nodeAnim.nodeName;
+                        track.times = nodeAnim.times;
+                        track.translations = nodeAnim.translations;
+                        track.rotations = nodeAnim.rotations;
+                        track.scales = nodeAnim.scales;
+                        if (!track.nodeName.empty() && !track.times.empty())
+                        {
+                            exportClip.nodeTracks.push_back(std::move(track));
+                            ++curveTrackCount;
+                        }
+                    }
+
+                    if (!exportClip.nodeTracks.empty())
+                    {
+                        resolvedClips.push_back(std::move(exportClip));
+                    }
+                }
+
+                manifest.decodeWarnings.push_back(
+                    "Resolved animation " + candidate.entry.name +
+                    " from " + Platform::PathToUtf8(candidate.packPath.filename()));
+                AddLog(app,
+                    LogLevel::Info,
+                    "Decoded Anim2Data " + candidate.entry.name +
+                    ": clips=" + std::to_string(animInfo.clips.size()) +
+                    ", exportNodeTracks=" + std::to_string(curveTrackCount) +
+                    ", channels=" + std::to_string(animInfo.channels.size()) +
+                    ", nodes=" + std::to_string(animInfo.nodeNames.size()) +
+                    ", labels=" + std::to_string(animInfo.labels.size()));
+                for (const std::string& warning : animInfo.decodeWarnings)
+                {
+                    AddLog(app, LogLevel::Warning, "Anim2Data warning for " + candidate.entry.name + ": " + warning);
+                }
+            }
+            catch (const std::exception& exception)
+            {
+                const std::string warning =
+                    "Could not decode Anim2Data candidate " + candidate.entry.name + ": " + exception.what();
+                manifest.decodeWarnings.push_back(warning);
+                AddLog(app, LogLevel::Warning, warning);
+            }
+        }
+
+        if (resolvedClips.empty())
+        {
+            manifest.decodeWarnings.push_back("Animation export requested, but no exportable Anim2Data curves were resolved.");
+            AddLog(app,
+                LogLevel::Warning,
+                "Animation export requested for " + modelEntry.name +
+                ", but no exportable Anim2Data curves were resolved.");
+        }
+
+        return resolvedClips;
+    }
+
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
     {
         AddLog(app, LogLevel::Info, "Exporting texture: " + entry.name + "...");
@@ -1036,7 +1507,8 @@ namespace DagorAssetsExtractor::App
         const std::filesystem::path& packPath,
         const AssetIndex::SubAssetRecord& entry,
         std::optional<bool> dynModelIncludeTexturesOverride,
-        std::optional<bool> dynModelIncludeSkeletonRigOverride)
+        std::optional<bool> dynModelIncludeSkeletonRigOverride,
+        std::optional<bool> dynModelIncludeAnimationsOverride)
     {
         if (entry.grpClassId != 0 && 
             !AssetIndex::CanExportGrpEntryAsStaticModel(entry) && 
@@ -1074,8 +1546,10 @@ namespace DagorAssetsExtractor::App
         auto baseTextureExportOptions = GetTextureExportOptions(app);
         baseTextureExportOptions.outputDir = exportRoot / "Textures";
         const bool exportGlb = AssetIndex::ToLowerAscii(format) == "glb";
+        Export::GlbExportOptions glbOptions;
+        glbOptions.embedTexturesInGlb = app.settings.embedTexturesInGlb;
 
-        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, dynModelIncludeTexturesOverride, dynModelIncludeSkeletonRigOverride]() {
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, glbOptions, dynModelIncludeTexturesOverride, dynModelIncludeSkeletonRigOverride, dynModelIncludeAnimationsOverride]() {
             try
             {
                 std::ifstream file(packPath, std::ios::binary);
@@ -1133,6 +1607,9 @@ namespace DagorAssetsExtractor::App
                 const bool includeSkeletonRig = isDynModel
                     ? dynModelIncludeSkeletonRigOverride.value_or(true)
                     : false;
+                const bool includeAnimations = isDynModel
+                    ? (dynModelIncludeAnimationsOverride.value_or(false) && includeSkeletonRig)
+                    : false;
                 auto textureExportOptions = baseTextureExportOptions;
                 if (exportGlb && exportTextures)
                 {
@@ -1184,6 +1661,7 @@ namespace DagorAssetsExtractor::App
                 {
                     size_t exportedTextureCount = 0;
                     std::unordered_map<uint32_t, std::string> exportedTexturesByDescriptorIndex;
+                    std::unordered_map<uint32_t, fs::path> exportedTextureSourcesByDescriptorIndex;
                     for (const auto& texLink : matchedLink->textureLinks)
                     {
                         if (texLink.matchedDxpPath && texLink.matchedDxpEntryName)
@@ -1212,6 +1690,7 @@ namespace DagorAssetsExtractor::App
                                     {
                                         const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
                                         exportedTexturesByDescriptorIndex.emplace(texLink.textureIndex, textureFile);
+                                        exportedTextureSourcesByDescriptorIndex.emplace(texLink.textureIndex, texResult.outputPath);
                                         manifest.textureDependencies.push_back(textureFile);
                                         ++exportedTextureCount;
                                     }
@@ -1261,6 +1740,7 @@ namespace DagorAssetsExtractor::App
                                     : std::string();
                             const std::vector<std::string> baseColorSlots = BuildBaseColorSlotPreference(shaderClass);
                             std::optional<std::string> selectedTexturePath;
+                            std::optional<fs::path> selectedTextureSourcePath;
 
                             for (const std::string& slotName : baseColorSlots)
                             {
@@ -1274,6 +1754,11 @@ namespace DagorAssetsExtractor::App
                                     if (textureIt != exportedTexturesByDescriptorIndex.end())
                                     {
                                         selectedTexturePath = textureIt->second;
+                                        if (const auto sourceIt = exportedTextureSourcesByDescriptorIndex.find(binding.textureIndex);
+                                            sourceIt != exportedTextureSourcesByDescriptorIndex.end())
+                                        {
+                                            selectedTextureSourcePath = sourceIt->second;
+                                        }
                                         break;
                                     }
                                 }
@@ -1291,6 +1776,10 @@ namespace DagorAssetsExtractor::App
                             if (selectedTexturePath && material.diffuseTexturePath.empty())
                             {
                                 material.diffuseTexturePath = *selectedTexturePath;
+                                if (selectedTextureSourcePath)
+                                {
+                                    material.diffuseTextureSourcePath = *selectedTextureSourcePath;
+                                }
                                 ++assignedTextureCount;
                             }
                         }
@@ -1305,7 +1794,13 @@ namespace DagorAssetsExtractor::App
                     }
                     else if (materials.size() == 1 && exportedTexturesByDescriptorIndex.size() == 1)
                     {
-                        materials.front().diffuseTexturePath = exportedTexturesByDescriptorIndex.begin()->second;
+                        const auto textureIt = exportedTexturesByDescriptorIndex.begin();
+                        materials.front().diffuseTexturePath = textureIt->second;
+                        if (const auto sourceIt = exportedTextureSourcesByDescriptorIndex.find(textureIt->first);
+                            sourceIt != exportedTextureSourcesByDescriptorIndex.end())
+                        {
+                            materials.front().diffuseTextureSourcePath = sourceIt->second;
+                        }
                         assignedTextureCount = 1;
                     }
                     else if (!exportedTexturesByDescriptorIndex.empty())
@@ -1348,7 +1843,7 @@ namespace DagorAssetsExtractor::App
                     {
                         outPath = exportRoot / (safeName + ".glb");
                         manifest.outputFiles.push_back(outPath.filename().string());
-                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest, materials);
+                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest, materials, glbOptions);
                     }
                     else
                     {
@@ -1627,6 +2122,38 @@ namespace DagorAssetsExtractor::App
                                    "; using resolved skeleton only for rigid part placement metadata."));
                     }
 
+                    std::vector<Export::AnimationClip> animations;
+                    if (includeAnimations)
+                    {
+                        if (skeleton.empty())
+                        {
+                            const std::string warning =
+                                "Animation export requested for " + entry.name +
+                                ", but no skeleton was resolved; GLB animation targets cannot be mapped.";
+                            manifest.decodeWarnings.push_back(warning);
+                            AddLog(app, LogLevel::Warning, warning);
+                        }
+                        else
+                        {
+                            AddLog(app, LogLevel::Info, "Resolving Anim2Data animation clips for " + entry.name + "...");
+                            animations = ResolveAnimationClipsForDynModel(
+                                app,
+                                packPath,
+                                entry,
+                                matchedLink,
+                                descriptorLinks,
+                                allRecords,
+                                manifest);
+                        }
+                    }
+                    else if (dynModelIncludeAnimationsOverride.value_or(false) && !includeSkeletonRig)
+                    {
+                        AddLog(app,
+                            LogLevel::Info,
+                            "Animation export disabled for " + entry.name +
+                            " because skeleton / rig export is disabled.");
+                    }
+
                     if (format == "GLB" || format == "glb")
                     {
                         outPath = exportRoot / (safeName + ".glb");
@@ -1636,8 +2163,9 @@ namespace DagorAssetsExtractor::App
                             "Writing DynModel GLB for " + entry.name +
                             " with skeletonNodes=" + std::to_string(skeleton.size()) +
                             ", includeSkeletonRig=" + std::string(includeSkeletonRig ? "true" : "false") +
+                            ", animationClips=" + std::to_string(animations.size()) +
                             " to " + Platform::PathToUtf8(outPath));
-                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, dynLods, skeleton, manifest, materials, includeSkeletonRig);
+                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, dynLods, skeleton, manifest, materials, includeSkeletonRig, glbOptions, animations);
                     }
                     else
                     {
@@ -1688,17 +2216,22 @@ namespace DagorAssetsExtractor::App
 
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
     {
-        RequestModelExportInternal(app, packPath, entry, std::nullopt, std::nullopt);
+        RequestModelExportInternal(app, packPath, entry, std::nullopt, std::nullopt, std::nullopt);
     }
 
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel)
     {
-        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel, true);
+        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel, true, false);
     }
 
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel, bool includeSkeletonRigForDynModel)
     {
-        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel, includeSkeletonRigForDynModel);
+        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel, includeSkeletonRigForDynModel, false);
+    }
+
+    void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel, bool includeSkeletonRigForDynModel, bool includeAnimationsForDynModel)
+    {
+        RequestModelExportInternal(app, packPath, entry, includeTexturesForDynModel, includeSkeletonRigForDynModel, includeAnimationsForDynModel);
     }
 
     void OpenDynModelExportModal(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)

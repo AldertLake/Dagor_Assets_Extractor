@@ -10,6 +10,7 @@
 #include <string_view>
 #include <charconv>
 #include <cmath>
+#include <optional>
 
 namespace DagorAssetsExtractor::Export
 {
@@ -61,6 +62,25 @@ namespace DagorAssetsExtractor::Export
             for (uint32_t i = 0; i < primitive.indexCount; ++i)
             {
                 if (indices[static_cast<size_t>(primitive.firstIndex) + i] >= vertexCount)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool IsIdentityMatrix(const std::array<float, 16>& matrix)
+        {
+            constexpr std::array<float, 16> kIdentity = {
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f
+            };
+
+            for (size_t i = 0; i < matrix.size(); ++i)
+            {
+                if (std::fabs(matrix[i] - kIdentity[i]) > 1e-6f)
                 {
                     return false;
                 }
@@ -346,15 +366,110 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
+        template <typename TVertex>
+        bool IsDegenerateTriangle(
+            const std::vector<TVertex>& vertices,
+            uint32_t i0,
+            uint32_t i1,
+            uint32_t i2)
+        {
+            if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size() ||
+                i0 == i1 || i1 == i2 || i0 == i2)
+            {
+                return true;
+            }
+
+            const auto& a = vertices[i0];
+            const auto& b = vertices[i1];
+            const auto& c = vertices[i2];
+            const double abx = static_cast<double>(b.x) - static_cast<double>(a.x);
+            const double aby = static_cast<double>(b.y) - static_cast<double>(a.y);
+            const double abz = static_cast<double>(b.z) - static_cast<double>(a.z);
+            const double acx = static_cast<double>(c.x) - static_cast<double>(a.x);
+            const double acy = static_cast<double>(c.y) - static_cast<double>(a.y);
+            const double acz = static_cast<double>(c.z) - static_cast<double>(a.z);
+            const double nx = (aby * acz) - (abz * acy);
+            const double ny = (abz * acx) - (abx * acz);
+            const double nz = (abx * acy) - (aby * acx);
+            const double areaSq = (nx * nx) + (ny * ny) + (nz * nz);
+            return !std::isfinite(areaSq) || areaSq <= 1e-20;
+        }
+
         template <typename TMesh>
-        std::vector<MaterialInfo> BuildEffectiveMaterials(
+        size_t FilterDegenerateTriangles(TMesh& mesh)
+        {
+            std::vector<DagorFormats::RendInstPrimitive> sourcePrimitives = mesh.primitives;
+            if (sourcePrimitives.empty())
+            {
+                sourcePrimitives.push_back({ 0, 0, static_cast<uint32_t>(mesh.indices.size() - (mesh.indices.size() % 3)) });
+            }
+
+            std::vector<uint32_t> filteredIndices;
+            filteredIndices.reserve(mesh.indices.size());
+            std::vector<DagorFormats::RendInstPrimitive> filteredPrimitives;
+            filteredPrimitives.reserve(sourcePrimitives.size());
+            size_t removedTriangles = 0;
+
+            for (const DagorFormats::RendInstPrimitive& primitive : sourcePrimitives)
+            {
+                if (!PrimitiveHasValidIndices(mesh.indices, mesh.vertices.size(), primitive))
+                {
+                    removedTriangles += primitive.indexCount / 3;
+                    continue;
+                }
+
+                const uint32_t firstIndex = static_cast<uint32_t>(filteredIndices.size());
+                for (uint32_t offset = 0; offset + 2 < primitive.indexCount; offset += 3)
+                {
+                    const size_t src = static_cast<size_t>(primitive.firstIndex) + offset;
+                    const uint32_t i0 = mesh.indices[src];
+                    const uint32_t i1 = mesh.indices[src + 1];
+                    const uint32_t i2 = mesh.indices[src + 2];
+                    if (IsDegenerateTriangle(mesh.vertices, i0, i1, i2))
+                    {
+                        ++removedTriangles;
+                        continue;
+                    }
+
+                    filteredIndices.push_back(i0);
+                    filteredIndices.push_back(i1);
+                    filteredIndices.push_back(i2);
+                }
+
+                const uint32_t indexCount = static_cast<uint32_t>(filteredIndices.size() - firstIndex);
+                if (indexCount > 0)
+                {
+                    filteredPrimitives.push_back({ primitive.materialIndex, firstIndex, indexCount });
+                }
+            }
+
+            mesh.indices = std::move(filteredIndices);
+            mesh.primitives = std::move(filteredPrimitives);
+            return removedTriangles;
+        }
+
+        struct MaterialSelection
+        {
+            std::vector<MaterialInfo> materials;
+            std::unordered_map<uint32_t, size_t> remap;
+        };
+
+        bool MaterialSlotHasTexture(const MaterialSelection& selection, uint32_t materialSlot)
+        {
+            const auto remapIt = selection.remap.find(materialSlot);
+            if (remapIt == selection.remap.end() || remapIt->second >= selection.materials.size())
+            {
+                return false;
+            }
+            return !selection.materials[remapIt->second].diffuseTexturePath.empty();
+        }
+
+        template <typename TMesh>
+        MaterialSelection SelectUsedMaterials(
             const std::vector<TMesh>& meshes,
             const std::vector<MaterialInfo>& inputMaterials)
         {
-            std::vector<MaterialInfo> materials = inputMaterials;
-
-            size_t maxMaterialIndex = 0;
-            bool hasMaterialIndex = false;
+            std::vector<uint32_t> usedMaterialSlots;
             for (const auto& mesh : meshes)
             {
                 for (const auto& primitive : mesh.primitives)
@@ -363,53 +478,180 @@ namespace DagorAssetsExtractor::Export
                     {
                         continue;
                     }
-                    maxMaterialIndex = std::max(maxMaterialIndex, static_cast<size_t>(primitive.materialIndex));
-                    hasMaterialIndex = true;
+                    usedMaterialSlots.push_back(primitive.materialIndex);
                 }
             }
 
-            if (hasMaterialIndex && materials.size() <= maxMaterialIndex)
-            {
-                materials.resize(maxMaterialIndex + 1);
-            }
+            std::sort(usedMaterialSlots.begin(), usedMaterialSlots.end());
+            usedMaterialSlots.erase(std::unique(usedMaterialSlots.begin(), usedMaterialSlots.end()), usedMaterialSlots.end());
 
-            for (size_t i = 0; i < materials.size(); ++i)
+            MaterialSelection selection;
+            selection.materials.reserve(usedMaterialSlots.size());
+            for (uint32_t materialSlot : usedMaterialSlots)
             {
-                if (materials[i].name.empty())
+                MaterialInfo material;
+                if (materialSlot < inputMaterials.size())
                 {
-                    materials[i].name = "material_" + std::to_string(i);
+                    material = inputMaterials[materialSlot];
                 }
+
+                if (material.name.empty())
+                {
+                    material.name = "material_" + std::to_string(materialSlot);
+                }
+
+                selection.remap.emplace(materialSlot, selection.materials.size());
+                selection.materials.push_back(std::move(material));
             }
 
-            return materials;
+            return selection;
         }
 
-        void WriteMaterialTextureSections(std::stringstream& json, const std::vector<MaterialInfo>& materials)
+        std::string LowerExtension(const std::filesystem::path& path)
+        {
+            std::string ext = path.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return ext;
+        }
+
+        std::string MimeTypeForTexturePath(const std::filesystem::path& path)
+        {
+            const std::string ext = LowerExtension(path);
+            if (ext == ".png")
+            {
+                return "image/png";
+            }
+            if (ext == ".jpg" || ext == ".jpeg")
+            {
+                return "image/jpeg";
+            }
+            return {};
+        }
+
+        std::optional<std::vector<uint8_t>> ReadBinaryFile(const std::filesystem::path& path)
+        {
+            std::ifstream file(path, std::ios::binary);
+            if (!file)
+            {
+                return std::nullopt;
+            }
+
+            file.seekg(0, std::ios::end);
+            const std::streamoff size = file.tellg();
+            if (size <= 0)
+            {
+                return std::nullopt;
+            }
+            file.seekg(0, std::ios::beg);
+
+            std::vector<uint8_t> bytes(static_cast<size_t>(size));
+            if (!file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size)))
+            {
+                return std::nullopt;
+            }
+            return bytes;
+        }
+
+        struct GlbImageInfo
+        {
+            std::string uri;
+            std::string mimeType;
+            size_t byteOffset = 0;
+            size_t byteLength = 0;
+            size_t embeddedOrdinal = 0;
+            bool embedded = false;
+        };
+
+        struct GlbTextureSections
+        {
+            std::vector<int> materialTextureIndices;
+            std::vector<GlbImageInfo> images;
+            size_t embeddedImageCount = 0;
+        };
+
+        GlbTextureSections PrepareMaterialTextures(
+            const std::vector<MaterialInfo>& materials,
+            const GlbExportOptions& options,
+            std::vector<uint8_t>& binBuffer,
+            std::ostream& debugLog)
+        {
+            GlbTextureSections sections;
+            sections.materialTextureIndices.assign(materials.size(), -1);
+
+            std::unordered_map<std::string, int> textureIndexByKey;
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                const MaterialInfo& material = materials[i];
+                if (material.diffuseTexturePath.empty())
+                {
+                    continue;
+                }
+
+                const std::string dedupeKey = !material.diffuseTextureSourcePath.empty()
+                    ? ("source:" + material.diffuseTextureSourcePath.lexically_normal().generic_string())
+                    : ("uri:" + material.diffuseTexturePath);
+                const auto existing = textureIndexByKey.find(dedupeKey);
+                if (existing != textureIndexByKey.end())
+                {
+                    sections.materialTextureIndices[i] = existing->second;
+                    continue;
+                }
+
+                GlbImageInfo image;
+                image.uri = material.diffuseTexturePath;
+
+                if (options.embedTexturesInGlb && !material.diffuseTextureSourcePath.empty())
+                {
+                    image.mimeType = MimeTypeForTexturePath(material.diffuseTextureSourcePath);
+                    if (!image.mimeType.empty())
+                    {
+                        if (std::optional<std::vector<uint8_t>> bytes = ReadBinaryFile(material.diffuseTextureSourcePath))
+                        {
+                            while (binBuffer.size() % 4 != 0)
+                            {
+                                binBuffer.push_back(0);
+                            }
+                            image.byteOffset = binBuffer.size();
+                            image.byteLength = bytes->size();
+                            image.embeddedOrdinal = sections.embeddedImageCount++;
+                            image.embedded = true;
+                            binBuffer.insert(binBuffer.end(), bytes->begin(), bytes->end());
+                            while (binBuffer.size() % 4 != 0)
+                            {
+                                binBuffer.push_back(0);
+                            }
+                        }
+                        else
+                        {
+                            debugLog << "  Texture embed skipped; could not read "
+                                     << material.diffuseTextureSourcePath.string() << std::endl;
+                        }
+                    }
+                    else
+                    {
+                        debugLog << "  Texture embed skipped; unsupported glTF image type for "
+                                 << material.diffuseTextureSourcePath.string() << std::endl;
+                    }
+                }
+
+                const int textureIndex = static_cast<int>(sections.images.size());
+                textureIndexByKey.emplace(dedupeKey, textureIndex);
+                sections.images.push_back(std::move(image));
+                sections.materialTextureIndices[i] = textureIndex;
+            }
+
+            return sections;
+        }
+
+        void WriteMaterialTextureSections(
+            std::stringstream& json,
+            const std::vector<MaterialInfo>& materials,
+            const GlbTextureSections& textureSections,
+            size_t imageBufferViewBase)
         {
             if (materials.empty())
             {
                 return;
-            }
-
-            std::vector<int> textureIndices(materials.size(), -1);
-            std::vector<std::string> textureUris;
-            std::unordered_map<std::string, int> textureIndexByUri;
-            for (size_t i = 0; i < materials.size(); ++i)
-            {
-                if (!materials[i].diffuseTexturePath.empty())
-                {
-                    const auto existing = textureIndexByUri.find(materials[i].diffuseTexturePath);
-                    if (existing != textureIndexByUri.end())
-                    {
-                        textureIndices[i] = existing->second;
-                        continue;
-                    }
-
-                    const int textureIndex = static_cast<int>(textureUris.size());
-                    textureIndexByUri.emplace(materials[i].diffuseTexturePath, textureIndex);
-                    textureUris.push_back(materials[i].diffuseTexturePath);
-                    textureIndices[i] = textureIndex;
-                }
             }
 
             json << "  \"materials\": [\n";
@@ -418,9 +660,9 @@ namespace DagorAssetsExtractor::Export
                 json << "    {\n";
                 json << "      \"name\": \"" << JsonEscape(materials[i].name) << "\",\n";
                 json << "      \"pbrMetallicRoughness\": {\n";
-                if (textureIndices[i] >= 0)
+                if (textureSections.materialTextureIndices[i] >= 0)
                 {
-                    json << "        \"baseColorTexture\": { \"index\": " << textureIndices[i] << " },\n";
+                    json << "        \"baseColorTexture\": { \"index\": " << textureSections.materialTextureIndices[i] << " },\n";
                 }
                 else
                 {
@@ -435,25 +677,34 @@ namespace DagorAssetsExtractor::Export
             }
             json << "  ],\n";
 
-            if (textureUris.empty())
+            if (textureSections.images.empty())
             {
                 return;
             }
 
             json << "  \"textures\": [\n";
-            for (size_t i = 0; i < textureUris.size(); ++i)
+            for (size_t i = 0; i < textureSections.images.size(); ++i)
             {
                 json << "    { \"sampler\": 0, \"source\": " << i << " }";
-                if (i + 1 < textureUris.size()) json << ",";
+                if (i + 1 < textureSections.images.size()) json << ",";
                 json << "\n";
             }
             json << "  ],\n";
 
             json << "  \"images\": [\n";
-            for (size_t i = 0; i < textureUris.size(); ++i)
+            for (size_t i = 0; i < textureSections.images.size(); ++i)
             {
-                json << "    { \"uri\": \"" << JsonEscape(textureUris[i]) << "\" }";
-                if (i + 1 < textureUris.size()) json << ",";
+                const GlbImageInfo& image = textureSections.images[i];
+                if (image.embedded)
+                {
+                    json << "    { \"bufferView\": " << (imageBufferViewBase + image.embeddedOrdinal)
+                         << ", \"mimeType\": \"" << image.mimeType << "\" }";
+                }
+                else
+                {
+                    json << "    { \"uri\": \"" << JsonEscape(image.uri) << "\" }";
+                }
+                if (i + 1 < textureSections.images.size()) json << ",";
                 json << "\n";
             }
             json << "  ],\n";
@@ -462,13 +713,480 @@ namespace DagorAssetsExtractor::Export
             json << "    { \"magFilter\": 9729, \"minFilter\": 9987, \"wrapS\": 10497, \"wrapT\": 10497 }\n";
             json << "  ],\n";
         }
+
+        void WriteEmbeddedImageBufferViews(std::stringstream& json, const GlbTextureSections& textureSections)
+        {
+            bool firstImageView = true;
+            for (const GlbImageInfo& image : textureSections.images)
+            {
+                if (!image.embedded)
+                {
+                    continue;
+                }
+
+                if (!firstImageView)
+                {
+                    json << ",\n";
+                }
+                firstImageView = false;
+                json << "    {\n";
+                json << "      \"buffer\": 0,\n";
+                json << "      \"byteOffset\": " << image.byteOffset << ",\n";
+                json << "      \"byteLength\": " << image.byteLength << "\n";
+                json << "    }";
+            }
+        }
+
+        struct GlbAnimationCurveInfo
+        {
+            std::string nodeName;
+            std::string path;
+            size_t targetNodeIndex = 0;
+            size_t timeBufferView = 0;
+            size_t valueBufferView = 0;
+            size_t timeByteOffset = 0;
+            size_t timeByteLength = 0;
+            size_t valueByteOffset = 0;
+            size_t valueByteLength = 0;
+            size_t timeAccessor = 0;
+            size_t valueAccessor = 0;
+            size_t sampleCount = 0;
+            float minTime = 0.0f;
+            float maxTime = 0.0f;
+            std::string valueType;
+        };
+
+        struct GlbAnimationClipInfo
+        {
+            std::string name;
+            std::vector<GlbAnimationCurveInfo> curves;
+        };
+
+        struct GlbAnimationSections
+        {
+            std::vector<GlbAnimationClipInfo> clips;
+            size_t bufferViewCount = 0;
+        };
+
+        std::array<float, 3> ConvertAnimationTranslationForGltf(const std::array<float, 3>& value)
+        {
+            return { value[0], value[1], -value[2] };
+        }
+
+        std::array<float, 4> ConvertAnimationRotationForGltf(std::array<float, 4> value)
+        {
+            // Dagor mesh positions are converted with a Z reflection. For local
+            // quaternions, S * R * S maps (x, y, z, w) to (-x, -y, z, w).
+            value = { -value[0], -value[1], value[2], value[3] };
+            const float lengthSq =
+                (value[0] * value[0]) +
+                (value[1] * value[1]) +
+                (value[2] * value[2]) +
+                (value[3] * value[3]);
+            if (!std::isfinite(lengthSq) || lengthSq <= 1e-12f)
+            {
+                return { 0.0f, 0.0f, 0.0f, 1.0f };
+            }
+
+            const float invLength = 1.0f / std::sqrt(lengthSq);
+            return {
+                value[0] * invLength,
+                value[1] * invLength,
+                value[2] * invLength,
+                value[3] * invLength
+            };
+        }
+
+        bool HasValidAnimationTimes(const std::vector<float>& times)
+        {
+            if (times.empty())
+            {
+                return false;
+            }
+
+            float previous = -std::numeric_limits<float>::infinity();
+            for (float time : times)
+            {
+                if (!std::isfinite(time) || time < previous)
+                {
+                    return false;
+                }
+                previous = time;
+            }
+            return true;
+        }
+
+        struct GltfNodeTrs
+        {
+            std::array<float, 3> translation = { 0.0f, 0.0f, 0.0f };
+            std::array<float, 4> rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+            std::array<float, 3> scale = { 1.0f, 1.0f, 1.0f };
+        };
+
+        GltfNodeTrs DecomposeGltfMatrix(const std::array<float, 16>& matrix)
+        {
+            GltfNodeTrs trs;
+            trs.translation = { matrix[12], matrix[13], matrix[14] };
+
+            std::array<float, 3> xAxis = { matrix[0], matrix[1], matrix[2] };
+            std::array<float, 3> yAxis = { matrix[4], matrix[5], matrix[6] };
+            std::array<float, 3> zAxis = { matrix[8], matrix[9], matrix[10] };
+            const auto length = [](const std::array<float, 3>& value)
+            {
+                return std::sqrt((value[0] * value[0]) + (value[1] * value[1]) + (value[2] * value[2]));
+            };
+            trs.scale = { length(xAxis), length(yAxis), length(zAxis) };
+            const auto normalize = [](std::array<float, 3>& value, float scale)
+            {
+                if (std::isfinite(scale) && scale > 1e-6f)
+                {
+                    value[0] /= scale;
+                    value[1] /= scale;
+                    value[2] /= scale;
+                }
+            };
+            normalize(xAxis, trs.scale[0]);
+            normalize(yAxis, trs.scale[1]);
+            normalize(zAxis, trs.scale[2]);
+            for (float& scale : trs.scale)
+            {
+                if (!std::isfinite(scale) || scale <= 1e-6f)
+                {
+                    scale = 1.0f;
+                }
+            }
+
+            const float m00 = xAxis[0];
+            const float m01 = yAxis[0];
+            const float m02 = zAxis[0];
+            const float m10 = xAxis[1];
+            const float m11 = yAxis[1];
+            const float m12 = zAxis[1];
+            const float m20 = xAxis[2];
+            const float m21 = yAxis[2];
+            const float m22 = zAxis[2];
+
+            std::array<float, 4> q = { 0.0f, 0.0f, 0.0f, 1.0f };
+            const float trace = m00 + m11 + m22;
+            if (trace > 0.0f)
+            {
+                const float s = std::sqrt(trace + 1.0f) * 2.0f;
+                q[3] = 0.25f * s;
+                q[0] = (m21 - m12) / s;
+                q[1] = (m02 - m20) / s;
+                q[2] = (m10 - m01) / s;
+            }
+            else if (m00 > m11 && m00 > m22)
+            {
+                const float s = std::sqrt(1.0f + m00 - m11 - m22) * 2.0f;
+                q[3] = (m21 - m12) / s;
+                q[0] = 0.25f * s;
+                q[1] = (m01 + m10) / s;
+                q[2] = (m02 + m20) / s;
+            }
+            else if (m11 > m22)
+            {
+                const float s = std::sqrt(1.0f + m11 - m00 - m22) * 2.0f;
+                q[3] = (m02 - m20) / s;
+                q[0] = (m01 + m10) / s;
+                q[1] = 0.25f * s;
+                q[2] = (m12 + m21) / s;
+            }
+            else
+            {
+                const float s = std::sqrt(1.0f + m22 - m00 - m11) * 2.0f;
+                q[3] = (m10 - m01) / s;
+                q[0] = (m02 + m20) / s;
+                q[1] = (m12 + m21) / s;
+                q[2] = 0.25f * s;
+            }
+            const float qLengthSq = (q[0] * q[0]) + (q[1] * q[1]) + (q[2] * q[2]) + (q[3] * q[3]);
+            if (std::isfinite(qLengthSq) && qLengthSq > 1e-12f)
+            {
+                const float invLength = 1.0f / std::sqrt(qLengthSq);
+                trs.rotation = { q[0] * invLength, q[1] * invLength, q[2] * invLength, q[3] * invLength };
+            }
+            return trs;
+        }
+
+        template <typename TValue, typename TConvert>
+        void AppendAnimationCurve(
+            std::vector<uint8_t>& binBuffer,
+            GlbAnimationClipInfo& clipInfo,
+            const std::string& nodeName,
+            size_t targetNodeIndex,
+            const std::string& path,
+            const std::string& valueType,
+            size_t& nextBufferView,
+            const std::vector<float>& times,
+            const std::vector<TValue>& values,
+            TConvert convert)
+        {
+            if (!HasValidAnimationTimes(times) || values.size() != times.size())
+            {
+                return;
+            }
+
+            GlbAnimationCurveInfo curve;
+            curve.nodeName = nodeName;
+            curve.path = path;
+            curve.targetNodeIndex = targetNodeIndex;
+            curve.sampleCount = times.size();
+            curve.minTime = times.front();
+            curve.maxTime = times.back();
+            curve.valueType = valueType;
+
+            while (binBuffer.size() % 4 != 0)
+            {
+                binBuffer.push_back(0);
+            }
+            curve.timeByteOffset = binBuffer.size();
+            curve.timeByteLength = times.size() * sizeof(float);
+            const uint8_t* timeBytes = reinterpret_cast<const uint8_t*>(times.data());
+            binBuffer.insert(binBuffer.end(), timeBytes, timeBytes + curve.timeByteLength);
+            while (binBuffer.size() % 4 != 0)
+            {
+                binBuffer.push_back(0);
+            }
+
+            std::vector<TValue> convertedValues;
+            convertedValues.reserve(values.size());
+            for (const TValue& value : values)
+            {
+                convertedValues.push_back(convert(value));
+            }
+
+            curve.valueByteOffset = binBuffer.size();
+            curve.valueByteLength = convertedValues.size() * sizeof(TValue);
+            const uint8_t* valueBytes = reinterpret_cast<const uint8_t*>(convertedValues.data());
+            binBuffer.insert(binBuffer.end(), valueBytes, valueBytes + curve.valueByteLength);
+            while (binBuffer.size() % 4 != 0)
+            {
+                binBuffer.push_back(0);
+            }
+
+            curve.timeBufferView = nextBufferView++;
+            curve.valueBufferView = nextBufferView++;
+            clipInfo.curves.push_back(std::move(curve));
+        }
+
+        GlbAnimationSections PrepareAnimationSections(
+            const std::vector<AnimationClip>& animations,
+            const std::unordered_map<std::string, size_t>& skeletonNodeLookup,
+            const std::vector<bool>& emittedSkeletonNodes,
+            const std::vector<size_t>& skeletonNodeIndices,
+            bool emitSkeletonNodes,
+            size_t bufferViewBase,
+            std::vector<uint8_t>& binBuffer,
+            std::ostream& debugLog)
+        {
+            GlbAnimationSections sections;
+            if (animations.empty())
+            {
+                return sections;
+            }
+            if (!emitSkeletonNodes)
+            {
+                debugLog << "  Animation export skipped: skeleton nodes are not emitted." << std::endl;
+                return sections;
+            }
+
+            size_t nextBufferView = bufferViewBase;
+            for (const AnimationClip& clip : animations)
+            {
+                GlbAnimationClipInfo clipInfo;
+                clipInfo.name = clip.name.empty() ? "animation" : clip.name;
+
+                for (const AnimationNodeTrack& track : clip.nodeTracks)
+                {
+                    const auto nodeIt = skeletonNodeLookup.find(track.nodeName);
+                    if (nodeIt == skeletonNodeLookup.end())
+                    {
+                        debugLog << "  Animation clip " << clipInfo.name
+                                 << " skipped node '" << track.nodeName
+                                 << "': no matching skeleton node." << std::endl;
+                        continue;
+                    }
+
+                    const size_t skeletonNode = nodeIt->second;
+                    if (skeletonNode >= emittedSkeletonNodes.size() ||
+                        !emittedSkeletonNodes[skeletonNode] ||
+                        skeletonNode >= skeletonNodeIndices.size() ||
+                        skeletonNodeIndices[skeletonNode] == std::numeric_limits<size_t>::max())
+                    {
+                        debugLog << "  Animation clip " << clipInfo.name
+                                 << " skipped node '" << track.nodeName
+                                 << "': skeleton node was not emitted." << std::endl;
+                        continue;
+                    }
+
+                    const size_t targetNodeIndex = skeletonNodeIndices[skeletonNode];
+                    AppendAnimationCurve(
+                        binBuffer,
+                        clipInfo,
+                        track.nodeName,
+                        targetNodeIndex,
+                        "translation",
+                        "VEC3",
+                        nextBufferView,
+                        track.times,
+                        track.translations,
+                        ConvertAnimationTranslationForGltf);
+                    AppendAnimationCurve(
+                        binBuffer,
+                        clipInfo,
+                        track.nodeName,
+                        targetNodeIndex,
+                        "rotation",
+                        "VEC4",
+                        nextBufferView,
+                        track.times,
+                        track.rotations,
+                        ConvertAnimationRotationForGltf);
+                    AppendAnimationCurve(
+                        binBuffer,
+                        clipInfo,
+                        track.nodeName,
+                        targetNodeIndex,
+                        "scale",
+                        "VEC3",
+                        nextBufferView,
+                        track.times,
+                        track.scales,
+                        [](const std::array<float, 3>& value) { return value; });
+                }
+
+                for (const std::string& diagnostic : clip.diagnostics)
+                {
+                    debugLog << "  Animation diagnostic for " << clipInfo.name << ": " << diagnostic << std::endl;
+                }
+
+                if (!clipInfo.curves.empty())
+                {
+                    sections.bufferViewCount += clipInfo.curves.size() * 2;
+                    sections.clips.push_back(std::move(clipInfo));
+                }
+                else
+                {
+                    debugLog << "  Animation clip " << clipInfo.name
+                             << " had no exportable curves." << std::endl;
+                }
+            }
+
+            return sections;
+        }
+
+        void AllocateAnimationAccessors(GlbAnimationSections& sections, size_t& currentAccessor)
+        {
+            for (GlbAnimationClipInfo& clip : sections.clips)
+            {
+                for (GlbAnimationCurveInfo& curve : clip.curves)
+                {
+                    curve.timeAccessor = currentAccessor++;
+                    curve.valueAccessor = currentAccessor++;
+                }
+            }
+        }
+
+        void WriteAnimationSections(std::stringstream& json, const GlbAnimationSections& sections)
+        {
+            if (sections.clips.empty())
+            {
+                return;
+            }
+
+            json << "  \"animations\": [\n";
+            for (size_t clipIndex = 0; clipIndex < sections.clips.size(); ++clipIndex)
+            {
+                const GlbAnimationClipInfo& clip = sections.clips[clipIndex];
+                json << "    {\n";
+                json << "      \"name\": \"" << JsonEscape(clip.name) << "\",\n";
+                json << "      \"samplers\": [\n";
+                for (size_t curveIndex = 0; curveIndex < clip.curves.size(); ++curveIndex)
+                {
+                    const GlbAnimationCurveInfo& curve = clip.curves[curveIndex];
+                    json << "        { \"input\": " << curve.timeAccessor
+                         << ", \"output\": " << curve.valueAccessor
+                         << ", \"interpolation\": \"LINEAR\" }";
+                    if (curveIndex + 1 < clip.curves.size())
+                    {
+                        json << ",";
+                    }
+                    json << "\n";
+                }
+                json << "      ],\n";
+                json << "      \"channels\": [\n";
+                for (size_t curveIndex = 0; curveIndex < clip.curves.size(); ++curveIndex)
+                {
+                    const GlbAnimationCurveInfo& curve = clip.curves[curveIndex];
+                    json << "        { \"sampler\": " << curveIndex
+                         << ", \"target\": { \"node\": " << curve.targetNodeIndex
+                         << ", \"path\": \"" << curve.path << "\" } }";
+                    if (curveIndex + 1 < clip.curves.size())
+                    {
+                        json << ",";
+                    }
+                    json << "\n";
+                }
+                json << "      ]\n";
+                json << "    }";
+                if (clipIndex + 1 < sections.clips.size())
+                {
+                    json << ",";
+                }
+                json << "\n";
+            }
+            json << "  ],\n";
+        }
+
+        void WriteAnimationBufferViews(std::stringstream& json, const GlbAnimationSections& sections)
+        {
+            bool first = true;
+            for (const GlbAnimationClipInfo& clip : sections.clips)
+            {
+                for (const GlbAnimationCurveInfo& curve : clip.curves)
+                {
+                    if (!first)
+                    {
+                        json << ",\n";
+                    }
+                    first = false;
+                    json << "    { \"buffer\": 0, \"byteOffset\": " << curve.timeByteOffset
+                         << ", \"byteLength\": " << curve.timeByteLength << " },\n";
+                    json << "    { \"buffer\": 0, \"byteOffset\": " << curve.valueByteOffset
+                         << ", \"byteLength\": " << curve.valueByteLength << " }";
+                }
+            }
+        }
+
+        template <typename TSeparator>
+        void WriteAnimationAccessors(std::stringstream& json, const GlbAnimationSections& sections, TSeparator writeAccessorSeparator)
+        {
+            for (const GlbAnimationClipInfo& clip : sections.clips)
+            {
+                for (const GlbAnimationCurveInfo& curve : clip.curves)
+                {
+                    writeAccessorSeparator();
+                    json << "    { \"bufferView\": " << curve.timeBufferView
+                         << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << curve.sampleCount
+                         << ", \"type\": \"SCALAR\", \"min\": [" << JsonFloat(curve.minTime)
+                         << "], \"max\": [" << JsonFloat(curve.maxTime) << "] }";
+
+                    writeAccessorSeparator();
+                    json << "    { \"bufferView\": " << curve.valueBufferView
+                         << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << curve.sampleCount
+                         << ", \"type\": \"" << curve.valueType << "\" }";
+                }
+            }
+        }
     }
 
     bool ModelExporter::ExportToGlb(
         const std::filesystem::path& path,
         const std::vector<DagorFormats::RendInstMesh>& lods_in,
         const ExportManifest& manifest,
-        const std::vector<MaterialInfo>& materials)
+        const std::vector<MaterialInfo>& materials,
+        const GlbExportOptions& options)
     {
         std::ofstream debugLog("scratch/export_debug.txt", std::ios::app);
         debugLog << "[ExportToGlb] Exporting to " << path.string() << std::endl;
@@ -483,17 +1201,41 @@ namespace DagorAssetsExtractor::Export
             }
 
             DagorFormats::RendInstMesh validLod = lod_in;
-            // Remove primitives with 0 indices
             validLod.primitives.erase(
                 std::remove_if(validLod.primitives.begin(), validLod.primitives.end(),
-                    [](const DagorFormats::RendInstPrimitive& p) { return p.indexCount == 0; }),
+                    [&](const DagorFormats::RendInstPrimitive& p)
+                    {
+                        return !PrimitiveHasValidIndices(validLod.indices, validLod.vertices.size(), p);
+                    }),
                 validLod.primitives.end());
 
             if (validLod.primitives.empty())
             {
-                debugLog << "  LOD " << lod_in.name << " had empty primitives, creating default." << std::endl;
-                // Create a default primitive if all were empty or none existed
-                validLod.primitives.push_back({ 0, 0, static_cast<uint32_t>(validLod.indices.size()) });
+                DagorFormats::RendInstPrimitive defaultPrimitive{
+                    0,
+                    0,
+                    static_cast<uint32_t>(validLod.indices.size() - (validLod.indices.size() % 3))
+                };
+                if (!PrimitiveHasValidIndices(validLod.indices, validLod.vertices.size(), defaultPrimitive))
+                {
+                    debugLog << "  LOD " << lod_in.name << " skipped: no valid primitive/index ranges." << std::endl;
+                    continue;
+                }
+                debugLog << "  LOD " << lod_in.name << " had no valid primitives, creating bounded default." << std::endl;
+                validLod.primitives.push_back(defaultPrimitive);
+            }
+
+            const size_t removedDegenerateTriangles = FilterDegenerateTriangles(validLod);
+            if (removedDegenerateTriangles > 0)
+            {
+                debugLog << "  LOD " << validLod.name
+                         << " removed " << removedDegenerateTriangles
+                         << " degenerate triangles before GLB export." << std::endl;
+            }
+            if (validLod.indices.empty() || validLod.primitives.empty())
+            {
+                debugLog << "  LOD " << lod_in.name << " skipped: all triangles were degenerate." << std::endl;
+                continue;
             }
 
             const size_t repairedNormals = RepairNormals(validLod.vertices, validLod.indices);
@@ -616,6 +1358,49 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
+        const MaterialSelection materialSelection = SelectUsedMaterials(lods, materials);
+        const GlbTextureSections textureSections = PrepareMaterialTextures(materialSelection.materials, options, binBuffer, debugLog);
+        std::vector<bool> meshWritesTexcoords(lods.size(), false);
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            for (const DagorFormats::RendInstPrimitive& primitive : lods[i].primitives)
+            {
+                if (MaterialSlotHasTexture(materialSelection, primitive.materialIndex))
+                {
+                    meshWritesTexcoords[i] = true;
+                    break;
+                }
+            }
+        }
+
+        struct StaticAccessorInfo
+        {
+            size_t position = 0;
+            size_t normal = 0;
+            size_t uv = 0;
+            std::vector<size_t> indices;
+        };
+
+        std::vector<StaticAccessorInfo> accessorInfos(lods.size());
+        size_t currentAccessor = 0;
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            accessorInfos[i].position = currentAccessor++;
+            accessorInfos[i].normal = currentAccessor++;
+            if (meshWritesTexcoords[i])
+            {
+                accessorInfos[i].uv = currentAccessor++;
+            }
+        }
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            accessorInfos[i].indices.reserve(lods[i].primitives.size());
+            for (size_t p = 0; p < lods[i].primitives.size(); ++p)
+            {
+                accessorInfos[i].indices.push_back(currentAccessor++);
+            }
+        }
+
         // Generate JSON
         std::stringstream json;
         json << "{\n";
@@ -651,20 +1436,6 @@ namespace DagorAssetsExtractor::Export
         }
         json << "  ],\n";
 
-        // Pre-calculate accessor indices for indices
-        std::vector<std::vector<size_t>> indexAccessorIndices(lods.size());
-        size_t currentAccessor = lods.size() * 3;
-        for (size_t i = 0; i < lods.size(); ++i)
-        {
-            size_t primCount = lods[i].primitives.size();
-            if (primCount == 0) primCount = 1; // Default primitive
-            for (size_t p = 0; p < primCount; ++p)
-            {
-                indexAccessorIndices[i].push_back(currentAccessor++);
-            }
-        }
-        const std::vector<MaterialInfo> effectiveMaterials = BuildEffectiveMaterials(lods, materials);
-
         // Meshes definition
         json << "  \"meshes\": [\n";
         for (size_t i = 0; i < lods.size(); ++i)
@@ -685,17 +1456,27 @@ namespace DagorAssetsExtractor::Export
                 const auto& prim = prims[p];
                 json << "        {\n";
                 json << "          \"attributes\": {\n";
-                json << "            \"POSITION\": " << (i * 3) << ",\n";
-                json << "            \"NORMAL\": " << (i * 3 + 1) << ",\n";
-                json << "            \"TEXCOORD_0\": " << (i * 3 + 2) << "\n";
-                json << "          },\n";
-                json << "          \"indices\": " << indexAccessorIndices[i][p] << ",\n";
-                
-                if (!effectiveMaterials.empty())
+                json << "            \"POSITION\": " << accessorInfos[i].position << ",\n";
+                json << "            \"NORMAL\": " << accessorInfos[i].normal;
+                if (meshWritesTexcoords[i] && MaterialSlotHasTexture(materialSelection, prim.materialIndex))
                 {
-                    size_t matIdx = static_cast<size_t>(prim.materialIndex);
-                    if (matIdx >= effectiveMaterials.size()) matIdx = 0;
-                    json << "          \"material\": " << matIdx << ",\n";
+                    json << ",\n";
+                    json << "            \"TEXCOORD_0\": " << accessorInfos[i].uv << "\n";
+                }
+                else
+                {
+                    json << "\n";
+                }
+                json << "          },\n";
+                json << "          \"indices\": " << accessorInfos[i].indices[p] << ",\n";
+                
+                if (!materialSelection.materials.empty())
+                {
+                    const auto matIt = materialSelection.remap.find(prim.materialIndex);
+                    if (matIt != materialSelection.remap.end())
+                    {
+                        json << "          \"material\": " << matIt->second << ",\n";
+                    }
                 }
                 
                 json << "          \"mode\": 4\n"; // TRIANGLES
@@ -710,7 +1491,8 @@ namespace DagorAssetsExtractor::Export
         }
         json << "  ],\n";
 
-        WriteMaterialTextureSections(json, effectiveMaterials);
+        const size_t imageBufferViewBase = lods.size() * 2;
+        WriteMaterialTextureSections(json, materialSelection.materials, textureSections, imageBufferViewBase);
 
         // BufferViews definition
         json << "  \"bufferViews\": [\n";
@@ -734,50 +1516,53 @@ namespace DagorAssetsExtractor::Export
             json << "      \"byteLength\": " << binInfos[i].indexByteLength << ",\n";
             json << "      \"target\": 34963\n"; // ELEMENT_ARRAY_BUFFER
             json << "    }";
-            if (i + 1 < lods.size()) json << ",";
+            if (i + 1 < lods.size() || textureSections.embeddedImageCount > 0) json << ",";
+            json << "\n";
+        }
+        if (textureSections.embeddedImageCount > 0)
+        {
+            WriteEmbeddedImageBufferViews(json, textureSections);
             json << "\n";
         }
         json << "  ],\n";
 
         // Accessors definition
         json << "  \"accessors\": [\n";
-        // Accessors for positions, normals, UVs
+        bool firstAccessor = true;
+        const auto writeAccessorSeparator = [&]()
+        {
+            if (!firstAccessor)
+            {
+                json << ",\n";
+            }
+            firstAccessor = false;
+        };
+
         for (size_t i = 0; i < lods.size(); ++i)
         {
             const auto& mesh = lods[i];
             const auto& info = binInfos[i];
 
-            // POSITION
-            json << "    {\n";
-            json << "      \"bufferView\": " << i << ",\n";
-            json << "      \"byteOffset\": 0,\n";
-            json << "      \"componentType\": 5126,\n"; // FLOAT
-            json << "      \"count\": " << mesh.vertices.size() << ",\n";
-            json << "      \"type\": \"VEC3\",\n";
-            json << "      \"max\": [" << JsonFloat(info.maxX) << ", " << JsonFloat(info.maxY) << ", " << JsonFloat(info.maxZ) << "],\n";
-            json << "      \"min\": [" << JsonFloat(info.minX) << ", " << JsonFloat(info.minY) << ", " << JsonFloat(info.minZ) << "]\n";
-            json << "    },\n";
+            writeAccessorSeparator();
+            json << "    { \"bufferView\": " << i
+                 << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size()
+                 << ", \"type\": \"VEC3\", \"max\": [" << JsonFloat(info.maxX) << ", " << JsonFloat(info.maxY) << ", " << JsonFloat(info.maxZ)
+                 << "], \"min\": [" << JsonFloat(info.minX) << ", " << JsonFloat(info.minY) << ", " << JsonFloat(info.minZ) << "] }";
 
-            // NORMAL
-            json << "    {\n";
-            json << "      \"bufferView\": " << i << ",\n";
-            json << "      \"byteOffset\": 12,\n";
-            json << "      \"componentType\": 5126,\n"; // FLOAT
-            json << "      \"count\": " << mesh.vertices.size() << ",\n";
-            json << "      \"type\": \"VEC3\"\n";
-            json << "    },\n";
+            writeAccessorSeparator();
+            json << "    { \"bufferView\": " << i
+                 << ", \"byteOffset\": 12, \"componentType\": 5126, \"count\": " << mesh.vertices.size()
+                 << ", \"type\": \"VEC3\" }";
 
-            // TEXCOORD_0
-            json << "    {\n";
-            json << "      \"bufferView\": " << i << ",\n";
-            json << "      \"byteOffset\": 24,\n";
-            json << "      \"componentType\": 5126,\n"; // FLOAT
-            json << "      \"count\": " << mesh.vertices.size() << ",\n";
-            json << "      \"type\": \"VEC2\"\n";
-            json << "    },\n";
+            if (meshWritesTexcoords[i])
+            {
+                writeAccessorSeparator();
+                json << "    { \"bufferView\": " << i
+                     << ", \"byteOffset\": 24, \"componentType\": 5126, \"count\": " << mesh.vertices.size()
+                     << ", \"type\": \"VEC2\" }";
+            }
         }
 
-        // Accessors for indices (one per primitive)
         for (size_t i = 0; i < lods.size(); ++i)
         {
             const auto& mesh = lods[i];
@@ -790,17 +1575,14 @@ namespace DagorAssetsExtractor::Export
             for (size_t p = 0; p < prims.size(); ++p)
             {
                 const auto& prim = prims[p];
-                json << "    {\n";
-                json << "      \"bufferView\": " << (lods.size() + i) << ",\n";
-                json << "      \"byteOffset\": " << (prim.firstIndex * sizeof(uint32_t)) << ",\n";
-                json << "      \"componentType\": 5125,\n"; // UNSIGNED_INT
-                json << "      \"count\": " << prim.indexCount << ",\n";
-                json << "      \"type\": \"SCALAR\"\n";
-                json << "    }";
-                if (i + 1 < lods.size() || p + 1 < prims.size()) json << ",";
-                json << "\n";
+                writeAccessorSeparator();
+                json << "    { \"bufferView\": " << (lods.size() + i)
+                     << ", \"byteOffset\": " << (prim.firstIndex * sizeof(uint32_t))
+                     << ", \"componentType\": 5125, \"count\": " << prim.indexCount
+                     << ", \"type\": \"SCALAR\" }";
             }
         }
+        json << "\n";
         json << "  ],\n";
 
         // Buffer definition
@@ -865,7 +1647,9 @@ namespace DagorAssetsExtractor::Export
         const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
         const ExportManifest& manifest,
         const std::vector<MaterialInfo>& materials,
-        bool includeSkeletonRig)
+        bool includeSkeletonRig,
+        const GlbExportOptions& options,
+        const std::vector<AnimationClip>& animations)
     {
         std::ofstream debugLog("scratch/export_debug.txt", std::ios::app);
         debugLog << "[ExportToGlb DynModel] Exporting to " << path.string() << std::endl;
@@ -902,6 +1686,19 @@ namespace DagorAssetsExtractor::Export
                 }
                 debugLog << "  LOD " << lod_in.name << " had no valid primitives, creating bounded default." << std::endl;
                 validLod.primitives.push_back(defaultPrimitive);
+            }
+
+            const size_t removedDegenerateTriangles = FilterDegenerateTriangles(validLod);
+            if (removedDegenerateTriangles > 0)
+            {
+                debugLog << "  DynModel mesh " << validLod.name
+                         << " removed " << removedDegenerateTriangles
+                         << " degenerate triangles before GLB export." << std::endl;
+            }
+            if (validLod.indices.empty() || validLod.primitives.empty())
+            {
+                debugLog << "  LOD " << lod_in.name << " skipped: all triangles were degenerate." << std::endl;
+                continue;
             }
 
             const size_t repairedNormals = RepairNormals(validLod.vertices, validLod.indices);
@@ -1045,6 +1842,92 @@ namespace DagorAssetsExtractor::Export
             exportMeshes.end(),
             [](const DynExportMesh& mesh) { return mesh.skinned; });
 
+        std::vector<bool> emittedSkeletonNodes(skeleton.size(), false);
+        if (emitSkeletonNodes)
+        {
+            if (useSkinning)
+            {
+                std::fill(emittedSkeletonNodes.begin(), emittedSkeletonNodes.end(), true);
+            }
+            else
+            {
+                for (const DynExportMesh& exportMesh : exportMeshes)
+                {
+                    if (!exportMesh.hasParentJoint)
+                    {
+                        continue;
+                    }
+
+                    uint16_t nodeIndex = exportMesh.parentJoint;
+                    size_t guard = 0;
+                    while (nodeIndex != DagorFormats::GeomNodeTreeNode::InvalidIndex &&
+                           nodeIndex < skeleton.size() &&
+                           guard++ < skeleton.size())
+                    {
+                        emittedSkeletonNodes[nodeIndex] = true;
+                        nodeIndex = skeleton[nodeIndex].parentIndex;
+                    }
+                }
+            }
+        }
+
+        if (emitSkeletonNodes && !animations.empty())
+        {
+            size_t animationTargetNodes = 0;
+            size_t missingAnimationNodes = 0;
+            for (const AnimationClip& clip : animations)
+            {
+                for (const AnimationNodeTrack& track : clip.nodeTracks)
+                {
+                    const auto it = skeletonNodeLookup.find(track.nodeName);
+                    if (it == skeletonNodeLookup.end())
+                    {
+                        ++missingAnimationNodes;
+                        continue;
+                    }
+
+                    size_t nodeIndex = it->second;
+                    size_t guard = 0;
+                    while (nodeIndex != static_cast<size_t>(DagorFormats::GeomNodeTreeNode::InvalidIndex) &&
+                           nodeIndex < skeleton.size() &&
+                           guard++ < skeleton.size())
+                    {
+                        if (!emittedSkeletonNodes[nodeIndex])
+                        {
+                            ++animationTargetNodes;
+                        }
+                        emittedSkeletonNodes[nodeIndex] = true;
+                        nodeIndex = skeleton[nodeIndex].parentIndex;
+                    }
+                }
+            }
+
+            debugLog << "  Animation skeleton emission summary: requestedClips=" << animations.size()
+                     << ", addedSkeletonNodes=" << animationTargetNodes
+                     << ", missingNodeTracks=" << missingAnimationNodes << std::endl;
+        }
+        else if (!animations.empty())
+        {
+            debugLog << "  Animation export requested but skeleton nodes are not being emitted." << std::endl;
+        }
+
+        std::vector<size_t> skeletonNodeIndices(
+            skeleton.size(),
+            std::numeric_limits<size_t>::max());
+        size_t emittedSkeletonNodeCount = 0;
+        for (size_t i = 0; i < skeleton.size(); ++i)
+        {
+            if (emittedSkeletonNodes[i])
+            {
+                skeletonNodeIndices[i] = emittedSkeletonNodeCount++;
+            }
+        }
+
+        const auto meshNodeIndex = [&](size_t meshIndex)
+        {
+            return (emitSkeletonNodes ? emittedSkeletonNodeCount : 0) + meshIndex;
+        };
+
         struct LodBinInfo
         {
             size_t vertByteOffset;
@@ -1168,6 +2051,74 @@ namespace DagorAssetsExtractor::Export
             while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
         }
 
+        const MaterialSelection materialSelection = SelectUsedMaterials(lods, materials);
+        const GlbTextureSections textureSections = PrepareMaterialTextures(materialSelection.materials, options, binBuffer, debugLog);
+        const size_t imageBufferViewBase = (exportMeshes.size() * 2) + (useSkinning ? 1 : 0);
+        const size_t animationBufferViewBase = imageBufferViewBase + textureSections.embeddedImageCount;
+        GlbAnimationSections animationSections = PrepareAnimationSections(
+            animations,
+            skeletonNodeLookup,
+            emittedSkeletonNodes,
+            skeletonNodeIndices,
+            emitSkeletonNodes,
+            animationBufferViewBase,
+            binBuffer,
+            debugLog);
+        std::unordered_map<size_t, GltfNodeTrs> animatedNodeInitialTransforms;
+        if (!animationSections.clips.empty())
+        {
+            for (const AnimationClip& clip : animations)
+            {
+                for (const AnimationNodeTrack& track : clip.nodeTracks)
+                {
+                    if (!HasValidAnimationTimes(track.times))
+                    {
+                        continue;
+                    }
+                    const auto nodeIt = skeletonNodeLookup.find(track.nodeName);
+                    if (nodeIt == skeletonNodeLookup.end() || nodeIt->second >= skeleton.size())
+                    {
+                        continue;
+                    }
+                    const size_t skeletonNode = nodeIt->second;
+                    if (skeletonNode >= emittedSkeletonNodes.size() || !emittedSkeletonNodes[skeletonNode])
+                    {
+                        continue;
+                    }
+
+                    auto [trsIt, inserted] = animatedNodeInitialTransforms.emplace(
+                        skeletonNode,
+                        DecomposeGltfMatrix(makeGltfMatrix(skeleton[skeletonNode].localTransform)));
+                    GltfNodeTrs& trs = trsIt->second;
+                    if (track.translations.size() == track.times.size())
+                    {
+                        trs.translation = ConvertAnimationTranslationForGltf(track.translations.front());
+                    }
+                    if (track.rotations.size() == track.times.size())
+                    {
+                        trs.rotation = ConvertAnimationRotationForGltf(track.rotations.front());
+                    }
+                    if (track.scales.size() == track.times.size())
+                    {
+                        trs.scale = track.scales.front();
+                    }
+                    (void)inserted;
+                }
+            }
+        }
+        std::vector<bool> meshWritesTexcoords(exportMeshes.size(), false);
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
+        {
+            for (const DagorFormats::RendInstPrimitive& primitive : exportMeshes[i].mesh.primitives)
+            {
+                if (MaterialSlotHasTexture(materialSelection, primitive.materialIndex))
+                {
+                    meshWritesTexcoords[i] = true;
+                    break;
+                }
+            }
+        }
+
         struct AccessorInfo
         {
             size_t position = 0;
@@ -1184,7 +2135,10 @@ namespace DagorAssetsExtractor::Export
         {
             accessorInfos[i].position = currentAccessor++;
             accessorInfos[i].normal = currentAccessor++;
-            accessorInfos[i].uv = currentAccessor++;
+            if (meshWritesTexcoords[i])
+            {
+                accessorInfos[i].uv = currentAccessor++;
+            }
             if (exportMeshes[i].skinned)
             {
                 accessorInfos[i].joints = currentAccessor++;
@@ -1206,7 +2160,7 @@ namespace DagorAssetsExtractor::Export
         {
             ibmAccessorIndex = currentAccessor++;
         }
-        const std::vector<MaterialInfo> effectiveMaterials = BuildEffectiveMaterials(lods, materials);
+        AllocateAnimationAccessors(animationSections, currentAccessor);
 
         // Generate JSON
         std::stringstream json;
@@ -1225,10 +2179,17 @@ namespace DagorAssetsExtractor::Export
         {
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
-                if (skeleton[i].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex)
+                if (!emittedSkeletonNodes[i])
+                {
+                    continue;
+                }
+                const uint16_t parentIndex = skeleton[i].parentIndex;
+                if (parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex ||
+                    parentIndex >= skeleton.size() ||
+                    !emittedSkeletonNodes[parentIndex])
                 {
                     if (!firstSceneNode) json << ", ";
-                    json << i;
+                    json << skeletonNodeIndices[i];
                     firstSceneNode = false;
                 }
             }
@@ -1240,7 +2201,7 @@ namespace DagorAssetsExtractor::Export
                 continue;
             }
             if (!firstSceneNode) json << ", ";
-            json << (emitSkeletonNodes ? skeleton.size() + i : i);
+            json << meshNodeIndex(i);
             firstSceneNode = false;
         }
         json << "]\n";
@@ -1263,30 +2224,55 @@ namespace DagorAssetsExtractor::Export
         {
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
+                if (!emittedSkeletonNodes[i])
+                {
+                    continue;
+                }
+
                 const auto& node = skeleton[i];
                 std::array<float, 16> gltfMatrix = makeGltfMatrix(node.localTransform);
                 writeNodeSeparator();
                 json << "    {\n";
-                json << "      \"name\": \"" << JsonEscape(node.name) << "\",\n";
-                json << "      \"matrix\": [";
-                for (int m = 0; m < 16; ++m)
+                json << "      \"name\": \"" << JsonEscape(node.name) << "\"";
+                if (const auto animatedTrsIt = animatedNodeInitialTransforms.find(i);
+                    animatedTrsIt != animatedNodeInitialTransforms.end())
                 {
-                    json << JsonFloat(gltfMatrix[m]);
-                    if (m < 15) json << ", ";
+                    const GltfNodeTrs& trs = animatedTrsIt->second;
+                    json << ",\n";
+                    json << "      \"translation\": [" << JsonFloat(trs.translation[0]) << ", "
+                         << JsonFloat(trs.translation[1]) << ", " << JsonFloat(trs.translation[2]) << "],\n";
+                    json << "      \"rotation\": [" << JsonFloat(trs.rotation[0]) << ", "
+                         << JsonFloat(trs.rotation[1]) << ", " << JsonFloat(trs.rotation[2]) << ", "
+                         << JsonFloat(trs.rotation[3]) << "],\n";
+                    json << "      \"scale\": [" << JsonFloat(trs.scale[0]) << ", "
+                         << JsonFloat(trs.scale[1]) << ", " << JsonFloat(trs.scale[2]) << "]";
                 }
-                json << "]";
+                else if (!IsIdentityMatrix(gltfMatrix))
+                {
+                    json << ",\n";
+                    json << "      \"matrix\": [";
+                    for (int m = 0; m < 16; ++m)
+                    {
+                        json << JsonFloat(gltfMatrix[m]);
+                        if (m < 15) json << ", ";
+                    }
+                    json << "]";
+                }
 
                 std::vector<size_t> childNodes;
                 childNodes.reserve(node.childIndices.size());
                 for (uint16_t childIndex : node.childIndices)
                 {
-                    childNodes.push_back(static_cast<size_t>(childIndex));
+                    if (childIndex < skeleton.size() && emittedSkeletonNodes[childIndex])
+                    {
+                        childNodes.push_back(skeletonNodeIndices[childIndex]);
+                    }
                 }
                 for (size_t meshIndex = 0; meshIndex < exportMeshes.size(); ++meshIndex)
                 {
                     if (exportMeshes[meshIndex].hasParentJoint && exportMeshes[meshIndex].parentJoint == i)
                     {
-                        childNodes.push_back(skeleton.size() + meshIndex);
+                        childNodes.push_back(meshNodeIndex(meshIndex));
                     }
                 }
 
@@ -1316,7 +2302,7 @@ namespace DagorAssetsExtractor::Export
             {
                 json << ",\n      \"skin\": 0";
             }
-            if (exportMeshes[i].hasNodeMatrix)
+            if (exportMeshes[i].hasNodeMatrix && !IsIdentityMatrix(exportMeshes[i].nodeMatrix))
             {
                 json << ",\n      \"matrix\": [";
                 for (int m = 0; m < 16; ++m)
@@ -1339,9 +2325,16 @@ namespace DagorAssetsExtractor::Export
             std::vector<size_t> skeletonRootNodes;
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
-                if (skeleton[i].parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex)
+                if (!emittedSkeletonNodes[i])
                 {
-                    skeletonRootNodes.push_back(i);
+                    continue;
+                }
+                const uint16_t parentIndex = skeleton[i].parentIndex;
+                if (parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex ||
+                    parentIndex >= skeleton.size() ||
+                    !emittedSkeletonNodes[parentIndex])
+                {
+                    skeletonRootNodes.push_back(skeletonNodeIndices[i]);
                 }
             }
             if (skeletonRootNodes.size() == 1)
@@ -1350,10 +2343,16 @@ namespace DagorAssetsExtractor::Export
             }
             json << "      \"inverseBindMatrices\": " << ibmAccessorIndex << ",\n"; // Accessor index
             json << "      \"joints\": [";
+            bool firstJoint = true;
             for (size_t i = 0; i < skeleton.size(); ++i)
             {
-                json << i;
-                if (i + 1 < skeleton.size()) json << ", ";
+                if (!emittedSkeletonNodes[i])
+                {
+                    continue;
+                }
+                if (!firstJoint) json << ", ";
+                json << skeletonNodeIndices[i];
+                firstJoint = false;
             }
             json << "]\n";
             json << "    }\n";
@@ -1376,8 +2375,12 @@ namespace DagorAssetsExtractor::Export
                 json << "        {\n";
                 json << "          \"attributes\": {\n";
                 json << "            \"POSITION\": " << accessorInfos[i].position << ",\n";
-                json << "            \"NORMAL\": " << accessorInfos[i].normal << ",\n";
-                json << "            \"TEXCOORD_0\": " << accessorInfos[i].uv;
+                json << "            \"NORMAL\": " << accessorInfos[i].normal;
+                if (meshWritesTexcoords[i] && MaterialSlotHasTexture(materialSelection, prim.materialIndex))
+                {
+                    json << ",\n";
+                    json << "            \"TEXCOORD_0\": " << accessorInfos[i].uv;
+                }
                 if (exportMesh.skinned)
                 {
                     json << ",\n            \"JOINTS_0\": " << accessorInfos[i].joints << ",\n";
@@ -1390,11 +2393,13 @@ namespace DagorAssetsExtractor::Export
                 json << "          },\n";
                 json << "          \"indices\": " << accessorInfos[i].indices[p] << ",\n";
                 
-                if (!effectiveMaterials.empty())
+                if (!materialSelection.materials.empty())
                 {
-                    size_t matIdx = static_cast<size_t>(prim.materialIndex);
-                    if (matIdx >= effectiveMaterials.size()) matIdx = 0;
-                    json << "          \"material\": " << matIdx << ",\n";
+                    const auto matIt = materialSelection.remap.find(prim.materialIndex);
+                    if (matIt != materialSelection.remap.end())
+                    {
+                        json << "          \"material\": " << matIt->second << ",\n";
+                    }
                 }
                 
                 json << "          \"mode\": 4\n";
@@ -1409,7 +2414,8 @@ namespace DagorAssetsExtractor::Export
         }
         json << "  ],\n";
 
-        WriteMaterialTextureSections(json, effectiveMaterials);
+        WriteMaterialTextureSections(json, materialSelection.materials, textureSections, imageBufferViewBase);
+        WriteAnimationSections(json, animationSections);
 
         // BufferViews
         json << "  \"bufferViews\": [\n";
@@ -1433,7 +2439,7 @@ namespace DagorAssetsExtractor::Export
             json << "      \"byteLength\": " << binInfos[i].indexByteLength << ",\n";
             json << "      \"target\": 34963\n";
             json << "    }";
-            if (i + 1 < exportMeshes.size() || useSkinning) json << ",\n";
+            if (i + 1 < exportMeshes.size() || useSkinning || textureSections.embeddedImageCount > 0 || animationSections.bufferViewCount > 0) json << ",\n";
             else json << "\n";
         }
         if (useSkinning)
@@ -1444,6 +2450,27 @@ namespace DagorAssetsExtractor::Export
             json << "      \"byteOffset\": " << ibmByteOffset << ",\n";
             json << "      \"byteLength\": " << ibmByteLength << "\n";
             json << "    }\n";
+            if (textureSections.embeddedImageCount > 0 || animationSections.bufferViewCount > 0)
+            {
+                json << ",\n";
+            }
+        }
+        if (textureSections.embeddedImageCount > 0)
+        {
+            WriteEmbeddedImageBufferViews(json, textureSections);
+            if (animationSections.bufferViewCount > 0)
+            {
+                json << ",\n";
+            }
+            else
+            {
+                json << "\n";
+            }
+        }
+        if (animationSections.bufferViewCount > 0)
+        {
+            WriteAnimationBufferViews(json, animationSections);
+            json << "\n";
         }
         json << "  ],\n";
 
@@ -1469,8 +2496,11 @@ namespace DagorAssetsExtractor::Export
             json << "    { \"bufferView\": " << i << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\", \"max\": [" << JsonFloat(info.maxX) << "," << JsonFloat(info.maxY) << "," << JsonFloat(info.maxZ) << "], \"min\": [" << JsonFloat(info.minX) << "," << JsonFloat(info.minY) << "," << JsonFloat(info.minZ) << "] }";
             writeAccessorSeparator();
             json << "    { \"bufferView\": " << i << ", \"byteOffset\": 12, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC3\" }";
-            writeAccessorSeparator();
-            json << "    { \"bufferView\": " << i << ", \"byteOffset\": 24, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC2\" }";
+            if (meshWritesTexcoords[i])
+            {
+                writeAccessorSeparator();
+                json << "    { \"bufferView\": " << i << ", \"byteOffset\": 24, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC2\" }";
+            }
             if (exportMesh.skinned)
             {
                 writeAccessorSeparator();
@@ -1498,6 +2528,7 @@ namespace DagorAssetsExtractor::Export
             writeAccessorSeparator();
             json << "    { \"bufferView\": " << (exportMeshes.size() * 2) << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }";
         }
+        WriteAnimationAccessors(json, animationSections, writeAccessorSeparator);
         json << "\n";
         json << "  ],\n";
 

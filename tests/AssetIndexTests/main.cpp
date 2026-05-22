@@ -3303,8 +3303,8 @@ namespace
             std::ifstream file(glbPath, std::ios::binary);
             std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
             ok &= Expect(content.find("\"materials\":") != std::string::npos, "GLB should emit material slots even without texture dependencies");
-            ok &= Expect(content.find("\"material\": 2") != std::string::npos, "Primitive should keep its material slot index");
-            ok &= Expect(content.find("material_2") != std::string::npos, "Fallback material name should be emitted");
+            ok &= Expect(content.find("\"material\": 0") != std::string::npos, "Primitive should reference compacted used material index");
+            ok &= Expect(content.find("material_2") != std::string::npos, "Fallback material name should preserve source material slot");
             ok &= Expect(content.find("\"images\":") == std::string::npos, "Textureless fallback materials should not emit empty image URIs");
         }
 
@@ -3505,7 +3505,8 @@ namespace
             ok &= Expect(content.find("\"JOINTS_0\":") == std::string::npos, "Rigid-only rig GLB should not contain JOINTS_0");
             ok &= Expect(content.find("\"WEIGHTS_0\":") == std::string::npos, "Rigid-only rig GLB should not contain WEIGHTS_0");
             ok &= Expect(content.find("\"name\": \"bone1\"") != std::string::npos, "Rigid-only rig GLB should emit matching skeleton bone nodes");
-            ok &= Expect(content.find("\"children\": [3]") != std::string::npos, "Rigid-only rig GLB should parent the rigid mesh under its matching bone");
+            ok &= Expect(content.find("\"name\": \"bone2\"") == std::string::npos, "Rigid-only rig GLB should prune unused skeleton helper nodes");
+            ok &= Expect(content.find("\"children\": [2]") != std::string::npos, "Rigid-only rig GLB should parent the rigid mesh under its matching bone");
             ok &= Expect(content.find("\"name\": \"Root\"") == std::string::npos,
                 "Rigid rig GLB should not create an artificial root node");
         }
@@ -3521,6 +3522,38 @@ namespace
             ok &= Expect(content.find("\"JOINTS_0\":") == std::string::npos, "Mesh-only placement GLB should not contain JOINTS_0");
             ok &= Expect(content.find("\"name\": \"bone1\"") == std::string::npos, "Mesh-only placement GLB should not emit skeleton nodes");
             ok &= Expect(content.find("\"matrix\":") != std::string::npos, "Mesh-only placement GLB should keep the rigid part node transform");
+        }
+
+        DagorAssetsExtractor::Export::AnimationClip animationClip;
+        animationClip.name = "synthetic_clip";
+        DagorAssetsExtractor::Export::AnimationNodeTrack animationTrack;
+        animationTrack.nodeName = "bone2";
+        animationTrack.times = { 0.0f, 1.0f };
+        animationTrack.translations = { std::array<float, 3>{ 0.0f, 0.0f, 0.0f }, std::array<float, 3>{ 0.0f, 1.0f, 0.0f } };
+        animationTrack.rotations = { std::array<float, 4>{ 0.0f, 0.0f, 0.0f, 1.0f }, std::array<float, 4>{ 0.0f, 0.0f, 0.70710677f, 0.70710677f } };
+        animationTrack.scales = { std::array<float, 3>{ 1.0f, 1.0f, 1.0f }, std::array<float, 3>{ 1.0f, 1.5f, 1.0f } };
+        animationClip.nodeTracks.push_back(std::move(animationTrack));
+
+        fs::path animatedRigGlbPath = tempDir / "test_rigid_rig_animation.glb";
+        bool animatedRigSuccess = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(
+            animatedRigGlbPath,
+            { rigidMesh },
+            skeleton,
+            manifest,
+            std::vector<DagorAssetsExtractor::Export::MaterialInfo>{},
+            true,
+            DagorAssetsExtractor::Export::GlbExportOptions{},
+            { animationClip });
+        ok &= Expect(animatedRigSuccess, "Rigid DynModel export should write GLB animation channels when animation clips are supplied");
+        if (fs::exists(animatedRigGlbPath))
+        {
+            std::ifstream file(animatedRigGlbPath, std::ios::binary);
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            ok &= Expect(content.find("\"animations\":") != std::string::npos, "Animated GLB should contain animations");
+            ok &= Expect(content.find("\"path\": \"translation\"") != std::string::npos, "Animated GLB should contain translation channels");
+            ok &= Expect(content.find("\"path\": \"rotation\"") != std::string::npos, "Animated GLB should contain rotation channels");
+            ok &= Expect(content.find("\"path\": \"scale\"") != std::string::npos, "Animated GLB should contain scale channels");
+            ok &= Expect(content.find("\"name\": \"bone2\"") != std::string::npos, "Animated GLB should emit animated skeleton nodes even when no mesh is parented to them");
         }
 
         fs::path noRigGlbPath = tempDir / "test_no_rig.glb";
@@ -3572,6 +3605,20 @@ namespace
         std::error_code ec;
         fs::remove_all(tempDir, ec);
         fs::create_directories(tempDir, ec);
+        fs::create_directories(tempDir / "Textures", ec);
+        const fs::path texturePath = tempDir / "Textures" / "box_tex.png";
+        {
+            const uint8_t pngBytes[] = {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+                0x89, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+                0x44, 0xAE, 0x42, 0x60, 0x82
+            };
+            std::ofstream textureFile(texturePath, std::ios::binary);
+            textureFile.write(reinterpret_cast<const char*>(pngBytes), sizeof(pngBytes));
+        }
 
         // 1. Create a simple mesh
         DagorFormats::RendInstMesh mesh;
@@ -3584,7 +3631,8 @@ namespace
         // 2. Define materials
         DagorAssetsExtractor::Export::MaterialInfo mat;
         mat.name = "box_material";
-        mat.diffuseTexturePath = "box_tex.dds";
+        mat.diffuseTexturePath = "Textures/box_tex.png";
+        mat.diffuseTextureSourcePath = texturePath;
         std::vector<DagorAssetsExtractor::Export::MaterialInfo> materials = { mat };
 
         // 3. Export
@@ -3592,7 +3640,7 @@ namespace
         manifest.sourcePack = "test.grp";
         manifest.sourceResource = "box";
         manifest.assetType = "RendInst Static Model";
-        manifest.textureDependencies = { "box_tex.dds" };
+        manifest.textureDependencies = { "Textures/box_tex.png" };
 
         bool success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(glbPath, { mesh }, manifest, materials);
         ok &= Expect(success, "Unified ExportToGlb should succeed");
@@ -3603,7 +3651,8 @@ namespace
             // Simple check: see if texture path is in the GLB (it's in the JSON chunk)
             std::ifstream file(glbPath, std::ios::binary);
             std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            ok &= Expect(content.find("box_tex.dds") != std::string::npos, "GLB should contain texture filename");
+            ok &= Expect(content.find("\"uri\":") == std::string::npos, "Embedded GLB texture should not use an external image URI");
+            ok &= Expect(content.find("\"mimeType\": \"image/png\"") != std::string::npos, "Embedded GLB texture should declare PNG mime type");
             ok &= Expect(content.find("box_material") != std::string::npos, "GLB should contain material name");
             ok &= Expect(content.find("\"material\": 0") != std::string::npos, "GLB mesh should refer to material 0");
         }
