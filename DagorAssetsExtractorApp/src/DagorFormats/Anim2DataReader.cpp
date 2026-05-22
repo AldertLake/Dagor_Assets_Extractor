@@ -86,12 +86,14 @@ namespace DagorFormats
             return lo | (hi << 32);
         }
 
+        constexpr uint32_t kInvalidOffset = 0xFFFFFFFFu;
+
         uint32_t ReadPatchablePtrOffset(std::span<const uint8_t> data, size_t offset)
         {
             const uint32_t rawOffset = ReadU32(data, offset);
             if (static_cast<int32_t>(rawOffset) < 0)
             {
-                return 0;
+                return kInvalidOffset;
             }
             return rawOffset;
         }
@@ -292,7 +294,7 @@ namespace DagorFormats
             uint32_t offset,
             std::string& warning)
         {
-            if (offset == 0 || offset >= dump.size())
+            if (offset == kInvalidOffset || offset >= dump.size())
             {
                 warning = "ACL track pointer is null or out of bounds.";
                 return nullptr;
@@ -693,13 +695,34 @@ namespace DagorFormats
                     dump,
                     chanOffset + (kPatchablePtrSize * 2) + (sizeof(uint32_t) * 2) + kPatchablePtrSize);
                 channel.hasAclTracks =
-                    channel.animTracksOffset > 0 &&
+                    channel.animTracksOffset != kInvalidOffset &&
                     channel.animTracksOffset < dump.size() &&
                     dump.size() - channel.animTracksOffset >= kMinAclHeaderSize;
 
+                std::string hexDump = "";
+                for (size_t b = 0; b < kAnimDataChanSize && (chanOffset + b) < dump.size(); ++b)
+                {
+                    char buf[4];
+                    sprintf_s(buf, "%02X ", dump[chanOffset + b]);
+                    hexDump += buf;
+                }
+
+                m_info.decodeWarnings.push_back(
+                    "Channel " + std::to_string(i) +
+                    ": dataType=" + std::to_string(dataType) +
+                    ", channelType=" + std::to_string(channel.channelType) +
+                    ", nodeCount=" + std::to_string(channel.nodeCount) +
+                    ", animTracksOffset=" + std::to_string(channel.animTracksOffset) +
+                    ", nodeTrackOffset=" + std::to_string(channel.nodeTrackOffset) +
+                    ", nodeNameOffset=" + std::to_string(channel.nodeNameOffset) +
+                    ", dumpSize=" + std::to_string(dump.size()) +
+                    ", hasAclTracks=" + std::to_string(channel.hasAclTracks) +
+                    " | Hex: " + hexDump
+                );
+
                 if (channel.nodeCount > 0)
                 {
-                    if (channel.nodeNameOffset > 0)
+                    if (channel.nodeNameOffset != kInvalidOffset)
                     {
                         ValidateSpan(
                             dump,
@@ -707,7 +730,7 @@ namespace DagorFormats
                             static_cast<size_t>(channel.nodeCount) * kPatchablePtrSize,
                             "node-name table");
                     }
-                    if (channel.nodeTrackOffset > 0)
+                    if (channel.nodeTrackOffset != kInvalidOffset)
                     {
                         ValidateSpan(
                             dump,
@@ -715,7 +738,7 @@ namespace DagorFormats
                             static_cast<size_t>(channel.nodeCount) * sizeof(uint16_t),
                             "node-track table");
                     }
-                    if (channel.nodeWeightOffset > 0)
+                    if (channel.nodeWeightOffset != kInvalidOffset)
                     {
                         ValidateSpan(
                             dump,
@@ -728,19 +751,19 @@ namespace DagorFormats
                     for (uint32_t node = 0; node < channel.nodeCount; ++node)
                     {
                         Anim2DataNodeTrackInfo nodeInfo;
-                        nodeInfo.trackIndex = channel.nodeTrackOffset > 0
+                        nodeInfo.trackIndex = channel.nodeTrackOffset != kInvalidOffset
                             ? ReadU16(dump, static_cast<size_t>(channel.nodeTrackOffset) + (static_cast<size_t>(node) * sizeof(uint16_t)))
                             : static_cast<uint16_t>(node);
-                        nodeInfo.weight = channel.nodeWeightOffset > 0
+                        nodeInfo.weight = channel.nodeWeightOffset != kInvalidOffset
                             ? ReadF32(dump, static_cast<size_t>(channel.nodeWeightOffset) + (static_cast<size_t>(node) * sizeof(float)))
                             : 1.0f;
 
-                        const uint32_t nameOffset = channel.nodeNameOffset > 0
+                        const uint32_t nameOffset = channel.nodeNameOffset != kInvalidOffset
                             ? ReadPatchablePtrOffset(
                                 dump,
                                 static_cast<size_t>(channel.nodeNameOffset) + (static_cast<size_t>(node) * kPatchablePtrSize))
-                            : 0;
-                        if (nameOffset > 0)
+                            : kInvalidOffset;
+                        if (nameOffset != kInvalidOffset)
                         {
                             nodeInfo.name = ReadCString(dump, nameOffset);
                             rememberNodeName(nodeInfo.name);
@@ -764,7 +787,7 @@ namespace DagorFormats
             {
                 const size_t labelOffset = static_cast<size_t>(noteTrack.offset) + (static_cast<size_t>(i) * kAnimKeyLabelSize);
                 const uint32_t nameOffset = ReadPatchablePtrOffset(dump, labelOffset);
-                if (nameOffset == 0)
+                if (nameOffset == kInvalidOffset)
                 {
                     continue;
                 }

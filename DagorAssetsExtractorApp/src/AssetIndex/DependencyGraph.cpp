@@ -870,18 +870,33 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
 
                 const uint16_t totalFiles = ReadLe16(data, 0x8);
+                const uint32_t block3Offset = ReadLe32(data, 0x30) + 0x10;
+                const size_t requiredSize = static_cast<size_t>(block3Offset) + static_cast<size_t>(totalFiles) * 0x18;
+
                 std::vector<std::string> names;
                 bool incomplete = false;
                 if (TryReadDxpNamesFromBuffer(data, totalFiles, names, incomplete))
                 {
-                    for (std::string& name : names)
+                    if (data.size() >= requiredSize)
                     {
-                        LightweightDxpEntry entry;
-                        entry.path = path;
-                        entry.name = std::move(name);
-                        entries.push_back(std::move(entry));
+                        for (uint16_t i = 0; i < totalFiles; ++i)
+                        {
+                            const size_t entryStart = static_cast<size_t>(block3Offset) + static_cast<size_t>(i) * 0x18;
+                            const uint32_t payloadSize = ReadLe32(data, entryStart + 0x10);
+                            if (payloadSize > 0)
+                            {
+                                LightweightDxpEntry entry;
+                                entry.path = path;
+                                entry.name = std::move(names[i]);
+                                entries.push_back(std::move(entry));
+                            }
+                        }
+                        return true;
                     }
-                    return true;
+                    else
+                    {
+                        incomplete = true;
+                    }
                 }
 
                 if (!incomplete || bytesToRead >= fileSize || bytesToRead >= maxMetadataBytes)

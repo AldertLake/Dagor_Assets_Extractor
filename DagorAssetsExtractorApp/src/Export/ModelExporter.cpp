@@ -1804,6 +1804,50 @@ namespace DagorAssetsExtractor::Export
             std::array<float, 16> nodeMatrix = {};
         };
 
+        if (emitSkeletonNodes)
+        {
+            bool hasSkinnedMesh = false;
+            for (const auto& mesh : lods)
+            {
+                if (mesh.useSkinning && !hasOnlyRootWeights(mesh))
+                {
+                    hasSkinnedMesh = true;
+                    break;
+                }
+            }
+
+            if (!hasSkinnedMesh && !animations.empty())
+            {
+                DagorFormats::DynModelMesh dummyMesh;
+                dummyMesh.name = "skeleton_dummy";
+                dummyMesh.parentNodeName = "";
+                dummyMesh.useSkinning = true;
+
+                DagorFormats::SkinnedVertex v1{};
+                v1.x = v1.y = v1.z = 0.0f;
+                v1.nx = 0.0f; v1.ny = 1.0f; v1.nz = 0.0f;
+                v1.u = v1.v = 0.0f;
+                v1.jointIndices[0] = 0; v1.jointIndices[1] = 0; v1.jointIndices[2] = 0; v1.jointIndices[3] = 0;
+                v1.jointWeights[0] = 1.0f; v1.jointWeights[1] = 0.0f; v1.jointWeights[2] = 0.0f; v1.jointWeights[3] = 0.0f;
+
+                DagorFormats::SkinnedVertex v2 = v1;
+                v2.x = 0.001f;
+                DagorFormats::SkinnedVertex v3 = v1;
+                v3.y = 0.001f;
+
+                dummyMesh.vertices = { v1, v2, v3 };
+                dummyMesh.indices = { 0, 1, 2 };
+
+                DagorFormats::RendInstPrimitive prim;
+                prim.materialIndex = 0;
+                prim.firstIndex = 0;
+                prim.indexCount = 3;
+                dummyMesh.primitives = { prim };
+
+                lods.push_back(std::move(dummyMesh));
+            }
+        }
+
         std::vector<DynExportMesh> exportMeshes;
         exportMeshes.reserve(lods.size());
         for (const auto& mesh : lods)
@@ -1813,7 +1857,7 @@ namespace DagorAssetsExtractor::Export
             const uint16_t jointIndex = resolveJoint(mesh);
             const bool hasPlaceholderSkinWeights = mesh.useSkinning && hasOnlyRootWeights(mesh);
 
-            if (emitSkeletonNodes && mesh.useSkinning && !hasPlaceholderSkinWeights)
+            if (emitSkeletonNodes && mesh.useSkinning && (!hasPlaceholderSkinWeights || mesh.name == "skeleton_dummy"))
             {
                 exportMesh.skinned = true;
             }
@@ -2009,7 +2053,7 @@ namespace DagorAssetsExtractor::Export
                     info.maxZ = std::max(info.maxZ, packed.z);
                 }
 
-                RecomputePackedNormals(packedVertices, flippedIndices);
+                RepairNormals(packedVertices, flippedIndices);
                 const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
                 binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
             }

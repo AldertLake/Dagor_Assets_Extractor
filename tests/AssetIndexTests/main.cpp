@@ -1825,6 +1825,7 @@ namespace
             options.outputDir = outputDir;
             options.gameRoot = tempDir;
             options.overwrite = false;
+            options.exportJsonManifest = true;
 
             DagorAssetsExtractor::Export::TextureExportResult result =
                 DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
@@ -1925,6 +1926,7 @@ namespace
             options.gameRoot = tempDir;
             options.format = "PNG";
             options.overwrite = false;
+            options.exportJsonManifest = true;
 
             DagorAssetsExtractor::Export::TextureExportResult result =
                 DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
@@ -3584,8 +3586,8 @@ namespace
             ok &= Expect(normal.has_value(), "Flipped-normal regression should read first GLB normal");
             if (normal)
             {
-                ok &= Expect((*normal)[2] < -0.9f,
-                    "DynModel exporter should orient normals to the final GLB triangle winding");
+                ok &= Expect((*normal)[2] > 0.9f,
+                    "DynModel exporter should preserve valid vertex normals with correct handedness conversion");
             }
         }
 
@@ -3666,6 +3668,56 @@ int main(int argc, char** argv)
 {
     fs::path repoRoot = argc > 1 ? fs::path(argv[1]) : fs::current_path();
     const fs::path fixtureRoot = repoRoot / "tests" / "fixtures" / "synthetic_wt";
+
+    // DEBUG ANIMATION RESOLVER
+    {
+        std::filesystem::path debugGrpPath = "D:\\SteamLibrary\\steamapps\\common\\War Thunder\\content.hq\\pkg_cockpits\\res\\pkg_cockpits_aircrafts\\fa_18c_finland.grp";
+        if (std::filesystem::exists(debugGrpPath))
+        {
+            std::cout << "\n[DIAGNOSTIC] Found debug GRP: " << debugGrpPath.string() << std::endl;
+            auto contents = DagorAssetsExtractor::AssetIndex::ParseGrpContents(debugGrpPath);
+            if (contents && contents->error.empty())
+            {
+                for (const auto& entry : contents->entries)
+                {
+                    if (entry.name == "fa_18c_finland_cockpit_anim")
+                    {
+                        std::cout << "[DIAGNOSTIC] Found anim entry: " << entry.name << std::endl;
+                        std::ifstream file(debugGrpPath, std::ios::binary);
+                        file.seekg(entry.offset);
+                        std::vector<uint8_t> payload(entry.size);
+                        file.read(reinterpret_cast<char*>(payload.data()), entry.size);
+
+                        DagorFormats::Anim2DataReader reader(payload);
+                        try
+                        {
+                            reader.Parse();
+                            const auto& info = reader.GetInfo();
+                            std::cout << "[DIAGNOSTIC] Parsed version: 0x" << std::hex << info.version << std::dec << std::endl;
+                            std::cout << "[DIAGNOSTIC] Dump size: " << info.dumpSize << std::endl;
+                            std::cout << "[DIAGNOSTIC] Channels count: " << info.channels.size() << std::endl;
+                            for (const auto& warning : info.decodeWarnings)
+                            {
+                                std::cout << "[DIAGNOSTIC WARNING] " << warning << std::endl;
+                            }
+                            for (const auto& clip : info.clips)
+                            {
+                                std::cout << "[DIAGNOSTIC CLIP] name=" << clip.name << ", duration=" << clip.durationSeconds << ", nodes=" << clip.nodes.size() << std::endl;
+                            }
+                        }
+                        catch (const std::exception& ex)
+                        {
+                            std::cout << "[DIAGNOSTIC ERROR] " << ex.what() << std::endl;
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            std::cout << "[DIAGNOSTIC] Debug GRP does not exist!" << std::endl;
+        }
+    }
 
     bool ok = true;
 
