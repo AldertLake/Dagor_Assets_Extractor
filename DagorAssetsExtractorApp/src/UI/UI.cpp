@@ -1517,7 +1517,7 @@ namespace DagorAssetsExtractor::UI
         }
         if (selected->type == AssetType::Dxp)
         {
-            ImGui::BulletText("DDS texture extraction with reversed-mip reordering, decompression, and readable PNG/TGA export for BC1-BC5, common uncompressed, and RGBA float textures.");
+            ImGui::BulletText("DDS texture extraction with reversed-mip reordering, zlib/zstd/Oodle/LZMA decompression, and readable PNG/TGA export including DirectXTex fallback for BC6H/BC7-class textures.");
         }
         if (selected->type == AssetType::Grp)
         {
@@ -1954,7 +1954,7 @@ namespace DagorAssetsExtractor::UI
         ImGui::Checkbox("Export JSON manifest metadata alongside assets", &app.settings.exportJsonManifest);
         ImGui::Checkbox("Fallback to DDS when PNG/TGA conversion is unavailable", &app.settings.preserveOriginalDDS);
         ImGui::TextDisabled("Oodle-compressed DDSx textures use the bundled oo2core_6_win64.dll shipped with the app build.");
-        ImGui::TextDisabled("PNG/TGA currently exports the top mip for BC1-BC5 plus R8, R8G8, RGBA8, BGRA8, RGBA16F, and RGBA32F DDSx textures.");
+        ImGui::TextDisabled("PNG/TGA exports the top mip directly for BC1-BC5 plus common uncompressed/float DDSx textures, then retries unsupported DXGI formats through DirectXTex.");
         if (ImGui::Checkbox("Enable index cache", &app.settings.indexCacheEnabled))
         {
             if (app.settings.indexCacheEnabled)

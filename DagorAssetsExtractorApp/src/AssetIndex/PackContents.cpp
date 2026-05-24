@@ -307,9 +307,9 @@ namespace DagorAssetsExtractor::AssetIndex
             return contents;
         }
 
+        DagorFormats::VromfsReader reader(data);
         try
         {
-            DagorFormats::VromfsReader reader(data);
             reader.Parse();
 
             for (const DagorFormats::VromfsFileInfo& file : reader.GetFiles())
@@ -324,6 +324,15 @@ namespace DagorAssetsExtractor::AssetIndex
         catch (const std::exception& ex)
         {
             contents->error = std::string("VROMFS parse error: ") + ex.what();
+            const auto& diagnostics = reader.GetDiagnostics();
+            if (!diagnostics.empty())
+            {
+                contents->error += "\nDiagnostics:";
+                for (const std::string& line : diagnostics)
+                {
+                    contents->error += "\n  - " + line;
+                }
+            }
         }
 
         return contents;

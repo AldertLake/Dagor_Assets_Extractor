@@ -20,11 +20,15 @@ public:
 
     const std::vector<VromfsFileInfo>& GetFiles() const { return m_files; }
     std::span<const uint8_t> GetFileData(const VromfsFileInfo& fileInfo) const;
+    const std::vector<std::string>& GetDiagnostics() const { return m_diagnostics; }
 
 private:
+    void AddDiagnostic(std::string message);
+
     std::span<const uint8_t> m_data;
     std::vector<uint8_t> m_decompressedData;
     std::vector<VromfsFileInfo> m_files;
+    std::vector<std::string> m_diagnostics;
 };
 
 } // namespace DagorFormats

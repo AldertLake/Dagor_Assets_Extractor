@@ -19,6 +19,10 @@ namespace DagorAssetsExtractor::Export
         std::filesystem::path diffuseTextureSourcePath; // Exported image file to embed into GLB when requested
         std::string normalTexturePath; // Path relative to GLB or empty
         std::filesystem::path normalTextureSourcePath; // Exported normal map image to embed
+        std::string metallicRoughnessTexturePath; // Path relative to GLB or empty
+        std::filesystem::path metallicRoughnessTextureSourcePath; // Exported metallic/roughness texture to embed
+        std::string occlusionTexturePath; // Path relative to GLB or empty
+        std::filesystem::path occlusionTextureSourcePath; // Exported occlusion texture to embed
     };
 
     struct GlbExportOptions

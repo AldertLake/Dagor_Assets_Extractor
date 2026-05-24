@@ -171,6 +171,16 @@ set_target_properties(DagorAssetsExtractorApp PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:DagorAssetsExtractorApp>"
 )
 
+add_executable(DagorAssetsExtractorValidationTests
+    "${PROJECT_ROOT}/tests/ValidationMain.cpp"
+)
+target_include_directories(DagorAssetsExtractorValidationTests PRIVATE "${APP_SRC_DIR}")
+target_link_libraries(DagorAssetsExtractorValidationTests PRIVATE dagor_core)
+dagor_apply_common_settings(DagorAssetsExtractorValidationTests)
+set_target_properties(DagorAssetsExtractorValidationTests PROPERTIES
+    FOLDER "Dagor"
+)
+
 add_custom_command(TARGET DagorAssetsExtractorApp POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:DagorAssetsExtractorApp>/assets"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory

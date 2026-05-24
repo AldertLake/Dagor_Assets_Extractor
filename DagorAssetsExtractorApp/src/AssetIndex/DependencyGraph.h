@@ -71,8 +71,8 @@ namespace DagorAssetsExtractor::AssetIndex
     struct DescriptorResourceLinkBuildOptions
     {
         const std::vector<BlkResourceLink>* blkLinks = nullptr;
-        uintmax_t maxDescriptorBytes = 256 * 1024 * 1024;
-        uintmax_t maxPackBytes = 256 * 1024 * 1024;
+        uintmax_t maxDescriptorBytes = 512 * 1024 * 1024;
+        uintmax_t maxPackBytes = 512 * 1024 * 1024;
         std::optional<std::filesystem::path> focusPath;
         DescriptorResourceLinkProgressCallback progress;
     };
@@ -95,8 +95,8 @@ namespace DagorAssetsExtractor::AssetIndex
     DescriptorResourceLinkBuildResult BuildDescriptorResourceLinks(
         const std::vector<ResourceRecord>& records,
         const std::vector<BlkResourceLink>* blkLinks = nullptr,
-        uintmax_t maxDescriptorBytes = 256 * 1024 * 1024,
-        uintmax_t maxPackBytes = 256 * 1024 * 1024);
+        uintmax_t maxDescriptorBytes = 512 * 1024 * 1024,
+        uintmax_t maxPackBytes = 512 * 1024 * 1024);
 
     bool SaveDescriptorResourceLinkCache(
         const std::filesystem::path& cachePath,

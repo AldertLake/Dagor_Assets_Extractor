@@ -110,15 +110,15 @@ namespace DagorAssetsExtractor::AssetIndex
 
     // Parse the contents of a VROMFS container from disk.
     // Returns a PackContents with entries populated, or with error set.
-    std::shared_ptr<PackContents> ParseVromfsContents(const std::filesystem::path& path, size_t maxFileSize = 256 * 1024 * 1024);
+    std::shared_ptr<PackContents> ParseVromfsContents(const std::filesystem::path& path, size_t maxFileSize = 512 * 1024 * 1024);
 
     // Parse the contents of a DXP container from disk, including DDSx header metadata.
     // Returns a PackContents with entries populated, or with error set.
-    std::shared_ptr<PackContents> ParseDxpContents(const std::filesystem::path& path, size_t maxFileSize = 256 * 1024 * 1024);
+    std::shared_ptr<PackContents> ParseDxpContents(const std::filesystem::path& path, size_t maxFileSize = 512 * 1024 * 1024);
 
     // Parse the contents of a GRP container from disk.
     // Returns a PackContents with entries populated, or with error set.
-    std::shared_ptr<PackContents> ParseGrpContents(const std::filesystem::path& path, size_t maxFileSize = 256 * 1024 * 1024);
+    std::shared_ptr<PackContents> ParseGrpContents(const std::filesystem::path& path, size_t maxFileSize = 512 * 1024 * 1024);
 
     // Describe a known Dagor GRP resource class id.
     std::string DescribeGrpClassId(uint32_t classId);
@@ -138,6 +138,6 @@ namespace DagorAssetsExtractor::AssetIndex
 
     // Parse the contents of a GameRes descriptor file (.bin) from disk.
     // Returns a PackContents with entries populated, or with error set.
-    std::shared_ptr<PackContents> ParseDescriptorContents(const std::filesystem::path& path, size_t maxFileSize = 256 * 1024 * 1024);
+    std::shared_ptr<PackContents> ParseDescriptorContents(const std::filesystem::path& path, size_t maxFileSize = 512 * 1024 * 1024);
 
 } // namespace DagorAssetsExtractor::AssetIndex

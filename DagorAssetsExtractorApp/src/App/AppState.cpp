@@ -1,6 +1,7 @@
 #include "App/AppState.h"
 #include "Platform/Platform.h"
 #include "DagorIO/Decompression.h"
+#include "Export/MaterialTextureResolver.h"
 #include "Export/TextureExporter.h"
 #include "Export/ModelExporter.h"
 #include "DagorFormats/BlkReader.h"
@@ -58,60 +59,6 @@ namespace DagorAssetsExtractor::App
         return lowered;
     }
 
-    std::vector<std::string> BuildBaseColorSlotPreference(std::string_view shaderClass)
-    {
-        const std::string lowered = ToLowerLocal(shaderClass);
-        const bool layered = lowered.find("layered") != std::string::npos;
-        const bool dynamic = lowered.find("dynamic") != std::string::npos;
-        const bool detail1IsDiffuse = layered && lowered != "rendinst_simple_layered";
-
-        if (dynamic)
-        {
-            if (layered)
-            {
-                return { "t4", "t3", "t5", "t6", "t7", "t8", "t9", "t10", "t0" };
-            }
-            else
-            {
-                return { "t0", "t4", "t6", "t8", "t10" };
-            }
-        }
-
-        if (!detail1IsDiffuse || lowered == "dynamic_painted_by_mask")
-        {
-            return { "t0" };
-        }
-
-        return { "t3", "t5", "t7", "t9" };
-    }
-
-    std::vector<std::string> BuildNormalMapSlotPreference(std::string_view shaderClass)
-    {
-        const std::string lowered = ToLowerLocal(shaderClass);
-        const bool layered = lowered.find("layered") != std::string::npos;
-        const bool dynamic = lowered.find("dynamic") != std::string::npos;
-        const bool detail1IsDiffuse = layered && lowered != "rendinst_simple_layered";
-
-        if (dynamic)
-        {
-            if (layered)
-            {
-                return { "t5", "t4", "t7", "t6", "t9", "t8", "t10", "t2" };
-            }
-            else
-            {
-                return { "t2", "t5", "t7", "t9" };
-            }
-        }
-
-        if (!detail1IsDiffuse || lowered == "dynamic_painted_by_mask")
-        {
-            return { "t2" };
-        }
-
-        return { "t4", "t6", "t8", "t10" };
-    }
-
     bool TryParseTextureSlotIndex(std::string_view slotName, size_t& slotIndex)
     {
         if (slotName.size() < 2 || slotName[0] != 't')
@@ -136,6 +83,34 @@ namespace DagorAssetsExtractor::App
         }
 
         slotIndex = value;
+        return true;
+    }
+
+    bool AssignExportedTexture(
+        const std::string& textureName,
+        const std::unordered_map<std::string, std::string>& exportedTexturePaths,
+        const std::unordered_map<std::string, fs::path>& exportedTextureSourcePaths,
+        std::string& outputTexturePath,
+        fs::path& outputTextureSourcePath)
+    {
+        if (textureName.empty())
+        {
+            return false;
+        }
+
+        const auto pathIt = exportedTexturePaths.find(textureName);
+        if (pathIt == exportedTexturePaths.end())
+        {
+            return false;
+        }
+
+        outputTexturePath = pathIt->second;
+        const auto srcIt = exportedTextureSourcePaths.find(textureName);
+        if (srcIt != exportedTextureSourcePaths.end())
+        {
+            outputTextureSourcePath = srcIt->second;
+        }
+
         return true;
     }
 
@@ -2387,45 +2362,113 @@ namespace DagorAssetsExtractor::App
                     return false;
                 };
 
-                auto exportTextureByName = [&](const std::string& texName) -> bool {
-                    if (texName.empty()) return false;
-                    if (exportedTexturePaths.contains(texName)) return true;
-
-                    fs::path dxpPath;
-                    std::string dxpEntryName;
-                    if (findTextureInDxpPacks(texName, dxpPath, dxpEntryName))
+                std::unordered_map<std::string, std::pair<fs::path, std::string>> resolvedTextureExports;
+                if (exportTextures && !uniqueTexturesToExport.empty())
+                {
+                    for (const auto& texName : uniqueTexturesToExport)
                     {
-                        auto dxpContents = app.packContentsCache.Get(dxpPath);
-                        if (!dxpContents)
+                        if (app.exportProgress.cancelRequested.load())
                         {
-                            auto newContents = AssetIndex::ParseDxpContents(dxpPath);
-                            if (newContents)
-                            {
-                                app.packContentsCache.Put(dxpPath, newContents);
-                                dxpContents = newContents;
-                            }
+                            AddLog(app, LogLevel::Warning, "Export canceled by user.");
+                            AddExportProgressLog(app, "Export canceled by user.");
+                            return;
                         }
 
-                        if (dxpContents)
+                        fs::path dxpPath;
+                        std::string dxpEntryName;
+                        if (findTextureInDxpPacks(texName, dxpPath, dxpEntryName))
                         {
-                            auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
-                                return e.name == dxpEntryName;
-                            });
-                            if (it != dxpContents->entries.end())
+                            resolvedTextureExports[texName] = { dxpPath, dxpEntryName };
+                        }
+                    }
+
+                    std::unordered_set<std::wstring> preloadedTexturePacks;
+                    for (const auto& [_, resolved] : resolvedTextureExports)
+                    {
+                        const std::wstring packKey = resolved.first.lexically_normal().wstring();
+                        if (!preloadedTexturePacks.insert(packKey).second)
+                        {
+                            continue;
+                        }
+
+                        auto dxpContents = app.packContentsCache.Get(resolved.first);
+                        if (!dxpContents)
+                        {
+                            auto newContents = AssetIndex::ParseDxpContents(resolved.first);
+                            if (newContents)
                             {
-                                auto texResult = Export::TextureExporter::ExportTexture(dxpPath, *it, textureExportOptions);
-                                if (texResult.success)
-                                {
-                                    const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
-                                    exportedTexturePaths[texName] = textureFile;
-                                    exportedTextureSourcePaths[texName] = texResult.outputPath;
-                                    manifest.textureDependencies.push_back(textureFile);
-                                    return true;
-                                }
+                                app.packContentsCache.Put(resolved.first, newContents);
                             }
                         }
                     }
-                    return false;
+                }
+
+                std::mutex exportedTextureMutex;
+                auto exportTextureByName = [&](const std::string& texName, std::string& warning) -> bool {
+                    if (texName.empty())
+                    {
+                        warning = "Texture dependency name is empty.";
+                        return false;
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(exportedTextureMutex);
+                        if (exportedTexturePaths.contains(texName))
+                        {
+                            return true;
+                        }
+                    }
+
+                    auto resolvedIt = resolvedTextureExports.find(texName);
+                    if (resolvedIt == resolvedTextureExports.end())
+                    {
+                        warning = "Failed to find or export texture dependency: " + texName;
+                        return false;
+                    }
+
+                    const fs::path& dxpPath = resolvedIt->second.first;
+                    const std::string& dxpEntryName = resolvedIt->second.second;
+                    auto dxpContents = app.packContentsCache.Get(dxpPath);
+                    if (!dxpContents)
+                    {
+                        auto newContents = AssetIndex::ParseDxpContents(dxpPath);
+                        if (newContents)
+                        {
+                            app.packContentsCache.Put(dxpPath, newContents);
+                            dxpContents = newContents;
+                        }
+                    }
+
+                    if (!dxpContents || !dxpContents->error.empty())
+                    {
+                        warning = "Could not parse DXP dependency pack " +
+                            Platform::PathToUtf8(dxpPath.filename()) + " for texture " + texName;
+                        return false;
+                    }
+
+                    auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
+                        return e.name == dxpEntryName;
+                    });
+                    if (it == dxpContents->entries.end())
+                    {
+                        warning = "Resolved texture dependency entry " + dxpEntryName +
+                            " was not found in " + Platform::PathToUtf8(dxpPath.filename());
+                        return false;
+                    }
+
+                    auto texResult = Export::TextureExporter::ExportTexture(dxpPath, *it, textureExportOptions);
+                    if (!texResult.success)
+                    {
+                        warning = "Failed to export texture dependency " + texName + ": " + texResult.error;
+                        return false;
+                    }
+
+                    const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
+                    std::lock_guard<std::mutex> lock(exportedTextureMutex);
+                    exportedTexturePaths[texName] = textureFile;
+                    exportedTextureSourcePaths[texName] = texResult.outputPath;
+                    manifest.textureDependencies.push_back(textureFile);
+                    return true;
                 };
 
                 std::vector<Export::MaterialInfo> materials;
@@ -2453,30 +2496,65 @@ namespace DagorAssetsExtractor::App
                 if (exportTextures && !uniqueTexturesToExport.empty())
                 {
                     AddExportProgressLog(app, "Exporting " + std::to_string(uniqueTexturesToExport.size()) + " texture dependencies...");
-                    for (const auto& texName : uniqueTexturesToExport)
-                    {
-                        if (app.exportProgress.cancelRequested.load())
-                        {
-                            AddLog(app, LogLevel::Warning, "Export canceled by user.");
-                            AddExportProgressLog(app, "Export canceled by user.");
-                            return;
-                        }
-                        UpdateExportProgress(app, currentStep++, totalSteps, "Exporting texture dependency...", texName);
-                        AddExportProgressLog(app, "Exporting texture dependency: " + texName);
+                    std::atomic_size_t completedTextureExports{ 0 };
+                    std::atomic_size_t exportedTextureCountAtomic{ 0 };
+                    std::atomic_bool textureExportCanceled{ false };
+                    const uint64_t textureProgressBase = currentStep;
 
-                        if (exportTextureByName(texName))
-                        {
-                            exportedTextureCount++;
-                            AddExportProgressLog(app, "Successfully exported texture dependency: " + texName);
-                        }
-                        else
-                        {
-                            const std::string warning = "Failed to find or export texture dependency: " + texName;
-                            manifest.decodeWarnings.push_back(warning);
-                            AddLog(app, LogLevel::Warning, warning);
-                            AddExportProgressLog(app, "Warning: " + warning);
-                        }
+                    Jobs::JobSystem::RunBoundedWorkers(
+                        uniqueTexturesToExport.size(),
+                        [&](size_t textureIndex, size_t) {
+                            if (textureExportCanceled.load(std::memory_order_acquire) ||
+                                app.exportProgress.cancelRequested.load())
+                            {
+                                textureExportCanceled.store(true, std::memory_order_release);
+                                return;
+                            }
+
+                            const std::string& texName = uniqueTexturesToExport[textureIndex];
+                            std::string warning;
+                            const bool exported = exportTextureByName(texName, warning);
+                            const uint64_t completed = completedTextureExports.fetch_add(1, std::memory_order_relaxed) + 1;
+
+                            UpdateExportProgress(
+                                app,
+                                textureProgressBase + completed,
+                                totalSteps,
+                                exported ? "Exported texture dependency..." : "Texture dependency warning...",
+                                texName);
+
+                            if (exported)
+                            {
+                                exportedTextureCountAtomic.fetch_add(1, std::memory_order_relaxed);
+                                AddExportProgressLog(app, "Successfully exported texture dependency: " + texName);
+                            }
+                            else
+                            {
+                                if (warning.empty())
+                                {
+                                    warning = "Failed to find or export texture dependency: " + texName;
+                                }
+
+                                {
+                                    std::lock_guard<std::mutex> lock(exportedTextureMutex);
+                                    manifest.decodeWarnings.push_back(warning);
+                                }
+
+                                AddLog(app, LogLevel::Warning, warning);
+                                AddExportProgressLog(app, "Warning: " + warning);
+                            }
+                        },
+                        1);
+
+                    if (textureExportCanceled.load(std::memory_order_acquire))
+                    {
+                        AddLog(app, LogLevel::Warning, "Export canceled by user.");
+                        AddExportProgressLog(app, "Export canceled by user.");
+                        return;
                     }
+
+                    exportedTextureCount = exportedTextureCountAtomic.load(std::memory_order_relaxed);
+                    currentStep = textureProgressBase + uniqueTexturesToExport.size();
                 }
 
                 if (!internalMaterials.empty())
@@ -2485,65 +2563,47 @@ namespace DagorAssetsExtractor::App
                     for (size_t matIdx = 0; matIdx < internalMaterials.size(); ++matIdx)
                     {
                         const auto& intMat = internalMaterials[matIdx];
-                        const std::vector<std::string> baseColorSlots = BuildBaseColorSlotPreference(intMat.shaderClass);
-                        const std::vector<std::string> normalMapSlots = BuildNormalMapSlotPreference(intMat.shaderClass);
+                        const Export::ResolvedMaterialTextures resolvedTextures =
+                            Export::ResolveMaterialTextures(intMat);
 
-                        std::string diffuseTex;
-                        for (const auto& slot : baseColorSlots)
+                        if (AssignExportedTexture(
+                                resolvedTextures.baseColorTextureName,
+                                exportedTexturePaths,
+                                exportedTextureSourcePaths,
+                                materials[matIdx].diffuseTexturePath,
+                                materials[matIdx].diffuseTextureSourcePath))
                         {
-                            if (slot.size() > 1 && slot[0] == 't')
-                            {
-                                int slotIdx = std::stoi(slot.substr(1));
-                                if (slotIdx >= 0 && slotIdx < 16 && !intMat.textureSlots[slotIdx].empty())
-                                {
-                                    diffuseTex = intMat.textureSlots[slotIdx];
-                                    break;
-                                }
-                            }
+                            assignedTextureCount++;
                         }
 
-                        std::string normalTex;
-                        for (const auto& slot : normalMapSlots)
+                        if (AssignExportedTexture(
+                                resolvedTextures.normalTextureName,
+                                exportedTexturePaths,
+                                exportedTextureSourcePaths,
+                                materials[matIdx].normalTexturePath,
+                                materials[matIdx].normalTextureSourcePath))
                         {
-                            if (slot.size() > 1 && slot[0] == 't')
-                            {
-                                int slotIdx = std::stoi(slot.substr(1));
-                                if (slotIdx >= 0 && slotIdx < 16 && !intMat.textureSlots[slotIdx].empty())
-                                {
-                                    normalTex = intMat.textureSlots[slotIdx];
-                                    break;
-                                }
-                            }
+                            assignedTextureCount++;
                         }
 
-                        if (!diffuseTex.empty())
+                        if (AssignExportedTexture(
+                                resolvedTextures.metallicRoughnessTextureName,
+                                exportedTexturePaths,
+                                exportedTextureSourcePaths,
+                                materials[matIdx].metallicRoughnessTexturePath,
+                                materials[matIdx].metallicRoughnessTextureSourcePath))
                         {
-                            auto it = exportedTexturePaths.find(diffuseTex);
-                            if (it != exportedTexturePaths.end())
-                            {
-                                materials[matIdx].diffuseTexturePath = it->second;
-                                auto srcIt = exportedTextureSourcePaths.find(diffuseTex);
-                                if (srcIt != exportedTextureSourcePaths.end())
-                                {
-                                    materials[matIdx].diffuseTextureSourcePath = srcIt->second;
-                                }
-                                assignedTextureCount++;
-                            }
+                            assignedTextureCount++;
                         }
 
-                        if (!normalTex.empty())
+                        if (AssignExportedTexture(
+                                resolvedTextures.occlusionTextureName,
+                                exportedTexturePaths,
+                                exportedTextureSourcePaths,
+                                materials[matIdx].occlusionTexturePath,
+                                materials[matIdx].occlusionTextureSourcePath))
                         {
-                            auto it = exportedTexturePaths.find(normalTex);
-                            if (it != exportedTexturePaths.end())
-                            {
-                                materials[matIdx].normalTexturePath = it->second;
-                                auto srcIt = exportedTextureSourcePaths.find(normalTex);
-                                if (srcIt != exportedTextureSourcePaths.end())
-                                {
-                                    materials[matIdx].normalTextureSourcePath = srcIt->second;
-                                }
-                                assignedTextureCount++;
-                            }
+                            assignedTextureCount++;
                         }
                     }
 
@@ -2597,13 +2657,11 @@ namespace DagorAssetsExtractor::App
                                     binding.materialIndex < matchedLink->materialShaderClasses.size()
                                         ? matchedLink->materialShaderClasses[binding.materialIndex]
                                         : std::string();
-                                const std::vector<std::string> baseColorSlots = BuildBaseColorSlotPreference(shaderClass);
-                                const std::vector<std::string> normalMapSlots = BuildNormalMapSlotPreference(shaderClass);
+                                const Export::MaterialTextureSemantic semantic =
+                                    Export::ClassifyDescriptorBinding(shaderClass, binding.slotName, texName);
 
-                                bool isBaseColor = std::find(baseColorSlots.begin(), baseColorSlots.end(), binding.slotName) != baseColorSlots.end();
-                                bool isNormal = std::find(normalMapSlots.begin(), normalMapSlots.end(), binding.slotName) != normalMapSlots.end();
-
-                                if (isBaseColor && materials[binding.materialIndex].diffuseTexturePath.empty())
+                                if (semantic == Export::MaterialTextureSemantic::BaseColor &&
+                                    materials[binding.materialIndex].diffuseTexturePath.empty())
                                 {
                                     materials[binding.materialIndex].diffuseTexturePath = pathIt->second;
                                     auto srcIt = exportedTextureSourcePaths.find(texName);
@@ -2613,13 +2671,36 @@ namespace DagorAssetsExtractor::App
                                     }
                                     assignedTextureCount++;
                                 }
-                                else if (isNormal && materials[binding.materialIndex].normalTexturePath.empty())
+                                else if (semantic == Export::MaterialTextureSemantic::Normal &&
+                                         materials[binding.materialIndex].normalTexturePath.empty())
                                 {
                                     materials[binding.materialIndex].normalTexturePath = pathIt->second;
                                     auto srcIt = exportedTextureSourcePaths.find(texName);
                                     if (srcIt != exportedTextureSourcePaths.end())
                                     {
                                         materials[binding.materialIndex].normalTextureSourcePath = srcIt->second;
+                                    }
+                                    assignedTextureCount++;
+                                }
+                                else if (semantic == Export::MaterialTextureSemantic::MetallicRoughness &&
+                                         materials[binding.materialIndex].metallicRoughnessTexturePath.empty())
+                                {
+                                    materials[binding.materialIndex].metallicRoughnessTexturePath = pathIt->second;
+                                    auto srcIt = exportedTextureSourcePaths.find(texName);
+                                    if (srcIt != exportedTextureSourcePaths.end())
+                                    {
+                                        materials[binding.materialIndex].metallicRoughnessTextureSourcePath = srcIt->second;
+                                    }
+                                    assignedTextureCount++;
+                                }
+                                else if (semantic == Export::MaterialTextureSemantic::Occlusion &&
+                                         materials[binding.materialIndex].occlusionTexturePath.empty())
+                                {
+                                    materials[binding.materialIndex].occlusionTexturePath = pathIt->second;
+                                    auto srcIt = exportedTextureSourcePaths.find(texName);
+                                    if (srcIt != exportedTextureSourcePaths.end())
+                                    {
+                                        materials[binding.materialIndex].occlusionTextureSourcePath = srcIt->second;
                                     }
                                     assignedTextureCount++;
                                 }

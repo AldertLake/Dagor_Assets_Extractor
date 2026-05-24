@@ -580,8 +580,12 @@ namespace DagorAssetsExtractor::Export
             {
                 return false;
             }
-            return !selection.materials[remapIt->second].diffuseTexturePath.empty() ||
-                   !selection.materials[remapIt->second].normalTexturePath.empty();
+
+            const MaterialInfo& material = selection.materials[remapIt->second];
+            return !material.diffuseTexturePath.empty() ||
+                   !material.normalTexturePath.empty() ||
+                   !material.metallicRoughnessTexturePath.empty() ||
+                   !material.occlusionTexturePath.empty();
         }
 
         template <typename TMesh>
@@ -686,6 +690,8 @@ namespace DagorAssetsExtractor::Export
         {
             int diffuseIndex = -1;
             int normalIndex = -1;
+            int metallicRoughnessIndex = -1;
+            int occlusionIndex = -1;
         };
 
         struct GlbTextureSections
@@ -769,6 +775,12 @@ namespace DagorAssetsExtractor::Export
             {
                 sections.materialTextureIndices[i].diffuseIndex = getOrAddTexture(materials[i].diffuseTexturePath, materials[i].diffuseTextureSourcePath);
                 sections.materialTextureIndices[i].normalIndex = getOrAddTexture(materials[i].normalTexturePath, materials[i].normalTextureSourcePath);
+                sections.materialTextureIndices[i].metallicRoughnessIndex = getOrAddTexture(
+                    materials[i].metallicRoughnessTexturePath,
+                    materials[i].metallicRoughnessTextureSourcePath);
+                sections.materialTextureIndices[i].occlusionIndex = getOrAddTexture(
+                    materials[i].occlusionTexturePath,
+                    materials[i].occlusionTextureSourcePath);
             }
 
             return sections;
@@ -793,23 +805,40 @@ namespace DagorAssetsExtractor::Export
                 json << "      \"pbrMetallicRoughness\": {\n";
                 if (textureSections.materialTextureIndices[i].diffuseIndex >= 0)
                 {
-                    json << "        \"baseColorTexture\": { \"index\": " << textureSections.materialTextureIndices[i].diffuseIndex << " },\n";
+                    json << "        \"baseColorTexture\": { \"index\": " << textureSections.materialTextureIndices[i].diffuseIndex << " }";
                 }
                 else
                 {
-                    json << "        \"baseColorFactor\": [1, 1, 1, 1],\n";
+                    json << "        \"baseColorFactor\": [1, 1, 1, 1]";
                 }
-                json << "        \"metallicFactor\": 0.0,\n";
-                json << "        \"roughnessFactor\": 1.0\n";
+
+                if (textureSections.materialTextureIndices[i].metallicRoughnessIndex >= 0)
+                {
+                    json << ",\n";
+                    json << "        \"metallicRoughnessTexture\": { \"index\": "
+                         << textureSections.materialTextureIndices[i].metallicRoughnessIndex << " },\n";
+                    json << "        \"metallicFactor\": 1.0,\n";
+                    json << "        \"roughnessFactor\": 1.0\n";
+                }
+                else
+                {
+                    json << ",\n";
+                    json << "        \"metallicFactor\": 0.0,\n";
+                    json << "        \"roughnessFactor\": 1.0\n";
+                }
                 json << "      }";
+
                 if (textureSections.materialTextureIndices[i].normalIndex >= 0)
                 {
-                    json << ",\n      \"normalTexture\": { \"index\": " << textureSections.materialTextureIndices[i].normalIndex << " }\n";
+                    json << ",\n      \"normalTexture\": { \"index\": " << textureSections.materialTextureIndices[i].normalIndex << " }";
                 }
-                else
+
+                if (textureSections.materialTextureIndices[i].occlusionIndex >= 0)
                 {
-                    json << "\n";
+                    json << ",\n      \"occlusionTexture\": { \"index\": " << textureSections.materialTextureIndices[i].occlusionIndex << " }";
                 }
+
+                json << "\n";
                 json << "    }";
                 if (i + 1 < materials.size()) json << ",";
                 json << "\n";

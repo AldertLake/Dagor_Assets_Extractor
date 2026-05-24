@@ -3,6 +3,7 @@
 #include "Platform/Platform.h"
 #include "Export/ExportManifest.h"
 #include "DagorIO/Decompression.h"
+#include "Jobs/JobSystem.h"
 #include "DirectXTex.h"
 
 #include <objbase.h>
@@ -18,6 +19,7 @@
 #include <cstring>
 #include <iomanip>
 #include <limits>
+#include <mutex>
 #include <string_view>
 
 #pragma comment(lib, "ole32.lib")
@@ -1175,7 +1177,8 @@ namespace DagorAssetsExtractor::Export
                     error);
 
             default:
-                error = "Readable PNG/TGA export currently supports BC1-BC5 plus uncompressed R8, R8G8, RGBA8, BGRA8, and RGBA float DDSx textures only. "
+                error = "The built-in readable PNG/TGA decoder currently supports BC1-BC5 plus uncompressed R8, R8G8, RGBA8, BGRA8, and RGBA float DDSx textures only. "
+                    "Other DDSx formats are retried through DirectXTex. "
                     "This texture is " + std::string(header.FormatName()) + " (format code " + std::to_string(header.d3dFormat) + ").";
                 return false;
             }
@@ -2006,62 +2009,84 @@ namespace DagorAssetsExtractor::Export
         BatchTextureExportResult batch;
         batch.total = contents.entries.size();
 
-        for (size_t i = 0; i < contents.entries.size(); ++i)
+        if (contents.entries.empty())
         {
-            const AssetIndex::SubAssetRecord& entry = contents.entries[i];
+            return batch;
+        }
 
-            // Report progress and check for cancellation
-            if (progress)
-            {
-                if (!progress(i + 1, batch.total, entry.name))
+        const std::string normalizedFormat = NormalizeTextureFormat(options.format);
+        std::mutex batchMutex;
+        std::atomic_bool cancelRequested{ false };
+        std::atomic_size_t progressIndex{ 0 };
+
+        Jobs::JobSystem::RunBoundedWorkers(
+            contents.entries.size(),
+            [&](size_t index, size_t) {
+                if (cancelRequested.load(std::memory_order_acquire))
                 {
-                    batch.warnings.push_back("Batch export cancelled by user at " +
-                        std::to_string(i + 1) + "/" + std::to_string(batch.total));
-                    break;
+                    return;
                 }
-            }
 
-            // Skip entries with zero size
-            if (entry.size == 0)
-            {
-                ++batch.skipped;
-                batch.warnings.push_back("Skipped empty entry: " + entry.name);
-                continue;
-            }
+                const AssetIndex::SubAssetRecord& entry = contents.entries[index];
+                const size_t current = progressIndex.fetch_add(1, std::memory_order_relaxed) + 1;
 
-            const std::string normalizedFormat = NormalizeTextureFormat(options.format);
-            if (!options.overwrite && normalizedFormat == "DDS")
-            {
-                const std::filesystem::path outputPath = BuildSafeOutputPath(options.outputDir, entry.name, ".dds");
-                if (std::filesystem::exists(outputPath))
+                if (progress && !progress(current, batch.total, entry.name))
+                {
+                    cancelRequested.store(true, std::memory_order_release);
+                    return;
+                }
+
+                if (entry.size == 0)
+                {
+                    std::lock_guard<std::mutex> lock(batchMutex);
+                    ++batch.skipped;
+                    batch.warnings.push_back("Skipped empty entry: " + entry.name);
+                    return;
+                }
+
+                if (!options.overwrite && normalizedFormat == "DDS")
+                {
+                    const std::filesystem::path outputPath = BuildSafeOutputPath(options.outputDir, entry.name, ".dds");
+                    if (std::filesystem::exists(outputPath))
+                    {
+                        std::lock_guard<std::mutex> lock(batchMutex);
+                        ++batch.skipped;
+                        batch.warnings.push_back("Skipped existing file: " + entry.name);
+                        return;
+                    }
+                }
+
+                TextureExportResult result = ExportTexture(packPath, entry, options);
+
+                std::lock_guard<std::mutex> lock(batchMutex);
+                if (result.success)
+                {
+                    ++batch.succeeded;
+                }
+                else if (result.error.rfind("Output file already exists:", 0) == 0)
                 {
                     ++batch.skipped;
                     batch.warnings.push_back("Skipped existing file: " + entry.name);
-                    continue;
                 }
-            }
+                else
+                {
+                    ++batch.failed;
+                    batch.errors.push_back(entry.name + ": " + result.error);
+                }
 
-            TextureExportResult result = ExportTexture(packPath, entry, options);
+                for (const std::string& warning : result.warnings)
+                {
+                    batch.warnings.push_back(entry.name + ": " + warning);
+                }
+            },
+            1);
 
-            if (result.success)
-            {
-                ++batch.succeeded;
-            }
-            else if (result.error.rfind("Output file already exists:", 0) == 0)
-            {
-                ++batch.skipped;
-                batch.warnings.push_back("Skipped existing file: " + entry.name);
-            }
-            else
-            {
-                ++batch.failed;
-                batch.errors.push_back(entry.name + ": " + result.error);
-            }
-
-            for (const std::string& w : result.warnings)
-            {
-                batch.warnings.push_back(entry.name + ": " + w);
-            }
+        if (cancelRequested.load(std::memory_order_acquire))
+        {
+            batch.warnings.push_back(
+                "Batch export cancelled by user at " +
+                std::to_string(std::min(progressIndex.load(std::memory_order_relaxed), batch.total)) +
+                "/" + std::to_string(batch.total));
         }
 
         return batch;
