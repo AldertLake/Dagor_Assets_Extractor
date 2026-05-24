@@ -320,6 +320,79 @@ namespace {
         std::cout << message.str() << std::endl;
     }
 
+    std::vector<InternalMaterial> ParseInternalMaterials(
+        std::span<const uint8_t> mvdPayload,
+        const std::vector<std::string>& textureNames)
+    {
+        if (mvdPayload.size() < 24)
+        {
+            return {};
+        }
+
+        DagorIO::MemoryReader reader(mvdPayload);
+        const uint32_t matOfs = reader.ReadUInt32();
+        const uint32_t matCnt = reader.ReadUInt32();
+
+        if (matOfs == 0 || matCnt == 0)
+        {
+            return {};
+        }
+
+        if (matCnt > 10000)
+        {
+            return {};
+        }
+
+        std::vector<InternalMaterial> materials;
+        materials.reserve(matCnt);
+
+        for (uint32_t idx = 0; idx < matCnt; ++idx)
+        {
+            size_t entryPos = matOfs + idx * 0xA8;
+            if (entryPos + 0xA8 > mvdPayload.size())
+            {
+                break;
+            }
+
+            reader.Seek(entryPos);
+            reader.Skip(0x40); // diff, amb, emis, spec
+            reader.Skip(4);    // unknown
+            uint32_t shaderOfs = reader.ReadUInt32();
+            reader.Skip(8);    // padding
+
+            uint32_t textureIds[16];
+            for (int i = 0; i < 16; ++i)
+            {
+                textureIds[i] = reader.ReadUInt32();
+            }
+
+            std::string shaderClass;
+            if (shaderOfs < mvdPayload.size())
+            {
+                size_t sOfs = shaderOfs;
+                while (sOfs < mvdPayload.size() && mvdPayload[sOfs] != '\0')
+                {
+                    shaderClass.push_back(static_cast<char>(mvdPayload[sOfs]));
+                    sOfs++;
+                }
+            }
+
+            InternalMaterial mat;
+            mat.shaderClass = shaderClass;
+            for (int i = 0; i < 16; ++i)
+            {
+                uint32_t texId = textureIds[i];
+                if (texId != 0xFFFFFFFF && texId < textureNames.size())
+                {
+                    mat.textureSlots[i] = textureNames[texId];
+                }
+            }
+            materials.push_back(mat);
+        }
+
+        return materials;
+    }
+
 } // namespace
 
 DynModelReader::DynModelReader(std::span<const uint8_t> data) : m_data(data) {}
@@ -487,7 +560,8 @@ void DynModelReader::ParseRealGrpPayload() {
                 "");
             break;
         case 0x20:
-            throw std::runtime_error("DynModel LZMA compressed blocks are not supported yet");
+            block.decompressed = DagorIO::Decompressor::DecompressLzma(payload);
+            break;
         default:
             throw std::runtime_error("DynModel uses an unknown compressed block method: " + std::to_string(block.method));
         }
@@ -1114,7 +1188,8 @@ void DynModelReader::ParseRealGrpPayload() {
                             const std::vector<DecodedVertexData>& vertexData,
                             const float positionScale[3],
                             const float positionOffset[3],
-                            bool useSkinning) -> DynModelMesh
+                            bool useSkinning,
+                            size_t materialIndexOffset) -> DynModelMesh
     {
         DynModelMesh mesh;
         mesh.name = meshName;
@@ -1189,7 +1264,7 @@ void DynModelReader::ParseRealGrpPayload() {
                 }
 
                 RendInstPrimitive primitive;
-                primitive.materialIndex = element->materialIndex;
+                primitive.materialIndex = element->materialIndex + static_cast<uint32_t>(materialIndexOffset);
                 primitive.firstIndex = static_cast<uint32_t>(mesh.indices.size());
                 primitive.indexCount = static_cast<uint32_t>(sourceIndexCount);
                 mesh.primitives.push_back(primitive);
@@ -1240,13 +1315,19 @@ void DynModelReader::ParseRealGrpPayload() {
     m_lods.clear();
     m_decompressedPayload.clear();
     m_containerHeaderSize = 0;
+    m_internalMaterials.clear();
+    size_t numRigidMaterials = 0;
 
     DagorIO::MemoryReader rawReader(m_data);
     const DynModelPhase1Header header = ReadDynModelPhase1Header(rawReader);
-    std::vector<std::string> textureNames;
+    m_usesExternalMaterialTextureCounts = header.externalMaterialTextureCounts;
     if (!header.externalMaterialTextureCounts)
     {
-        textureNames = ReadDynModelTextureNames(rawReader, header.texCnt);
+        m_internalTextures = ReadDynModelTextureNames(rawReader, header.texCnt);
+    }
+    else
+    {
+        m_internalTextures = m_externalTextures;
     }
 
     const size_t mainMvdOffset = rawReader.GetPosition();
@@ -1258,13 +1339,15 @@ void DynModelReader::ParseRealGrpPayload() {
         m_decompressedPayload = mainMvd.decompressed;
         rawReader.Seek(mainMvdOffset + mainMvd.rawSize);
         mainVertexData = decodeMatVData(m_decompressedPayload, MVD_NORMAL);
+        m_internalMaterials = ParseInternalMaterials(m_decompressedPayload, m_internalTextures);
+        numRigidMaterials = m_internalMaterials.size();
     }
     else
     {
         rawReader.Skip(0x20); // Skip padding if no MVD
     }
 
-    LogDynModelPhase1Header(header, textureNames, m_decompressedPayload.size(), m_containerHeaderSize);
+    LogDynModelPhase1Header(header, m_internalTextures, m_decompressedPayload.size(), m_containerHeaderSize);
     {
         std::ostringstream diag;
         diag << "Phase1 header: payload=" << m_data.size()
@@ -1577,6 +1660,8 @@ void DynModelReader::ParseRealGrpPayload() {
                     skinnedVertexData = decodeMatVData(
                         skinnedMvd.decompressed,
                         header.mvdHdrFlag ? MVD_SKINNED : MVD_SKINNED_FLAG);
+                    auto skinnedMaterials = ParseInternalMaterials(skinnedMvd.decompressed, m_internalTextures);
+                    m_internalMaterials.insert(m_internalMaterials.end(), skinnedMaterials.begin(), skinnedMaterials.end());
 
                     const std::span<const uint8_t> skinsCompressed =
                         skinnedReader.ReadSpan(skinnedReader.GetRemaining());
@@ -1701,7 +1786,8 @@ void DynModelReader::ParseRealGrpPayload() {
                 mainVertexData,
                 positionScale,
                 positionOffset,
-                false);
+                false,
+                0);
             if (!mesh.vertices.empty() && !mesh.indices.empty())
             {
                 m_lods.push_back(std::move(mesh));
@@ -1727,7 +1813,8 @@ void DynModelReader::ParseRealGrpPayload() {
                 skinnedVertexData,
                 positionScale,
                 positionOffset,
-                true);
+                true,
+                numRigidMaterials);
             if (!mesh.vertices.empty() && !mesh.indices.empty())
             {
                 m_lods.push_back(std::move(mesh));

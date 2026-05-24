@@ -78,6 +78,12 @@ namespace DagorAssetsExtractor::Export
             const std::vector<uint8_t>& payload,
             std::string& error);
 
+        static bool BuildDdsBuffer(
+            const DagorFormats::DdsxHeader& header,
+            const std::vector<uint8_t>& payload,
+            std::vector<uint8_t>& ddsData,
+            std::string& error);
+
         // Returns true if the format requires a DX10 extended header
         static bool NeedsDX10Header(uint32_t d3dFormat);
 

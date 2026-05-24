@@ -241,12 +241,6 @@ namespace DagorAssetsExtractor::AssetIndex
 
             const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
-            if (DagorFormats::IsBinaryBlk(text))
-            {
-                ++result.blkFilesSkipped;
-                continue;
-            }
-
             try
             {
                 DagorFormats::BlkReader reader(text);

@@ -158,7 +158,7 @@ namespace DagorAssetsExtractor::Platform {
 
     fs::path GetSettingsPath()
     {
-        return GetCacheRootPath() / L"settings";
+        return GetCacheRootPath() / L"Settings.ini";
     }
 
     fs::path GetIndexCachePath()

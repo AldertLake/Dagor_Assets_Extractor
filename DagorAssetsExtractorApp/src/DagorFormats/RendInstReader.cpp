@@ -194,6 +194,79 @@ namespace {
         return textureNames;
     }
 
+    std::vector<InternalMaterial> ParseInternalMaterials(
+        std::span<const uint8_t> mvdPayload,
+        const std::vector<std::string>& textureNames)
+    {
+        if (mvdPayload.size() < 24)
+        {
+            return {};
+        }
+
+        DagorIO::MemoryReader reader(mvdPayload);
+        const uint32_t matOfs = reader.ReadUInt32();
+        const uint32_t matCnt = reader.ReadUInt32();
+
+        if (matOfs == 0 || matCnt == 0)
+        {
+            return {};
+        }
+
+        if (matCnt > 10000)
+        {
+            return {};
+        }
+
+        std::vector<InternalMaterial> materials;
+        materials.reserve(matCnt);
+
+        for (uint32_t idx = 0; idx < matCnt; ++idx)
+        {
+            size_t entryPos = matOfs + idx * 0xA8;
+            if (entryPos + 0xA8 > mvdPayload.size())
+            {
+                break;
+            }
+
+            reader.Seek(entryPos);
+            reader.Skip(0x40); // diff, amb, emis, spec
+            reader.Skip(4);    // unknown
+            uint32_t shaderOfs = reader.ReadUInt32();
+            reader.Skip(8);    // padding
+
+            uint32_t textureIds[16];
+            for (int i = 0; i < 16; ++i)
+            {
+                textureIds[i] = reader.ReadUInt32();
+            }
+
+            std::string shaderClass;
+            if (shaderOfs < mvdPayload.size())
+            {
+                size_t sOfs = shaderOfs;
+                while (sOfs < mvdPayload.size() && mvdPayload[sOfs] != '\0')
+                {
+                    shaderClass.push_back(static_cast<char>(mvdPayload[sOfs]));
+                    sOfs++;
+                }
+            }
+
+            InternalMaterial mat;
+            mat.shaderClass = shaderClass;
+            for (int i = 0; i < 16; ++i)
+            {
+                uint32_t texId = textureIds[i];
+                if (texId != 0xFFFFFFFF && texId < textureNames.size())
+                {
+                    mat.textureSlots[i] = textureNames[texId];
+                }
+            }
+            materials.push_back(mat);
+        }
+
+        return materials;
+    }
+
 } // namespace
 
 RendInstReader::RendInstReader(std::span<const uint8_t> data) : m_data(data) {}
@@ -361,6 +434,7 @@ void RendInstReader::ParseRealGrpPayload() {
 
     DagorIO::MemoryReader rawReader(m_data);
     const RendInstPhase1Header header = ReadRendInstPhase1Header(rawReader);
+    m_usesExternalMaterialTextureCounts = header.externalMaterialTextureCounts;
     std::cout << "[DEBUG RendInst] lodHdrInfo=" << header.lodHdrInfo
               << ", lodHdrSize=" << header.lodHdrSize
               << ", riStructSize=" << header.riStructSize
@@ -380,14 +454,24 @@ void RendInstReader::ParseRealGrpPayload() {
     }
     std::cout << std::endl;
 
-    std::vector<std::string> textureNames;
     if (!header.externalMaterialTextureCounts)
     {
-        textureNames = ReadRendInstTextureNames(rawReader, header.texCnt);
+        m_internalTextures = ReadRendInstTextureNames(rawReader, header.texCnt);
+    }
+    else
+    {
+        m_internalTextures = m_externalTextures;
     }
 
     // Phase 2: MatVData parsing
     const size_t mvdStartPos = foundCompressedBlock ? 0 : rawReader.GetPosition();
+    if (mvdStartPos <= m_decompressedPayload.size())
+    {
+        m_internalMaterials = ParseInternalMaterials(
+            std::span<const uint8_t>(m_decompressedPayload).subspan(mvdStartPos),
+            m_internalTextures);
+    }
+
     DagorIO::MemoryReader meshReader(m_decompressedPayload);
     meshReader.Seek(mvdStartPos);
     std::cout << "[DEBUG RendInst] mvdStartPos=" << mvdStartPos

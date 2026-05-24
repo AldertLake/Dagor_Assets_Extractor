@@ -8,6 +8,7 @@
 #include <sstream>
 #include "tinf.h"
 #include "zstd.h"
+#include "LzmaDec.h"
 
 namespace DagorIO {
 
@@ -144,6 +145,62 @@ std::vector<uint8_t> Decompressor::DecompressZstd(std::span<const uint8_t> compr
     }
 
     return DecompressZstd(compressedData, static_cast<size_t>(frameSize));
+}
+
+namespace {
+    void* SzAlloc(ISzAllocPtr, size_t size) { return std::malloc(size); }
+    void SzFree(ISzAllocPtr, void* address) { std::free(address); }
+    const ISzAlloc g_LzmaAlloc = { SzAlloc, SzFree };
+}
+
+std::vector<uint8_t> Decompressor::DecompressLzma(std::span<const uint8_t> compressedData, size_t uncompressedSize) {
+    if (compressedData.size() < 13) {
+        throw std::runtime_error("LZMA compressed data is too small (need >= 13 bytes for header)");
+    }
+
+    const uint8_t* propData = compressedData.data();
+    const uint8_t* src = compressedData.data() + 13;
+    size_t srcLen = compressedData.size() - 13;
+
+    std::vector<uint8_t> result(uncompressedSize);
+    size_t destLen = uncompressedSize;
+
+    ELzmaStatus status;
+    SRes res = LzmaDecode(
+        result.data(), &destLen,
+        src, &srcLen,
+        propData, 5,
+        LZMA_FINISH_ANY,
+        &status,
+        &g_LzmaAlloc
+    );
+
+    if (res != SZ_OK) {
+        throw std::runtime_error("LZMA decompression failed with error code: " + std::to_string(res));
+    }
+
+    if (destLen != uncompressedSize) {
+        result.resize(destLen);
+    }
+
+    return result;
+}
+
+std::vector<uint8_t> Decompressor::DecompressLzma(std::span<const uint8_t> compressedData) {
+    if (compressedData.size() < 13) {
+        throw std::runtime_error("LZMA compressed data is too small (need >= 13 bytes for header)");
+    }
+
+    uint64_t uncompressedSize = 0;
+    for (int i = 0; i < 8; ++i) {
+        uncompressedSize |= (static_cast<uint64_t>(compressedData[5 + i]) << (8 * i));
+    }
+
+    if (uncompressedSize == 0xFFFFFFFFFFFFFFFFULL) {
+        throw std::runtime_error("LZMA stream declares unknown uncompressed size");
+    }
+
+    return DecompressLzma(compressedData, static_cast<size_t>(uncompressedSize));
 }
 
 std::filesystem::path Decompressor::FindOodleDll(const std::string& gameRoot, const std::string& explicitDllPath) {

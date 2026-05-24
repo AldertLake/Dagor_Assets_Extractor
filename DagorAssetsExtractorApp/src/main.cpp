@@ -14,6 +14,19 @@
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "dwmapi.lib")
+
+#include <dwmapi.h>
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
 
 namespace
 {
@@ -224,6 +237,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(windowClass.hIcon));
     SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(windowClass.hIconSm));
 
+    COLORREF darkColor = RGB(36, 36, 36);
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &darkColor, sizeof(darkColor));
+
+    COLORREF whiteColor = RGB(255, 255, 255);
+    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &whiteColor, sizeof(whiteColor));
+
+    BOOL useDarkMode = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &useDarkMode, sizeof(useDarkMode));
+
     if (!CreateDeviceD3D(hwnd))
     {
         CleanupDeviceD3D();
@@ -243,6 +265,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = nullptr;
+    
+    std::string fontPath = DagorAssetsExtractor::Platform::PathToUtf8(DagorAssetsExtractor::Platform::GetUiAssetPath() / L"Roboto-Medium.ttf");
+    io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f);
 
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_Init(hwnd);
@@ -257,17 +283,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     
     // We access the settings load from App module
     DagorAssetsExtractor::App::LoadSettings(app.settings, app.settingsPath);
+    if (const std::string imguiIniData = DagorAssetsExtractor::App::LoadImGuiSettings(app.settingsPath); !imguiIniData.empty())
+    {
+        ImGui::LoadIniSettingsFromMemory(imguiIniData.c_str(), imguiIniData.size());
+    }
     DagorAssetsExtractor::App::ApplySettingsToUiState(app);
     app.validation = DagorAssetsExtractor::AssetIndex::ValidateGameRoot(app.settings.gameRoot);
     DagorAssetsExtractor::App::SyncSettingsBuffers(app);
     app.firstRunPromptOpen = !app.validation.IsValid();
+
+    app.logger.Initialize(DagorAssetsExtractor::Platform::GetExecutableDirectory());
 
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Application started.");
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Portable cache folder: " + DagorAssetsExtractor::Platform::PathToUtf8(DagorAssetsExtractor::Platform::GetCacheRootPath()));
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Settings path: " + DagorAssetsExtractor::Platform::PathToUtf8(app.settingsPath));
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Index cache path: " + DagorAssetsExtractor::Platform::PathToUtf8(app.indexCachePath));
     DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Descriptor-link cache path: " + DagorAssetsExtractor::Platform::PathToUtf8(app.descriptorLinksCachePath));
-    
     if (app.validation.IsValid())
     {
         DagorAssetsExtractor::App::AddLog(app, LogLevel::Info, "Loaded saved game folder: " + DagorAssetsExtractor::Platform::PathToUtf8(app.settings.gameRoot));
@@ -309,6 +340,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 
         DagorAssetsExtractor::UI::DrawMainShell(app, running);
 
+        if (io.WantSaveIniSettings)
+        {
+            size_t iniSize = 0;
+            const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
+            std::string error;
+            if (DagorAssetsExtractor::App::SaveSharedSettings(app.settings, app.settingsPath, std::string_view(iniData, iniSize), error))
+            {
+                io.WantSaveIniSettings = false;
+            }
+            else
+            {
+                DagorAssetsExtractor::App::AddLog(app, LogLevel::Error, error);
+            }
+        }
+
         ImGui::Render();
         GDeviceContext->OMSetRenderTargets(1, &GMainRenderTargetView, nullptr);
         GDeviceContext->ClearRenderTargetView(GMainRenderTargetView, clearColor);
@@ -319,6 +365,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 
     DagorAssetsExtractor::App::StopScan(app);
     DagorAssetsExtractor::App::WaitForBackgroundJobs(app);
+
+    {
+        size_t iniSize = 0;
+        const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
+        std::string error;
+        if (!DagorAssetsExtractor::App::SaveSharedSettings(app.settings, app.settingsPath, std::string_view(iniData, iniSize), error))
+        {
+            DagorAssetsExtractor::App::AddLog(app, LogLevel::Error, error);
+        }
+        else
+        {
+            io.WantSaveIniSettings = false;
+        }
+    }
 
     DagorAssetsExtractor::UI::ShutdownUiAssets();
     ImGui_ImplDX11_Shutdown();

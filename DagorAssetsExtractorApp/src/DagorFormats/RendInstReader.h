@@ -26,6 +26,11 @@ struct RendInstPrimitive {
     uint32_t indexCount = 0;
 };
 
+struct InternalMaterial {
+    std::string shaderClass;
+    std::string textureSlots[16];
+};
+
 struct RendInstMesh {
     std::string name;
     std::vector<Vertex> vertices;
@@ -40,6 +45,10 @@ public:
     void Parse();
 
     const std::vector<RendInstMesh>& GetLods() const { return m_lods; }
+    const std::vector<InternalMaterial>& GetInternalMaterials() const { return m_internalMaterials; }
+    const std::vector<std::string>& GetTextureNames() const { return m_internalTextures; }
+    void SetExternalTextureNames(std::vector<std::string> textureNames) { m_externalTextures = std::move(textureNames); }
+    bool UsesExternalMaterialTextureCounts() const { return m_usesExternalMaterialTextureCounts; }
 
     // Returns the size of the container header that was stripped before the mesh data.
     // Only valid after a successful Parse() of a real GRP payload.
@@ -53,6 +62,10 @@ private:
     std::vector<RendInstMesh> m_lods;
     std::vector<uint8_t> m_decompressedPayload;
     size_t m_containerHeaderSize = 0;
+    bool m_usesExternalMaterialTextureCounts = false;
+    std::vector<InternalMaterial> m_internalMaterials;
+    std::vector<std::string> m_internalTextures;
+    std::vector<std::string> m_externalTextures;
 };
 
 } // namespace DagorFormats

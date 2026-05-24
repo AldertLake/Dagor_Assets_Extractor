@@ -28,7 +28,7 @@ namespace DagorAssetsExtractor::AssetIndex
     {
         constexpr size_t MaxWarnings = 12;
         constexpr size_t MaxDescriptorIndexThreads = 8;
-        constexpr int DescriptorLinkerVersion = 6;
+        constexpr int DescriptorLinkerVersion = 7;
         constexpr int DescriptorLinkCacheVersion = 4;
 
         std::string Trim(std::string value)
@@ -146,9 +146,10 @@ namespace DagorAssetsExtractor::AssetIndex
 
         std::string StripDagorTextureQualifier(std::string value)
         {
-            while (!value.empty() && value.back() == '*')
+            const size_t starMarker = value.find('*');
+            if (starMarker != std::string::npos)
             {
-                value.pop_back();
+                value.resize(starMarker);
             }
 
             const size_t qualityMarker = value.find('$');
@@ -192,10 +193,10 @@ namespace DagorAssetsExtractor::AssetIndex
             return keys;
         }
 
-        bool NamesMatch(std::string_view left, std::string_view right)
+        bool NameKeysIntersect(
+            const std::vector<std::string>& leftKeys,
+            const std::vector<std::string>& rightKeys)
         {
-            const std::vector<std::string> leftKeys = BuildAssetNameKeys(left);
-            const std::vector<std::string> rightKeys = BuildAssetNameKeys(right);
             for (const std::string& leftKey : leftKeys)
             {
                 if (std::find(rightKeys.begin(), rightKeys.end(), leftKey) != rightKeys.end())
@@ -526,6 +527,7 @@ namespace DagorAssetsExtractor::AssetIndex
         {
             fs::path path;
             std::string name;
+            std::vector<std::string> nameKeys;
             uint32_t classId = 0;
             std::string className;
             bool canExportStaticModel = false;
@@ -536,6 +538,7 @@ namespace DagorAssetsExtractor::AssetIndex
         {
             fs::path path;
             std::string name;
+            std::vector<std::string> nameKeys;
         };
 
         uint16_t ReadLe16(const std::vector<uint8_t>& data, size_t offset)
@@ -930,6 +933,26 @@ namespace DagorAssetsExtractor::AssetIndex
             }
         }
 
+        void AddPrecomputedIndexKeys(
+            std::unordered_map<std::string, std::vector<size_t>>& index,
+            const std::vector<std::string>& keys,
+            size_t value)
+        {
+            for (const std::string& key : keys)
+            {
+                if (key.empty())
+                {
+                    continue;
+                }
+
+                std::vector<size_t>& bucket = index[key];
+                if (std::find(bucket.begin(), bucket.end(), value) == bucket.end())
+                {
+                    bucket.push_back(value);
+                }
+            }
+        }
+
         bool PathLooksLikePatch(const fs::path& path)
         {
             return ContainsAscii(FullPathKey(Platform::PathToUtf8(path)), "/patch/");
@@ -1168,6 +1191,16 @@ namespace DagorAssetsExtractor::AssetIndex
                     std::vector<LightweightGrpEntry> localEntries;
                     std::string error;
                     const bool parsed = ParseGrpMetadataForLinking(record.path, maxPackBytes, localEntries, error);
+                    std::vector<std::vector<std::string>> localKeySets;
+                    if (parsed)
+                    {
+                        localKeySets.reserve(localEntries.size());
+                        for (LightweightGrpEntry& entry : localEntries)
+                        {
+                            entry.nameKeys = BuildAssetNameKeys(entry.name);
+                            localKeySets.push_back(entry.nameKeys);
+                        }
+                    }
                     const long long elapsedMs = ElapsedMilliseconds(parseStart);
 
                     std::lock_guard<std::mutex> lock(stateMutex);
@@ -1180,7 +1213,7 @@ namespace DagorAssetsExtractor::AssetIndex
                             std::make_move_iterator(localEntries.end()));
                         for (size_t i = before; i < grpEntries.size(); ++i)
                         {
-                            AddIndexKeys<LightweightGrpEntry>(grpIndex, grpEntries[i].name, i);
+                            AddPrecomputedIndexKeys(grpIndex, localKeySets[i - before], i);
                         }
                         ++result.grpPacksParsed;
                     }
@@ -1267,6 +1300,16 @@ namespace DagorAssetsExtractor::AssetIndex
                     std::vector<LightweightDxpEntry> localEntries;
                     std::string error;
                     const bool parsed = ParseDxpMetadataForLinking(record.path, localEntries, error);
+                    std::vector<std::vector<std::string>> localKeySets;
+                    if (parsed)
+                    {
+                        localKeySets.reserve(localEntries.size());
+                        for (LightweightDxpEntry& entry : localEntries)
+                        {
+                            entry.nameKeys = BuildAssetNameKeys(entry.name);
+                            localKeySets.push_back(entry.nameKeys);
+                        }
+                    }
                     const long long elapsedMs = ElapsedMilliseconds(parseStart);
 
                     std::lock_guard<std::mutex> lock(stateMutex);
@@ -1279,7 +1322,7 @@ namespace DagorAssetsExtractor::AssetIndex
                             std::make_move_iterator(localEntries.end()));
                         for (size_t i = before; i < dxpEntries.size(); ++i)
                         {
-                            AddIndexKeys<LightweightDxpEntry>(dxpIndex, dxpEntries[i].name, i);
+                            AddPrecomputedIndexKeys(dxpIndex, localKeySets[i - before], i);
                         }
                         ++result.dxpPacksParsed;
                     }
@@ -1350,15 +1393,22 @@ namespace DagorAssetsExtractor::AssetIndex
             return !result.canceled;
         }
 
+        struct CachedEntryKeys
+        {
+            std::vector<std::string> nameKeys;
+            std::vector<std::string> dynModelKeys;
+        };
+
         const LightweightGrpEntry* FindBestGrpEntry(
             const SubAssetRecord& descriptorEntry,
             const fs::path& descriptorPath,
             const std::vector<LightweightGrpEntry>& entries,
-            const std::unordered_map<std::string, std::vector<size_t>>& index)
+            const std::unordered_map<std::string, std::vector<size_t>>& index,
+            const CachedEntryKeys& keys)
         {
             std::vector<size_t> candidates;
-            auto addCandidates = [&](std::string_view name) {
-                for (const std::string& key : BuildAssetNameKeys(name))
+            auto addCandidates = [&](const std::vector<std::string>& nameKeys) {
+                for (const std::string& key : nameKeys)
                 {
                     if (const auto it = index.find(key); it != index.end())
                     {
@@ -1373,10 +1423,10 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
             };
 
-            addCandidates(descriptorEntry.name);
-            if (!descriptorEntry.dynModelName.empty())
+            addCandidates(keys.nameKeys);
+            if (!keys.dynModelKeys.empty())
             {
-                addCandidates(descriptorEntry.dynModelName);
+                addCandidates(keys.dynModelKeys);
             }
 
             const bool descriptorIsDynModel =
@@ -1395,11 +1445,11 @@ namespace DagorAssetsExtractor::AssetIndex
 
                 const LightweightGrpEntry& entry = entries[candidate];
                 int score = CommonPathScore(descriptorPath, entry.path);
-                if (NamesMatch(entry.name, descriptorEntry.name))
+                if (NameKeysIntersect(entry.nameKeys, keys.nameKeys))
                 {
                     score += 100;
                 }
-                if (!descriptorEntry.dynModelName.empty() && NamesMatch(entry.name, descriptorEntry.dynModelName))
+                if (!keys.dynModelKeys.empty() && NameKeysIntersect(entry.nameKeys, keys.dynModelKeys))
                 {
                     score += 120;
                 }
@@ -1434,10 +1484,11 @@ namespace DagorAssetsExtractor::AssetIndex
             const DescriptorResourceLink& link,
             std::string_view textureName,
             const std::vector<LightweightDxpEntry>& entries,
-            const std::unordered_map<std::string, std::vector<size_t>>& index)
+            const std::unordered_map<std::string, std::vector<size_t>>& index,
+            const std::vector<std::string>& textureKeys)
         {
             std::vector<size_t> candidates;
-            for (const std::string& key : BuildAssetNameKeys(textureName))
+            for (const std::string& key : textureKeys)
             {
                 if (const auto it = index.find(key); it != index.end())
                 {
@@ -1462,7 +1513,7 @@ namespace DagorAssetsExtractor::AssetIndex
 
                 const LightweightDxpEntry& entry = entries[candidate];
                 int score = 0;
-                if (NamesMatch(entry.name, textureName))
+                if (NameKeysIntersect(entry.nameKeys, textureKeys))
                 {
                     score += 100;
                 }
@@ -1828,6 +1879,17 @@ namespace DagorAssetsExtractor::AssetIndex
             }
         }
 
+        // 1. Pre-calculate GRP search keys for all descriptor entries to avoid redundant string normalization/allocation
+        std::vector<CachedEntryKeys> descriptorKeys(descriptorEntries.size());
+        for (size_t i = 0; i < descriptorEntries.size(); ++i)
+        {
+            descriptorKeys[i].nameKeys = BuildAssetNameKeys(descriptorEntries[i].second.name);
+            if (!descriptorEntries[i].second.dynModelName.empty())
+            {
+                descriptorKeys[i].dynModelKeys = BuildAssetNameKeys(descriptorEntries[i].second.dynModelName);
+            }
+        }
+
         std::vector<LightweightGrpEntry> grpEntries;
         std::unordered_map<std::string, std::vector<size_t>> grpIndex;
         grpEntries.reserve(grpRecords.size() * 8);
@@ -1853,8 +1915,9 @@ namespace DagorAssetsExtractor::AssetIndex
         std::vector<std::string> focusedTextureNames;
         if (focusRecord != nullptr)
         {
-            for (const auto& [descriptorPath, descriptorEntry] : descriptorEntries)
+            for (size_t entryIndex = 0; entryIndex < descriptorEntries.size(); ++entryIndex)
             {
+                const auto& [descriptorPath, descriptorEntry] = descriptorEntries[entryIndex];
                 bool matchesFocus = false;
                 if (focusRecord->type == AssetType::Descriptor)
                 {
@@ -1862,7 +1925,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
                 else if (focusRecord->type == AssetType::Grp)
                 {
-                    if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex))
+                    if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex, descriptorKeys[entryIndex]))
                     {
                         matchesFocus = SamePath(grpMatch->path, focusRecord->path);
                     }
@@ -1952,72 +2015,149 @@ namespace DagorAssetsExtractor::AssetIndex
             return result;
         }
 
-        for (const auto& [descriptorPath, descriptorEntry] : descriptorEntries)
+        // 2. Pre-calculate DXP search keys for all unique texture names referenced by descriptors
+        std::unordered_map<std::string, std::vector<std::string>> textureNameKeys;
+        for (const auto& [path, entry] : descriptorEntries)
         {
-            DescriptorResourceLink link;
-            link.descriptorPath = descriptorPath;
-            link.resourceName = descriptorEntry.name;
-            link.resId = descriptorEntry.resId;
-            link.textureNames = descriptorEntry.textureNames;
-            link.materialNames = descriptorEntry.materialNames;
-            link.materialDomains = descriptorEntry.materialDomains;
-            link.materialShaderClasses = descriptorEntry.materialShaderClasses;
-            link.materialTextureRefs = descriptorEntry.dependencyIds;
-            link.materialTextureBindings = descriptorEntry.materialTextureRefs;
-
-            if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex))
+            for (const std::string& texName : entry.textureNames)
             {
-                link.matchedGrpPath = grpMatch->path;
-                link.matchedGrpEntryName = grpMatch->name;
-                link.matchedGrpClassId = grpMatch->classId;
-                link.matchedGrpClassName = grpMatch->className;
-                link.matchedGrpEntryCanExportStaticModel = grpMatch->canExportStaticModel;
-                link.matchedGrpEntryCanExportSkinnedModel = grpMatch->canExportSkinnedModel;
+                textureNameKeys.emplace(texName, std::vector<std::string>());
             }
+        }
+        for (auto& [texName, keys] : textureNameKeys)
+        {
+            keys = BuildAssetNameKeys(texName);
+        }
 
-            for (const uint32_t textureIndex : BuildTextureIndices(descriptorEntry))
+        const size_t workerCount = DescriptorIndexWorkerCount(descriptorEntries.size());
+        std::atomic<size_t> nextIndex{ 0 };
+        std::atomic<size_t> linksDone{ 0 };
+        std::mutex resultsMutex;
+
+        std::vector<std::vector<DescriptorResourceLink>> threadLinks(workerCount);
+        std::vector<std::vector<std::string>> threadWarnings(workerCount);
+        std::atomic<bool> linkingCancelRequested{ false };
+
+        auto linkingWorker = [&](size_t threadId) {
+            std::vector<DescriptorResourceLink>& localLinks = threadLinks[threadId];
+            std::vector<std::string>& localWarnings = threadWarnings[threadId];
+
+            while (!linkingCancelRequested.load(std::memory_order_relaxed))
             {
-                if (textureIndex >= descriptorEntry.textureNames.size())
+                const size_t entryIndex = nextIndex.fetch_add(1, std::memory_order_relaxed);
+                if (entryIndex >= descriptorEntries.size())
                 {
-                    std::ostringstream warning;
-                    warning << "Descriptor " << Platform::PathToUtf8(descriptorPath.filename())
-                            << " resource " << descriptorEntry.name
-                            << " references missing texture index " << textureIndex << '.';
-                    AddWarning(result, warning.str());
+                    break;
+                }
+
+                const auto& [descriptorPath, descriptorEntry] = descriptorEntries[entryIndex];
+                DescriptorResourceLink link;
+                link.descriptorPath = descriptorPath;
+                link.resourceName = descriptorEntry.name;
+                link.resId = descriptorEntry.resId;
+                link.textureNames = descriptorEntry.textureNames;
+                link.materialNames = descriptorEntry.materialNames;
+                link.materialDomains = descriptorEntry.materialDomains;
+                link.materialShaderClasses = descriptorEntry.materialShaderClasses;
+                link.materialTextureRefs = descriptorEntry.dependencyIds;
+                link.materialTextureBindings = descriptorEntry.materialTextureRefs;
+
+                if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex, descriptorKeys[entryIndex]))
+                {
+                    link.matchedGrpPath = grpMatch->path;
+                    link.matchedGrpEntryName = grpMatch->name;
+                    link.matchedGrpClassId = grpMatch->classId;
+                    link.matchedGrpClassName = grpMatch->className;
+                    link.matchedGrpEntryCanExportStaticModel = grpMatch->canExportStaticModel;
+                    link.matchedGrpEntryCanExportSkinnedModel = grpMatch->canExportSkinnedModel;
+                }
+
+                for (const uint32_t textureIndex : BuildTextureIndices(descriptorEntry))
+                {
+                    if (textureIndex >= descriptorEntry.textureNames.size())
+                    {
+                        std::ostringstream warning;
+                        warning << "Descriptor " << Platform::PathToUtf8(descriptorPath.filename())
+                                << " resource " << descriptorEntry.name
+                                << " references missing texture index " << textureIndex << '.';
+                        localWarnings.push_back(warning.str());
+                        continue;
+                    }
+
+                    DescriptorTextureLink textureLink;
+                    textureLink.textureIndex = textureIndex;
+                    textureLink.textureName = descriptorEntry.textureNames[textureIndex];
+
+                    const auto keysIt = textureNameKeys.find(textureLink.textureName);
+                    std::vector<std::string> fallbackTextureKeys;
+                    const std::vector<std::string>* textureKeys =
+                        keysIt != textureNameKeys.end() ? &keysIt->second : nullptr;
+                    if (textureKeys == nullptr)
+                    {
+                        fallbackTextureKeys = BuildAssetNameKeys(textureLink.textureName);
+                        textureKeys = &fallbackTextureKeys;
+                    }
+
+                    if (const LightweightDxpEntry* dxpMatch = FindBestDxpEntry(link, textureLink.textureName, dxpEntries, dxpIndex, *textureKeys))
+                    {
+                        textureLink.matchedDxpPath = dxpMatch->path;
+                        textureLink.matchedDxpEntryName = dxpMatch->name;
+                    }
+
+                    link.textureLinks.push_back(std::move(textureLink));
+                }
+
+                if (!LinkMatchesFocus(link, focusRecord))
+                {
                     continue;
                 }
 
-                DescriptorTextureLink textureLink;
-                textureLink.textureIndex = textureIndex;
-                textureLink.textureName = descriptorEntry.textureNames[textureIndex];
+                localLinks.push_back(std::move(link));
 
-                if (const LightweightDxpEntry* dxpMatch = FindBestDxpEntry(link, textureLink.textureName, dxpEntries, dxpIndex))
+                const size_t completed = linksDone.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (completed % 250 == 0)
                 {
-                    textureLink.matchedDxpPath = dxpMatch->path;
-                    textureLink.matchedDxpEntryName = dxpMatch->name;
+                    if (!ReportDescriptorProgress(
+                            result,
+                            options,
+                            "Linking",
+                            std::to_string(completed) + " descriptor resources linked",
+                            workDone,
+                            totalWork))
+                    {
+                        linkingCancelRequested.store(true, std::memory_order_relaxed);
+                    }
                 }
-
-                link.textureLinks.push_back(std::move(textureLink));
             }
+        };
 
-            if (!LinkMatchesFocus(link, focusRecord))
-            {
-                continue;
-            }
+        std::vector<std::thread> workers;
+        workers.reserve(workerCount);
+        for (size_t i = 0; i < workerCount; ++i)
+        {
+            workers.emplace_back(linkingWorker, i);
+        }
+        for (std::thread& thread : workers)
+        {
+            thread.join();
+        }
 
-            result.links.push_back(std::move(link));
-            if (result.links.size() % 250 == 0)
+        if (linkingCancelRequested.load())
+        {
+            result.canceled = true;
+            return result;
+        }
+
+        for (size_t i = 0; i < workerCount; ++i)
+        {
+            result.links.insert(
+                result.links.end(),
+                std::make_move_iterator(threadLinks[i].begin()),
+                std::make_move_iterator(threadLinks[i].end()));
+
+            for (const std::string& warning : threadWarnings[i])
             {
-                if (!ReportDescriptorProgress(
-                        result,
-                        options,
-                        "Linking",
-                        std::to_string(result.links.size()) + " descriptor resources linked",
-                        workDone,
-                        totalWork))
-                {
-                    return result;
-                }
+                AddWarning(result, warning);
             }
         }
 

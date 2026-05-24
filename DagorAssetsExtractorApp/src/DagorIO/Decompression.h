@@ -17,6 +17,10 @@ public:
     static std::vector<uint8_t> DecompressZstd(std::span<const uint8_t> compressedData, size_t uncompressedSize);
     static std::vector<uint8_t> DecompressZstd(std::span<const uint8_t> compressedData);
 
+    // LZMA decompression
+    static std::vector<uint8_t> DecompressLzma(std::span<const uint8_t> compressedData, size_t uncompressedSize);
+    static std::vector<uint8_t> DecompressLzma(std::span<const uint8_t> compressedData);
+
     // Oodle decompression (requires loading DLL from game folder)
     static std::vector<uint8_t> DecompressOodle(
         std::span<const uint8_t> compressedData,

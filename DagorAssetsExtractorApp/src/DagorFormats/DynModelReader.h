@@ -33,7 +33,11 @@ public:
     void Parse();
 
     const std::vector<DynModelMesh>& GetLods() const { return m_lods; }
+    const std::vector<InternalMaterial>& GetInternalMaterials() const { return m_internalMaterials; }
+    const std::vector<std::string>& GetTextureNames() const { return m_internalTextures; }
+    void SetExternalTextureNames(std::vector<std::string> textureNames) { m_externalTextures = std::move(textureNames); }
     const std::vector<std::string>& GetDiagnostics() const { return m_diagnostics; }
+    bool UsesExternalMaterialTextureCounts() const { return m_usesExternalMaterialTextureCounts; }
 
     // Returns the size of the container header that was stripped before the mesh data.
     // Only valid after a successful Parse() of a real GRP payload.
@@ -52,6 +56,10 @@ private:
     std::vector<uint8_t> m_decompressedPayload;
     std::vector<std::string> m_diagnostics;
     size_t m_containerHeaderSize = 0;
+    bool m_usesExternalMaterialTextureCounts = false;
+    std::vector<InternalMaterial> m_internalMaterials;
+    std::vector<std::string> m_internalTextures;
+    std::vector<std::string> m_externalTextures;
 };
 
 } // namespace DagorFormats

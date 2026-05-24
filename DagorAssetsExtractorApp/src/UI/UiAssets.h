@@ -25,6 +25,7 @@ namespace DagorAssetsExtractor::UI
         Anim2Data,
         Character,
         AnimGraph,
+        Patreon,
         Count
     };
 

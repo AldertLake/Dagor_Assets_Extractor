@@ -3,6 +3,7 @@
 #include "Platform/Platform.h"
 #include "Export/ExportManifest.h"
 #include "DagorIO/Decompression.h"
+#include "DirectXTex.h"
 
 #include <objbase.h>
 #include <wincodec.h>
@@ -1371,6 +1372,145 @@ namespace DagorAssetsExtractor::Export
             return false;
         }
 
+        bool DecodeRasterWithDirectXTex(
+            std::span<const uint8_t> ddsData,
+            RasterImage& image,
+            std::string& error)
+        {
+            DirectX::TexMetadata metadata = {};
+            DirectX::ScratchImage loadedImage;
+            HRESULT hr = DirectX::LoadFromDDSMemory(
+                reinterpret_cast<const std::byte*>(ddsData.data()),
+                ddsData.size(),
+                DirectX::DDS_FLAGS_NONE,
+                &metadata,
+                loadedImage);
+            if (FAILED(hr))
+            {
+                error = "DirectXTex could not load the reconstructed DDS payload (" + FormatHresult(hr) + ").";
+                return false;
+            }
+
+            const DirectX::Image* workingImages = loadedImage.GetImages();
+            size_t workingImageCount = loadedImage.GetImageCount();
+            const DirectX::TexMetadata* workingMetadata = &metadata;
+            DirectX::ScratchImage decompressedImage;
+
+            if (DirectX::IsCompressed(workingMetadata->format))
+            {
+                hr = DirectX::Decompress(
+                    workingImages,
+                    workingImageCount,
+                    *workingMetadata,
+                    DXGI_FORMAT_UNKNOWN,
+                    decompressedImage);
+                if (FAILED(hr))
+                {
+                    error = "DirectXTex could not decompress the DDS payload (" + FormatHresult(hr) + ").";
+                    return false;
+                }
+
+                workingImages = decompressedImage.GetImages();
+                workingImageCount = decompressedImage.GetImageCount();
+                workingMetadata = &decompressedImage.GetMetadata();
+            }
+
+            DirectX::ScratchImage convertedImage;
+            const DXGI_FORMAT targetFormat = DirectX::IsSRGB(workingMetadata->format)
+                ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+                : DXGI_FORMAT_R8G8B8A8_UNORM;
+
+            if (workingMetadata->format != targetFormat)
+            {
+                hr = DirectX::Convert(
+                    workingImages,
+                    workingImageCount,
+                    *workingMetadata,
+                    targetFormat,
+                    DirectX::TEX_FILTER_DEFAULT,
+                    DirectX::TEX_THRESHOLD_DEFAULT,
+                    convertedImage);
+                if (FAILED(hr))
+                {
+                    error = "DirectXTex could not convert the image to RGBA8 (" + FormatHresult(hr) + ").";
+                    return false;
+                }
+
+                workingImages = convertedImage.GetImages();
+                workingImageCount = convertedImage.GetImageCount();
+                workingMetadata = &convertedImage.GetMetadata();
+            }
+
+            const DirectX::Image* topImage = workingImages;
+            if (topImage == nullptr || workingImageCount == 0)
+            {
+                error = "DirectXTex returned no image data for readable export.";
+                return false;
+            }
+
+            if (topImage->pixels == nullptr || topImage->width == 0 || topImage->height == 0)
+            {
+                error = "DirectXTex returned an empty image for readable export.";
+                return false;
+            }
+
+            const bool isRgba8 =
+                topImage->format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+                topImage->format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+            const bool isBgra8 =
+                topImage->format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+                topImage->format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+            if (!isRgba8 && !isBgra8)
+            {
+                error = "DirectXTex conversion did not produce an RGBA8/BGRA8 image.";
+                return false;
+            }
+
+            const uint64_t expectedStride = static_cast<uint64_t>(topImage->width) * 4ull;
+            if (topImage->rowPitch < expectedStride ||
+                expectedStride > std::numeric_limits<uint32_t>::max())
+            {
+                error = "DirectXTex returned an unexpected row pitch for readable export.";
+                return false;
+            }
+
+            const uint64_t totalBytes = expectedStride * static_cast<uint64_t>(topImage->height);
+            if (totalBytes > std::numeric_limits<size_t>::max())
+            {
+                error = "DirectXTex readable export image is too large.";
+                return false;
+            }
+
+            image.width = static_cast<uint32_t>(topImage->width);
+            image.height = static_cast<uint32_t>(topImage->height);
+            image.stride = static_cast<uint32_t>(expectedStride);
+            image.format = RasterPixelFormat::Bgra8;
+            image.pixels.resize(static_cast<size_t>(totalBytes));
+
+            for (size_t row = 0; row < topImage->height; ++row)
+            {
+                const uint8_t* src = topImage->pixels + row * topImage->rowPitch;
+                uint8_t* dst = image.pixels.data() + row * image.stride;
+                if (isBgra8)
+                {
+                    std::memcpy(dst, src, image.stride);
+                    continue;
+                }
+
+                for (size_t x = 0; x < topImage->width; ++x)
+                {
+                    const size_t srcOffset = x * 4;
+                    const size_t dstOffset = x * 4;
+                    dst[dstOffset + 0] = src[srcOffset + 2];
+                    dst[dstOffset + 1] = src[srcOffset + 1];
+                    dst[dstOffset + 2] = src[srcOffset + 0];
+                    dst[dstOffset + 3] = src[srcOffset + 3];
+                }
+            }
+
+            return true;
+        }
+
         bool WriteRawDdsx(
             const std::filesystem::path& outputPath,
             std::span<const uint8_t> header,
@@ -1608,11 +1748,7 @@ namespace DagorAssetsExtractor::Export
                     }
                     else if (header.compressionType == 4) // LZMA/7zip
                     {
-                        const std::string reason =
-                            "LZMA/7zip DDSx decompression is not supported yet. " +
-                            BuildDdsxDiagnostic(header, packPayload.size());
-                        ExportRawDdsxFallback(result, packPath, entry, options, header, packPayload, reason);
-                        return result;
+                        payload = DagorIO::Decompressor::DecompressLzma(compressedData, header.memorySize);
                     }
                     else
                     {
@@ -1737,70 +1873,80 @@ namespace DagorAssetsExtractor::Export
 
             if (normalizedFormat != "DDS")
             {
+                std::filesystem::path outputPath;
+                if (!prepareOutputPath(TextureFormatExtension(normalizedFormat), outputPath))
+                {
+                    return result;
+                }
+
+                auto finalizeReadableSuccess = [&]() {
+                    result.success = true;
+                    result.outputPath = outputPath;
+
+                    if (exportHeader.mipCount > 1)
+                    {
+                        result.warnings.push_back(std::string(normalizedFormat) + " export writes only the top mip level.");
+                    }
+
+                    ExportManifest manifest;
+                    manifest.sourcePack = Platform::PathToUtf8(packPath.filename());
+                    manifest.sourceResource = entry.name;
+                    manifest.assetType = "Texture (" + normalizedFormat + ")";
+                    manifest.outputFiles.push_back(Platform::PathToUtf8(outputPath.filename()));
+                    manifest.appVersion = "0.1.0-alpha";
+                    manifest.formatDecoderVersion = "DdsxReader v1.0";
+                    manifest.skipWrite = !options.exportJsonManifest;
+
+                    for (const std::string& warning : result.warnings)
+                    {
+                        manifest.decodeWarnings.push_back(warning);
+                    }
+
+                    std::filesystem::path manifestPath = outputPath;
+                    manifestPath.replace_extension(".export-manifest.json");
+                    if (!manifest.WriteToFile(manifestPath))
+                    {
+                        result.warnings.push_back("Could not write export manifest.");
+                    }
+                };
+
                 RasterImage image;
                 std::string readableError;
-                if (DecodeTopMipToRaster(exportHeader, payload, image, readableError))
+                if (DecodeTopMipToRaster(exportHeader, payload, image, readableError) &&
+                    WriteReadableImage(outputPath, image, normalizedFormat, readableError))
                 {
-                    std::filesystem::path outputPath;
-                    if (!prepareOutputPath(TextureFormatExtension(normalizedFormat), outputPath))
-                    {
-                        return result;
-                    }
-
-                    if (WriteReadableImage(outputPath, image, normalizedFormat, readableError))
-                    {
-                        result.success = true;
-                        result.outputPath = outputPath;
-
-                        if (exportHeader.mipCount > 1)
-                        {
-                            result.warnings.push_back(std::string(normalizedFormat) + " export writes only the top mip level.");
-                        }
-
-                        ExportManifest manifest;
-                        manifest.sourcePack = Platform::PathToUtf8(packPath.filename());
-                        manifest.sourceResource = entry.name;
-                        manifest.assetType = "Texture (" + normalizedFormat + ")";
-                        manifest.outputFiles.push_back(Platform::PathToUtf8(outputPath.filename()));
-                        manifest.appVersion = "0.1.0-alpha";
-                        manifest.formatDecoderVersion = "DdsxReader v1.0";
-                        manifest.skipWrite = !options.exportJsonManifest;
-
-                        for (const std::string& warning : result.warnings)
-                        {
-                            manifest.decodeWarnings.push_back(warning);
-                        }
-
-                        std::filesystem::path manifestPath = outputPath;
-                        manifestPath.replace_extension(".export-manifest.json");
-                        if (!manifest.WriteToFile(manifestPath))
-                        {
-                            result.warnings.push_back("Could not write export manifest.");
-                        }
-
-                        return result;
-                    }
-
-                    if (!options.preserveOriginalDDS)
-                    {
-                        result.error = readableError;
-                        return result;
-                    }
-
-                    result.warnings.push_back(
-                        "Requested " + normalizedFormat + " export failed (" + readableError + "). Falling back to DDS.");
+                    finalizeReadableSuccess();
+                    return result;
                 }
-                else if (!options.preserveOriginalDDS)
+
+                std::vector<uint8_t> ddsData;
+                std::string directXTexError;
+                RasterImage directXTexImage;
+                if (BuildDdsBuffer(exportHeader, payload, ddsData, directXTexError) &&
+                    DecodeRasterWithDirectXTex(ddsData, directXTexImage, directXTexError) &&
+                    WriteReadableImage(outputPath, directXTexImage, normalizedFormat, directXTexError))
+                {
+                    result.warnings.push_back("Readable export transcoded via DirectXTex.");
+                    finalizeReadableSuccess();
+                    return result;
+                }
+
+                if (!directXTexError.empty())
+                {
+                    readableError = readableError.empty()
+                        ? directXTexError
+                        : (readableError + " DirectXTex fallback also failed: " + directXTexError);
+                }
+
+                if (!options.preserveOriginalDDS)
                 {
                     result.error = readableError;
                     return result;
                 }
-                else
-                {
-                    result.warnings.push_back(
-                        "Requested " + normalizedFormat + " export is unavailable for this DDSx texture. " +
-                        readableError + " Falling back to DDS.");
-                }
+
+                result.warnings.push_back(
+                    "Requested " + normalizedFormat + " export is unavailable for this DDSx texture. " +
+                    readableError + " Falling back to DDS.");
             }
 
             std::filesystem::path outputPath;
@@ -1921,19 +2067,12 @@ namespace DagorAssetsExtractor::Export
         return batch;
     }
 
-    bool TextureExporter::WriteDds(
-        const std::filesystem::path& outputPath,
+    bool TextureExporter::BuildDdsBuffer(
         const DagorFormats::DdsxHeader& header,
         const std::vector<uint8_t>& payload,
+        std::vector<uint8_t>& ddsData,
         std::string& error)
     {
-        std::ofstream out(outputPath, std::ios::binary);
-        if (!out)
-        {
-            error = "Could not open output file for writing.";
-            return false;
-        }
-
         DdsHeader dds;
         dds.flags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT;
         dds.width = header.width;
@@ -1963,17 +2102,14 @@ namespace DagorAssetsExtractor::Export
             dds.caps |= DDSCAPS_COMPLEX | DDSCAPS_MIPMAP;
         }
 
-        bool useDX10 = NeedsDX10Header(header.d3dFormat);
-
+        const bool useDX10 = NeedsDX10Header(header.d3dFormat);
         if (useDX10)
         {
-            // Use DX10 extended header for formats without legacy FourCC
             dds.ddspf.flags = DDPF_FOURCC;
             dds.ddspf.fourCC = DX10_FOURCC;
         }
         else
         {
-            // Legacy FourCC mapping
             uint32_t fourCC = 0;
             switch (header.d3dFormat)
             {
@@ -1982,16 +2118,12 @@ namespace DagorAssetsExtractor::Export
             case 894720068: fourCC = 0x35545844; break; // DXT5
             case 826889281: fourCC = 0x31495441; break; // ATI1
             case 843666497: fourCC = 0x32495441; break; // ATI2
-
-            // DXGI formats that can be mapped to FourCC
             case 71: case 72: fourCC = 0x31545844; break; // BC1
             case 74: case 75: fourCC = 0x33545844; break; // BC2
             case 77: case 78: fourCC = 0x35545844; break; // BC3
             case 80: case 81: fourCC = 0x31495441; break; // BC4
             case 83: case 84: fourCC = 0x32495441; break; // BC5
-
             default:
-                // Fallback for RGBA8
                 if (header.d3dFormat == 28 || header.d3dFormat == 29)
                 {
                     dds.ddspf.flags = DDPF_RGB | DDPF_ALPHAPIXELS;
@@ -2013,12 +2145,19 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
-        // Write DDS magic
-        out.write(reinterpret_cast<const char*>(&DDS_MAGIC), 4);
-        // Write 124-byte DDS header
-        out.write(reinterpret_cast<const char*>(&dds), sizeof(dds));
+        const size_t totalSize =
+            sizeof(DDS_MAGIC) +
+            sizeof(DdsHeader) +
+            (useDX10 ? sizeof(DdsHeaderDX10) : 0) +
+            payload.size();
+        ddsData.resize(totalSize);
 
-        // Write DX10 extended header if needed
+        uint8_t* cursor = ddsData.data();
+        std::memcpy(cursor, &DDS_MAGIC, sizeof(DDS_MAGIC));
+        cursor += sizeof(DDS_MAGIC);
+        std::memcpy(cursor, &dds, sizeof(dds));
+        cursor += sizeof(dds);
+
         if (useDX10)
         {
             DdsHeaderDX10 dx10;
@@ -2027,11 +2166,37 @@ namespace DagorAssetsExtractor::Export
             dx10.miscFlag = 0;
             dx10.arraySize = 1;
             dx10.miscFlags2 = 0;
-            out.write(reinterpret_cast<const char*>(&dx10), sizeof(dx10));
+            std::memcpy(cursor, &dx10, sizeof(dx10));
+            cursor += sizeof(dx10);
         }
 
-        // Write pixel data
-        out.write(reinterpret_cast<const char*>(payload.data()), payload.size());
+        if (!payload.empty())
+        {
+            std::memcpy(cursor, payload.data(), payload.size());
+        }
+
+        return true;
+    }
+
+    bool TextureExporter::WriteDds(
+        const std::filesystem::path& outputPath,
+        const DagorFormats::DdsxHeader& header,
+        const std::vector<uint8_t>& payload,
+        std::string& error)
+    {
+        std::vector<uint8_t> ddsData;
+        if (!BuildDdsBuffer(header, payload, ddsData, error))
+        {
+            return false;
+        }
+
+        std::ofstream out(outputPath, std::ios::binary);
+        if (!out)
+        {
+            error = "Could not open output file for writing.";
+            return false;
+        }
+        out.write(reinterpret_cast<const char*>(ddsData.data()), static_cast<std::streamsize>(ddsData.size()));
 
         if (!out)
         {

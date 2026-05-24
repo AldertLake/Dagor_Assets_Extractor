@@ -16,6 +16,125 @@ namespace DagorAssetsExtractor::Export
 {
     namespace
     {
+        struct Tangent4
+        {
+            float x, y, z, w;
+        };
+
+        template <typename TVertex>
+        std::vector<Tangent4> ComputeTangents(const std::vector<TVertex>& vertices, const std::vector<uint32_t>& indices)
+        {
+            if (vertices.empty()) return {};
+
+            std::vector<std::array<float, 3>> tan1(vertices.size(), {0.0f, 0.0f, 0.0f});
+            std::vector<std::array<float, 3>> tan2(vertices.size(), {0.0f, 0.0f, 0.0f});
+
+            for (size_t i = 0; i + 2 < indices.size(); i += 3)
+            {
+                uint32_t i0 = indices[i];
+                uint32_t i1 = indices[i + 1];
+                uint32_t i2 = indices[i + 2];
+
+                if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size())
+                    continue;
+
+                const auto& v0 = vertices[i0];
+                const auto& v1 = vertices[i1];
+                const auto& v2 = vertices[i2];
+
+                float x1 = v1.x - v0.x;
+                float x2 = v2.x - v0.x;
+                float y1 = v1.y - v0.y;
+                float y2 = v2.y - v0.y;
+                float z1 = v1.z - v0.z;
+                float z2 = v2.z - v0.z;
+
+                float s1 = v1.u - v0.u;
+                float s2 = v2.u - v0.u;
+                float t1 = v1.v - v0.v;
+                float t2 = v2.v - v0.v;
+
+                float r = (s1 * t2 - s2 * t1);
+                float dirX = 1.0f, dirY = 0.0f, dirZ = 0.0f;
+                float sdirX = 0.0f, sdirY = 1.0f, sdirZ = 0.0f;
+
+                if (std::fabs(r) > 1e-12f)
+                {
+                    float div = 1.0f / r;
+                    dirX = (t2 * x1 - t1 * x2) * div;
+                    dirY = (t2 * y1 - t1 * y2) * div;
+                    dirZ = (t2 * z1 - t1 * z2) * div;
+
+                    sdirX = (s1 * x2 - s2 * x1) * div;
+                    sdirY = (s1 * y2 - s2 * y1) * div;
+                    sdirZ = (s1 * z2 - s2 * z1) * div;
+                }
+
+                tan1[i0][0] += dirX; tan1[i0][1] += dirY; tan1[i0][2] += dirZ;
+                tan1[i1][0] += dirX; tan1[i1][1] += dirY; tan1[i1][2] += dirZ;
+                tan1[i2][0] += dirX; tan1[i2][1] += dirY; tan1[i2][2] += dirZ;
+
+                tan2[i0][0] += sdirX; tan2[i0][1] += sdirY; tan2[i0][2] += sdirZ;
+                tan2[i1][0] += sdirX; tan2[i1][1] += sdirY; tan2[i1][2] += sdirZ;
+                tan2[i2][0] += sdirX; tan2[i2][1] += sdirY; tan2[i2][2] += sdirZ;
+            }
+
+            std::vector<Tangent4> tangents(vertices.size());
+            for (size_t i = 0; i < vertices.size(); ++i)
+            {
+                const auto& v = vertices[i];
+                float nx = v.nx;
+                float ny = v.ny;
+                float nz = v.nz;
+
+                float lenN = std::sqrt(nx * nx + ny * ny + nz * nz);
+                if (lenN > 1e-6f) { nx /= lenN; ny /= lenN; nz /= lenN; }
+
+                float t[3] = { tan1[i][0], tan1[i][1], tan1[i][2] };
+
+                float dot = nx * t[0] + ny * t[1] + nz * t[2];
+                float orthoX = t[0] - dot * nx;
+                float orthoY = t[1] - dot * ny;
+                float orthoZ = t[2] - dot * nz;
+
+                float lenT = std::sqrt(orthoX * orthoX + orthoY * orthoY + orthoZ * orthoZ);
+                if (lenT > 1e-6f)
+                {
+                    orthoX /= lenT;
+                    orthoY /= lenT;
+                    orthoZ /= lenT;
+                }
+                else
+                {
+                    if (std::fabs(nx) > 0.9f)
+                    {
+                        orthoX = 0.0f; orthoY = 1.0f; orthoZ = 0.0f;
+                    }
+                    else
+                    {
+                        orthoX = 1.0f; orthoY = 0.0f; orthoZ = 0.0f;
+                    }
+                    float dotF = nx * orthoX + ny * orthoY + nz * orthoZ;
+                    orthoX -= dotF * nx;
+                    orthoY -= dotF * ny;
+                    orthoZ -= dotF * nz;
+                    float lenF = std::sqrt(orthoX * orthoX + orthoY * orthoY + orthoZ * orthoZ);
+                    if (lenF > 1e-6f) { orthoX /= lenF; orthoY /= lenF; orthoZ /= lenF; }
+                }
+
+                float crossX = ny * orthoZ - nz * orthoY;
+                float crossY = nz * orthoX - nx * orthoZ;
+                float crossZ = nx * orthoY - ny * orthoX;
+
+                float dotB = crossX * tan2[i][0] + crossY * tan2[i][1] + crossZ * tan2[i][2];
+                float w = (dotB < 0.0f) ? -1.0f : 1.0f;
+
+                tangents[i] = { orthoX, orthoY, orthoZ, w };
+            }
+
+            return tangents;
+        }
+
         std::string JsonEscape(std::string_view value)
         {
             std::ostringstream escaped;
@@ -461,7 +580,8 @@ namespace DagorAssetsExtractor::Export
             {
                 return false;
             }
-            return !selection.materials[remapIt->second].diffuseTexturePath.empty();
+            return !selection.materials[remapIt->second].diffuseTexturePath.empty() ||
+                   !selection.materials[remapIt->second].normalTexturePath.empty();
         }
 
         template <typename TMesh>
@@ -562,9 +682,15 @@ namespace DagorAssetsExtractor::Export
             bool embedded = false;
         };
 
+        struct MaterialTextureIndices
+        {
+            int diffuseIndex = -1;
+            int normalIndex = -1;
+        };
+
         struct GlbTextureSections
         {
-            std::vector<int> materialTextureIndices;
+            std::vector<MaterialTextureIndices> materialTextureIndices;
             std::vector<GlbImageInfo> images;
             size_t embeddedImageCount = 0;
         };
@@ -576,36 +702,35 @@ namespace DagorAssetsExtractor::Export
             std::ostream& debugLog)
         {
             GlbTextureSections sections;
-            sections.materialTextureIndices.assign(materials.size(), -1);
+            sections.materialTextureIndices.resize(materials.size());
 
             std::unordered_map<std::string, int> textureIndexByKey;
-            for (size_t i = 0; i < materials.size(); ++i)
-            {
-                const MaterialInfo& material = materials[i];
-                if (material.diffuseTexturePath.empty())
+
+            auto getOrAddTexture = [&](const std::string& texturePath, const std::filesystem::path& sourcePath) -> int {
+                if (texturePath.empty())
                 {
-                    continue;
+                    return -1;
                 }
 
-                const std::string dedupeKey = !material.diffuseTextureSourcePath.empty()
-                    ? ("source:" + material.diffuseTextureSourcePath.lexically_normal().generic_string())
-                    : ("uri:" + material.diffuseTexturePath);
+                const std::string dedupeKey = !sourcePath.empty()
+                    ? ("source:" + sourcePath.lexically_normal().generic_string())
+                    : ("uri:" + texturePath);
+
                 const auto existing = textureIndexByKey.find(dedupeKey);
                 if (existing != textureIndexByKey.end())
                 {
-                    sections.materialTextureIndices[i] = existing->second;
-                    continue;
+                    return existing->second;
                 }
 
                 GlbImageInfo image;
-                image.uri = material.diffuseTexturePath;
+                image.uri = texturePath;
 
-                if (options.embedTexturesInGlb && !material.diffuseTextureSourcePath.empty())
+                if (options.embedTexturesInGlb && !sourcePath.empty())
                 {
-                    image.mimeType = MimeTypeForTexturePath(material.diffuseTextureSourcePath);
+                    image.mimeType = MimeTypeForTexturePath(sourcePath);
                     if (!image.mimeType.empty())
                     {
-                        if (std::optional<std::vector<uint8_t>> bytes = ReadBinaryFile(material.diffuseTextureSourcePath))
+                        if (std::optional<std::vector<uint8_t>> bytes = ReadBinaryFile(sourcePath))
                         {
                             while (binBuffer.size() % 4 != 0)
                             {
@@ -624,20 +749,26 @@ namespace DagorAssetsExtractor::Export
                         else
                         {
                             debugLog << "  Texture embed skipped; could not read "
-                                     << material.diffuseTextureSourcePath.string() << std::endl;
+                                     << sourcePath.string() << std::endl;
                         }
                     }
                     else
                     {
                         debugLog << "  Texture embed skipped; unsupported glTF image type for "
-                                 << material.diffuseTextureSourcePath.string() << std::endl;
+                                 << sourcePath.string() << std::endl;
                     }
                 }
 
                 const int textureIndex = static_cast<int>(sections.images.size());
                 textureIndexByKey.emplace(dedupeKey, textureIndex);
                 sections.images.push_back(std::move(image));
-                sections.materialTextureIndices[i] = textureIndex;
+                return textureIndex;
+            };
+
+            for (size_t i = 0; i < materials.size(); ++i)
+            {
+                sections.materialTextureIndices[i].diffuseIndex = getOrAddTexture(materials[i].diffuseTexturePath, materials[i].diffuseTextureSourcePath);
+                sections.materialTextureIndices[i].normalIndex = getOrAddTexture(materials[i].normalTexturePath, materials[i].normalTextureSourcePath);
             }
 
             return sections;
@@ -660,9 +791,9 @@ namespace DagorAssetsExtractor::Export
                 json << "    {\n";
                 json << "      \"name\": \"" << JsonEscape(materials[i].name) << "\",\n";
                 json << "      \"pbrMetallicRoughness\": {\n";
-                if (textureSections.materialTextureIndices[i] >= 0)
+                if (textureSections.materialTextureIndices[i].diffuseIndex >= 0)
                 {
-                    json << "        \"baseColorTexture\": { \"index\": " << textureSections.materialTextureIndices[i] << " },\n";
+                    json << "        \"baseColorTexture\": { \"index\": " << textureSections.materialTextureIndices[i].diffuseIndex << " },\n";
                 }
                 else
                 {
@@ -670,7 +801,15 @@ namespace DagorAssetsExtractor::Export
                 }
                 json << "        \"metallicFactor\": 0.0,\n";
                 json << "        \"roughnessFactor\": 1.0\n";
-                json << "      }\n";
+                json << "      }";
+                if (textureSections.materialTextureIndices[i].normalIndex >= 0)
+                {
+                    json << ",\n      \"normalTexture\": { \"index\": " << textureSections.materialTextureIndices[i].normalIndex << " }\n";
+                }
+                else
+                {
+                    json << "\n";
+                }
                 json << "    }";
                 if (i + 1 < materials.size()) json << ",";
                 json << "\n";
@@ -1266,12 +1405,29 @@ namespace DagorAssetsExtractor::Export
         // - UV accessor
         // - Index accessor
 
+        const MaterialSelection materialSelection = SelectUsedMaterials(lods, materials);
+        std::vector<bool> meshWritesTexcoords(lods.size(), false);
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            for (const DagorFormats::RendInstPrimitive& primitive : lods[i].primitives)
+            {
+                if (MaterialSlotHasTexture(materialSelection, primitive.materialIndex))
+                {
+                    meshWritesTexcoords[i] = true;
+                    break;
+                }
+            }
+        }
+
         struct LodBinInfo
         {
             size_t vertByteOffset;
             size_t vertByteLength;
             size_t indexByteOffset;
             size_t indexByteLength;
+            size_t tangentByteOffset = 0;
+            size_t tangentByteLength = 0;
+            bool hasTangent = false;
 
             float minX = std::numeric_limits<float>::max();
             float minY = std::numeric_limits<float>::max();
@@ -1286,16 +1442,23 @@ namespace DagorAssetsExtractor::Export
 
         std::vector<uint8_t> binBuffer;
         
-        for (const auto& mesh : lods)
+        for (size_t meshIdx = 0; meshIdx < lods.size(); ++meshIdx)
         {
+            const auto& mesh = lods[meshIdx];
             LodBinInfo info;
 
             info.vertByteOffset = binBuffer.size();
             info.vertByteLength = mesh.vertices.size() * sizeof(PackedStaticVertex);
 
+            std::vector<uint32_t> flippedIndices = mesh.indices;
+            for (size_t i = 0; i + 2 < flippedIndices.size(); i += 3)
+            {
+                std::swap(flippedIndices[i + 1], flippedIndices[i + 2]);
+            }
+
+            std::vector<PackedStaticVertex> packedVertices;
             if (!mesh.vertices.empty())
             {
-                std::vector<PackedStaticVertex> packedVertices;
                 packedVertices.reserve(mesh.vertices.size());
 
                 for (const auto& v : mesh.vertices)
@@ -1312,14 +1475,15 @@ namespace DagorAssetsExtractor::Export
                     packed.v = uv[1];
                     packedVertices.push_back(packed);
 
-                    info.minX = std::min(info.minX, v.x);
-                    info.minY = std::min(info.minY, v.y);
-                    info.minZ = std::min(info.minZ, -v.z);
-                    info.maxX = std::max(info.maxX, v.x);
-                    info.maxY = std::max(info.maxY, v.y);
-                    info.maxZ = std::max(info.maxZ, -v.z);
+                    info.minX = std::min(info.minX, packed.x);
+                    info.minY = std::min(info.minY, packed.y);
+                    info.minZ = std::min(info.minZ, packed.z);
+                    info.maxX = std::max(info.maxX, packed.x);
+                    info.maxY = std::max(info.maxY, packed.y);
+                    info.maxZ = std::max(info.maxZ, packed.z);
                 }
 
+                RepairNormals(packedVertices, flippedIndices);
                 const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
                 binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
             }
@@ -1329,7 +1493,6 @@ namespace DagorAssetsExtractor::Export
                 info.maxX = info.maxY = info.maxZ = 0.0f;
             }
 
-            // Indices start at current boundary (pad BIN buffer to 4 bytes if necessary, though Vertex is 32 bytes, so it's already aligned)
             while (binBuffer.size() % 4 != 0)
             {
                 binBuffer.push_back(0);
@@ -1338,38 +1501,34 @@ namespace DagorAssetsExtractor::Export
             info.indexByteOffset = binBuffer.size();
             info.indexByteLength = mesh.indices.size() * sizeof(uint32_t);
 
-            if (!mesh.indices.empty())
+            if (!flippedIndices.empty())
             {
-                std::vector<uint32_t> flippedIndices = mesh.indices;
-                for (size_t i = 0; i + 2 < flippedIndices.size(); i += 3)
-                {
-                    std::swap(flippedIndices[i + 1], flippedIndices[i + 2]);
-                }
                 const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(flippedIndices.data());
                 binBuffer.insert(binBuffer.end(), indexBytes, indexBytes + info.indexByteLength);
             }
 
+            if (meshWritesTexcoords[meshIdx])
+            {
+                std::vector<Tangent4> computedTangents = ComputeTangents(packedVertices, flippedIndices);
+                if (!computedTangents.empty())
+                {
+                    info.hasTangent = true;
+                    while (binBuffer.size() % 4 != 0)
+                    {
+                        binBuffer.push_back(0);
+                    }
+                    info.tangentByteOffset = binBuffer.size();
+                    info.tangentByteLength = computedTangents.size() * sizeof(Tangent4);
+                    const uint8_t* tangentBytes = reinterpret_cast<const uint8_t*>(computedTangents.data());
+                    binBuffer.insert(binBuffer.end(), tangentBytes, tangentBytes + info.tangentByteLength);
+                }
+            }
+
             binInfos.push_back(info);
 
-            // Pad boundary for next LOD
             while (binBuffer.size() % 4 != 0)
             {
                 binBuffer.push_back(0);
-            }
-        }
-
-        const MaterialSelection materialSelection = SelectUsedMaterials(lods, materials);
-        const GlbTextureSections textureSections = PrepareMaterialTextures(materialSelection.materials, options, binBuffer, debugLog);
-        std::vector<bool> meshWritesTexcoords(lods.size(), false);
-        for (size_t i = 0; i < lods.size(); ++i)
-        {
-            for (const DagorFormats::RendInstPrimitive& primitive : lods[i].primitives)
-            {
-                if (MaterialSlotHasTexture(materialSelection, primitive.materialIndex))
-                {
-                    meshWritesTexcoords[i] = true;
-                    break;
-                }
             }
         }
 
@@ -1378,6 +1537,8 @@ namespace DagorAssetsExtractor::Export
             size_t position = 0;
             size_t normal = 0;
             size_t uv = 0;
+            size_t tangent = 0;
+            bool hasTangent = false;
             std::vector<size_t> indices;
         };
 
@@ -1391,6 +1552,11 @@ namespace DagorAssetsExtractor::Export
             {
                 accessorInfos[i].uv = currentAccessor++;
             }
+            if (binInfos[i].hasTangent)
+            {
+                accessorInfos[i].hasTangent = true;
+                accessorInfos[i].tangent = currentAccessor++;
+            }
         }
         for (size_t i = 0; i < lods.size(); ++i)
         {
@@ -1401,6 +1567,18 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
+        std::vector<size_t> tangentBufferViews(lods.size(), 0);
+        size_t currentBufferView = lods.size() * 2;
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            if (binInfos[i].hasTangent)
+            {
+                tangentBufferViews[i] = currentBufferView++;
+            }
+        }
+        const size_t imageBufferViewBase = currentBufferView;
+        const GlbTextureSections textureSections = PrepareMaterialTextures(materialSelection.materials, options, binBuffer, debugLog);
+        
         // Generate JSON
         std::stringstream json;
         json << "{\n";
@@ -1461,7 +1639,16 @@ namespace DagorAssetsExtractor::Export
                 if (meshWritesTexcoords[i] && MaterialSlotHasTexture(materialSelection, prim.materialIndex))
                 {
                     json << ",\n";
-                    json << "            \"TEXCOORD_0\": " << accessorInfos[i].uv << "\n";
+                    json << "            \"TEXCOORD_0\": " << accessorInfos[i].uv;
+                    if (accessorInfos[i].hasTangent)
+                    {
+                        json << ",\n";
+                        json << "            \"TANGENT\": " << accessorInfos[i].tangent << "\n";
+                    }
+                    else
+                    {
+                        json << "\n";
+                    }
                 }
                 else
                 {
@@ -1491,40 +1678,59 @@ namespace DagorAssetsExtractor::Export
         }
         json << "  ],\n";
 
-        const size_t imageBufferViewBase = lods.size() * 2;
         WriteMaterialTextureSections(json, materialSelection.materials, textureSections, imageBufferViewBase);
 
         // BufferViews definition
         json << "  \"bufferViews\": [\n";
+        bool firstBufferView = true;
+        const auto writeBufferViewSeparator = [&]() {
+            if (!firstBufferView) json << ",\n";
+            firstBufferView = false;
+        };
+
         // Vertex bufferViews first
         for (size_t i = 0; i < lods.size(); ++i)
         {
+            writeBufferViewSeparator();
             json << "    {\n";
             json << "      \"buffer\": 0,\n";
             json << "      \"byteOffset\": " << binInfos[i].vertByteOffset << ",\n";
             json << "      \"byteLength\": " << binInfos[i].vertByteLength << ",\n";
             json << "      \"byteStride\": " << sizeof(PackedStaticVertex) << ",\n";
             json << "      \"target\": 34962\n"; // ARRAY_BUFFER
-            json << "    },\n";
+            json << "    }";
         }
         // Index bufferViews next
         for (size_t i = 0; i < lods.size(); ++i)
         {
+            writeBufferViewSeparator();
             json << "    {\n";
             json << "      \"buffer\": 0,\n";
             json << "      \"byteOffset\": " << binInfos[i].indexByteOffset << ",\n";
             json << "      \"byteLength\": " << binInfos[i].indexByteLength << ",\n";
             json << "      \"target\": 34963\n"; // ELEMENT_ARRAY_BUFFER
             json << "    }";
-            if (i + 1 < lods.size() || textureSections.embeddedImageCount > 0) json << ",";
-            json << "\n";
+        }
+        // Tangent bufferViews next
+        for (size_t i = 0; i < lods.size(); ++i)
+        {
+            if (binInfos[i].hasTangent)
+            {
+                writeBufferViewSeparator();
+                json << "    {\n";
+                json << "      \"buffer\": 0,\n";
+                json << "      \"byteOffset\": " << binInfos[i].tangentByteOffset << ",\n";
+                json << "      \"byteLength\": " << binInfos[i].tangentByteLength << ",\n";
+                json << "      \"target\": 34962\n"; // ARRAY_BUFFER
+                json << "    }";
+            }
         }
         if (textureSections.embeddedImageCount > 0)
         {
+            writeBufferViewSeparator();
             WriteEmbeddedImageBufferViews(json, textureSections);
-            json << "\n";
         }
-        json << "  ],\n";
+        json << "\n  ],\n";
 
         // Accessors definition
         json << "  \"accessors\": [\n";
@@ -1561,6 +1767,14 @@ namespace DagorAssetsExtractor::Export
                      << ", \"byteOffset\": 24, \"componentType\": 5126, \"count\": " << mesh.vertices.size()
                      << ", \"type\": \"VEC2\" }";
             }
+
+            if (binInfos[i].hasTangent)
+            {
+                writeAccessorSeparator();
+                json << "    { \"bufferView\": " << tangentBufferViews[i]
+                     << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size()
+                     << ", \"type\": \"VEC4\" }";
+            }
         }
 
         for (size_t i = 0; i < lods.size(); ++i)
@@ -1582,8 +1796,7 @@ namespace DagorAssetsExtractor::Export
                      << ", \"type\": \"SCALAR\" }";
             }
         }
-        json << "\n";
-        json << "  ],\n";
+        json << "\n  ],\n";
 
         // Buffer definition
         json << "  \"buffers\": [\n";
@@ -1881,6 +2094,20 @@ namespace DagorAssetsExtractor::Export
             return false;
         }
 
+        const MaterialSelection materialSelection = SelectUsedMaterials(lods, materials);
+        std::vector<bool> meshWritesTexcoords(exportMeshes.size(), false);
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
+        {
+            for (const DagorFormats::RendInstPrimitive& primitive : exportMeshes[i].mesh.primitives)
+            {
+                if (MaterialSlotHasTexture(materialSelection, primitive.materialIndex))
+                {
+                    meshWritesTexcoords[i] = true;
+                    break;
+                }
+            }
+        }
+
         const bool useSkinning = std::any_of(
             exportMeshes.begin(),
             exportMeshes.end(),
@@ -1978,6 +2205,9 @@ namespace DagorAssetsExtractor::Export
             size_t vertByteLength;
             size_t indexByteOffset;
             size_t indexByteLength;
+            size_t tangentByteOffset = 0;
+            size_t tangentByteLength = 0;
+            bool hasTangent = false;
 
             float minX = std::numeric_limits<float>::max();
             float minY = std::numeric_limits<float>::max();
@@ -2005,9 +2235,10 @@ namespace DagorAssetsExtractor::Export
                 std::swap(flippedIndices[i + 1], flippedIndices[i + 2]);
             }
 
+            std::vector<PackedSkinnedVertex> packedVertices;
+
             if (!mesh.vertices.empty())
             {
-                std::vector<PackedSkinnedVertex> packedVertices;
                 packedVertices.reserve(mesh.vertices.size());
 
                 for (const auto& v : mesh.vertices)
@@ -2074,6 +2305,23 @@ namespace DagorAssetsExtractor::Export
                 binBuffer.insert(binBuffer.end(), indexBytes, indexBytes + info.indexByteLength);
             }
 
+            if (meshWritesTexcoords[meshIndex] && !packedVertices.empty())
+            {
+                std::vector<Tangent4> computedTangents = ComputeTangents(packedVertices, flippedIndices);
+                if (!computedTangents.empty())
+                {
+                    info.hasTangent = true;
+                    while (binBuffer.size() % 4 != 0)
+                    {
+                        binBuffer.push_back(0);
+                    }
+                    info.tangentByteOffset = binBuffer.size();
+                    info.tangentByteLength = computedTangents.size() * sizeof(Tangent4);
+                    const uint8_t* tangentBytes = reinterpret_cast<const uint8_t*>(computedTangents.data());
+                    binBuffer.insert(binBuffer.end(), tangentBytes, tangentBytes + info.tangentByteLength);
+                }
+            }
+
             binInfos.push_back(info);
             while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
         }
@@ -2095,9 +2343,27 @@ namespace DagorAssetsExtractor::Export
             while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
         }
 
-        const MaterialSelection materialSelection = SelectUsedMaterials(lods, materials);
         const GlbTextureSections textureSections = PrepareMaterialTextures(materialSelection.materials, options, binBuffer, debugLog);
-        const size_t imageBufferViewBase = (exportMeshes.size() * 2) + (useSkinning ? 1 : 0);
+
+        size_t currentBufferView = exportMeshes.size() * 2;
+        size_t ibmBufferViewIndex = 0;
+        bool hasIbmBufferView = false;
+        if (useSkinning)
+        {
+            ibmBufferViewIndex = currentBufferView++;
+            hasIbmBufferView = true;
+        }
+
+        std::vector<size_t> tangentBufferViews(exportMeshes.size(), 0);
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
+        {
+            if (binInfos[i].hasTangent)
+            {
+                tangentBufferViews[i] = currentBufferView++;
+            }
+        }
+
+        const size_t imageBufferViewBase = currentBufferView;
         const size_t animationBufferViewBase = imageBufferViewBase + textureSections.embeddedImageCount;
         GlbAnimationSections animationSections = PrepareAnimationSections(
             animations,
@@ -2133,41 +2399,17 @@ namespace DagorAssetsExtractor::Export
                     auto [trsIt, inserted] = animatedNodeInitialTransforms.emplace(
                         skeletonNode,
                         DecomposeGltfMatrix(makeGltfMatrix(skeleton[skeletonNode].localTransform)));
-                    GltfNodeTrs& trs = trsIt->second;
-                    if (track.translations.size() == track.times.size())
-                    {
-                        trs.translation = ConvertAnimationTranslationForGltf(track.translations.front());
-                    }
-                    if (track.rotations.size() == track.times.size())
-                    {
-                        trs.rotation = ConvertAnimationRotationForGltf(track.rotations.front());
-                    }
-                    if (track.scales.size() == track.times.size())
-                    {
-                        trs.scale = track.scales.front();
-                    }
                     (void)inserted;
                 }
             }
         }
-        std::vector<bool> meshWritesTexcoords(exportMeshes.size(), false);
-        for (size_t i = 0; i < exportMeshes.size(); ++i)
-        {
-            for (const DagorFormats::RendInstPrimitive& primitive : exportMeshes[i].mesh.primitives)
-            {
-                if (MaterialSlotHasTexture(materialSelection, primitive.materialIndex))
-                {
-                    meshWritesTexcoords[i] = true;
-                    break;
-                }
-            }
-        }
-
         struct AccessorInfo
         {
             size_t position = 0;
             size_t normal = 0;
             size_t uv = 0;
+            size_t tangent = 0;
+            bool hasTangent = false;
             size_t joints = 0;
             size_t weights = 0;
             std::vector<size_t> indices;
@@ -2182,6 +2424,11 @@ namespace DagorAssetsExtractor::Export
             if (meshWritesTexcoords[i])
             {
                 accessorInfos[i].uv = currentAccessor++;
+            }
+            if (binInfos[i].hasTangent)
+            {
+                accessorInfos[i].hasTangent = true;
+                accessorInfos[i].tangent = currentAccessor++;
             }
             if (exportMeshes[i].skinned)
             {
@@ -2424,6 +2671,11 @@ namespace DagorAssetsExtractor::Export
                 {
                     json << ",\n";
                     json << "            \"TEXCOORD_0\": " << accessorInfos[i].uv;
+                    if (accessorInfos[i].hasTangent)
+                    {
+                        json << ",\n";
+                        json << "            \"TANGENT\": " << accessorInfos[i].tangent;
+                    }
                 }
                 if (exportMesh.skinned)
                 {
@@ -2463,60 +2715,70 @@ namespace DagorAssetsExtractor::Export
 
         // BufferViews
         json << "  \"bufferViews\": [\n";
+        bool firstBufferView = true;
+        const auto writeBufferViewSeparator = [&]() {
+            if (!firstBufferView) json << ",\n";
+            firstBufferView = false;
+        };
+
         // Vertex bufferViews
         for (size_t i = 0; i < exportMeshes.size(); ++i)
         {
+            writeBufferViewSeparator();
             json << "    {\n";
             json << "      \"buffer\": 0,\n";
             json << "      \"byteOffset\": " << binInfos[i].vertByteOffset << ",\n";
             json << "      \"byteLength\": " << binInfos[i].vertByteLength << ",\n";
             json << "      \"byteStride\": " << sizeof(PackedSkinnedVertex) << ",\n";
             json << "      \"target\": 34962\n";
-            json << "    },\n";
+            json << "    }";
         }
         // Index bufferViews
         for (size_t i = 0; i < exportMeshes.size(); ++i)
         {
+            writeBufferViewSeparator();
             json << "    {\n";
             json << "      \"buffer\": 0,\n";
             json << "      \"byteOffset\": " << binInfos[i].indexByteOffset << ",\n";
             json << "      \"byteLength\": " << binInfos[i].indexByteLength << ",\n";
             json << "      \"target\": 34963\n";
             json << "    }";
-            if (i + 1 < exportMeshes.size() || useSkinning || textureSections.embeddedImageCount > 0 || animationSections.bufferViewCount > 0) json << ",\n";
-            else json << "\n";
         }
         if (useSkinning)
         {
+            writeBufferViewSeparator();
             // IBM bufferView
             json << "    {\n";
             json << "      \"buffer\": 0,\n";
             json << "      \"byteOffset\": " << ibmByteOffset << ",\n";
             json << "      \"byteLength\": " << ibmByteLength << "\n";
-            json << "    }\n";
-            if (textureSections.embeddedImageCount > 0 || animationSections.bufferViewCount > 0)
+            json << "    }";
+        }
+        // Tangent bufferViews
+        for (size_t i = 0; i < exportMeshes.size(); ++i)
+        {
+            if (binInfos[i].hasTangent)
             {
-                json << ",\n";
+                writeBufferViewSeparator();
+                json << "    {\n";
+                json << "      \"buffer\": 0,\n";
+                json << "      \"byteOffset\": " << binInfos[i].tangentByteOffset << ",\n";
+                json << "      \"byteLength\": " << binInfos[i].tangentByteLength << ",\n";
+                json << "      \"target\": 34962\n"; // ARRAY_BUFFER
+                json << "    }";
             }
         }
         if (textureSections.embeddedImageCount > 0)
         {
+            writeBufferViewSeparator();
             WriteEmbeddedImageBufferViews(json, textureSections);
-            if (animationSections.bufferViewCount > 0)
-            {
-                json << ",\n";
-            }
-            else
-            {
-                json << "\n";
-            }
         }
         if (animationSections.bufferViewCount > 0)
         {
+            writeBufferViewSeparator();
             WriteAnimationBufferViews(json, animationSections);
-            json << "\n";
         }
-        json << "  ],\n";
+        json << "\n  ],\n";
 
         // Accessors
         json << "  \"accessors\": [\n";
@@ -2545,6 +2807,13 @@ namespace DagorAssetsExtractor::Export
                 writeAccessorSeparator();
                 json << "    { \"bufferView\": " << i << ", \"byteOffset\": 24, \"componentType\": 5126, \"count\": " << mesh.vertices.size() << ", \"type\": \"VEC2\" }";
             }
+            if (binInfos[i].hasTangent)
+            {
+                writeAccessorSeparator();
+                json << "    { \"bufferView\": " << tangentBufferViews[i]
+                     << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << mesh.vertices.size()
+                     << ", \"type\": \"VEC4\" }";
+            }
             if (exportMesh.skinned)
             {
                 writeAccessorSeparator();
@@ -2570,7 +2839,7 @@ namespace DagorAssetsExtractor::Export
         {
             // IBM accessor
             writeAccessorSeparator();
-            json << "    { \"bufferView\": " << (exportMeshes.size() * 2) << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }";
+            json << "    { \"bufferView\": " << ibmBufferViewIndex << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }";
         }
         WriteAnimationAccessors(json, animationSections, writeAccessorSeparator);
         json << "\n";

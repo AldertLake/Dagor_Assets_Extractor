@@ -17,6 +17,8 @@ namespace DagorAssetsExtractor::Export
         std::string name;
         std::string diffuseTexturePath; // Path relative to GLB or empty
         std::filesystem::path diffuseTextureSourcePath; // Exported image file to embed into GLB when requested
+        std::string normalTexturePath; // Path relative to GLB or empty
+        std::filesystem::path normalTextureSourcePath; // Exported normal map image to embed
     };
 
     struct GlbExportOptions

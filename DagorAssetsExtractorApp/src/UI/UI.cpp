@@ -24,6 +24,13 @@ namespace DagorAssetsExtractor::UI
     using AssetIndex::ResourceRecord;
     using AssetIndex::AssetType;
 
+    void SaveSettingsWithImGui(AppState& app)
+    {
+        size_t iniSize = 0;
+        const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
+        App::SaveSettingsWithLog(app, std::string_view(iniData, iniSize));
+    }
+
     std::string FormatBytes(uintmax_t bytes)
     {
         const char* units[] = { "B", "KB", "MB", "GB" };
@@ -394,13 +401,13 @@ namespace DagorAssetsExtractor::UI
                 if (const auto selected = Platform::BrowseForFolder(static_cast<HWND>(app.hwnd), L"Choose War Thunder Folder", app.settings.gameRoot))
                 {
                     App::SetGameRoot(app, *selected);
-                    App::SaveSettingsWithLog(app);
+                    SaveSettingsWithImGui(app);
                 }
             }
 
             if (ImGui::MenuItem("Save Settings"))
             {
-                App::SaveSettingsWithLog(app);
+                SaveSettingsWithImGui(app);
             }
 
             ImGui::Separator();
@@ -419,17 +426,9 @@ namespace DagorAssetsExtractor::UI
 
         if (ImGui::BeginMenu("Tools"))
         {
-            const bool canLoadCache = app.validation.IsValid() && app.settings.indexCacheEnabled && !app.scan.running.load();
-            ImGui::BeginDisabled(!canLoadCache);
-            if (ImGui::MenuItem("Load Cached Index"))
-            {
-                App::LoadIndexCacheIntoApp(app);
-            }
-            ImGui::EndDisabled();
-
             const bool canScan = app.validation.IsValid() && !app.scan.running.load();
             ImGui::BeginDisabled(!canScan);
-            if (ImGui::MenuItem("Rebuild Resource Index"))
+            if (ImGui::MenuItem("Rebuild Resources"))
             {
                 App::StartScan(app);
             }
@@ -451,10 +450,11 @@ namespace DagorAssetsExtractor::UI
             }
             ImGui::EndDisabled();
 
-            ImGui::BeginDisabled(!app.scan.running.load());
-            if (ImGui::MenuItem("Cancel Scan"))
+            const bool canClearCache = !app.scan.running.load() && !App::IsBlkResourceLinksLoading(app) && !App::IsDescriptorResourceLinksLoading(app);
+            ImGui::BeginDisabled(!canClearCache);
+            if (ImGui::MenuItem("Invalidate & Clear Cache"))
             {
-                app.scan.cancelRequested.store(true);
+                App::InvalidateAndClearCache(app);
             }
             ImGui::EndDisabled();
             ImGui::EndMenu();
@@ -482,22 +482,24 @@ namespace DagorAssetsExtractor::UI
 
         const UiIcon* rebuildIcon = GetUiIcon(UiIconId::Rebuild);
         const bool rebuildHasIcon = rebuildIcon != nullptr && rebuildIcon->view != nullptr;
-        const ImVec2 rebuildButtonSize = CalcIconButtonSize("Rebuild Index", rebuildHasIcon);
-        const ImVec2 cancelButtonSize = CalcButtonSize("Cancel");
-        const float buttonsWidth = rebuildButtonSize.x + ImGui::GetStyle().ItemSpacing.x + cancelButtonSize.x;
+        const ImVec2 rebuildButtonSize = CalcIconButtonSize("Rebuild Resources", rebuildHasIcon);
+        const UiIcon* patreonIcon = GetUiIcon(UiIconId::Patreon);
+        const bool patreonHasIcon = patreonIcon != nullptr && patreonIcon->view != nullptr;
+        const ImVec2 patreonButtonSize = CalcIconButtonSize("Donate", patreonHasIcon);
+
+        const float buttonsWidth = rebuildButtonSize.x + ImGui::GetStyle().ItemSpacing.x + patreonButtonSize.x;
         ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x - buttonsWidth));
-        ImGui::BeginDisabled(!app.validation.IsValid() || app.scan.running.load());
-        if (DrawIconTextButton("##rebuild_index", UiIconId::Rebuild, "Rebuild Index"))
+
+        if (DrawIconTextButton("##donate", UiIconId::Patreon, "Donate"))
         {
-            App::StartScan(app);
+            Platform::OpenUrl(L"https://www.patreon.com/AldertLake");
         }
-        ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(!app.scan.running.load());
-        if (ImGui::Button("Cancel", cancelButtonSize))
+        ImGui::BeginDisabled(!app.validation.IsValid() || app.scan.running.load());
+        if (DrawIconTextButton("##rebuild_resources", UiIconId::Rebuild, "Rebuild Resources"))
         {
-            app.scan.cancelRequested.store(true);
+            App::StartScan(app);
         }
         ImGui::EndDisabled();
 
@@ -622,7 +624,7 @@ namespace DagorAssetsExtractor::UI
             if (const auto selected = Platform::BrowseForFolder(static_cast<HWND>(app.hwnd), L"Choose War Thunder Folder", app.settings.gameRoot))
             {
                 App::SetGameRoot(app, *selected);
-                App::SaveSettingsWithLog(app);
+                SaveSettingsWithImGui(app);
             }
         }
 
@@ -640,7 +642,7 @@ namespace DagorAssetsExtractor::UI
         filterChanged |= ImGui::Checkbox("BLK", &app.showBlk);
         if (filterChanged)
         {
-            App::SaveSettingsWithLog(app);
+            SaveSettingsWithImGui(app);
         }
 
         uint32_t counts[5] = {};
@@ -1524,6 +1526,61 @@ namespace DagorAssetsExtractor::UI
         }
     }
 
+    void DrawLogPanel(App::LogSystem& logger, const char* id = "LogsPanel", float height = 0.0f)
+    {
+        if (ImGui::Button("Clear"))
+        {
+            logger.ClearUI();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Copy All"))
+        {
+            auto logs = logger.GetSnapshot();
+            std::string allLogs;
+            for (const auto& entry : logs)
+            {
+                allLogs += entry.formatted + "\n";
+            }
+            ImGui::SetClipboardText(allLogs.c_str());
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::BeginChild(id, ImVec2(0.0f, height), true, ImGuiWindowFlags_HorizontalScrollbar))
+        {
+            auto logs = logger.GetSnapshot();
+            for (size_t i = 0; i < logs.size(); ++i)
+            {
+                const auto& entry = logs[i];
+                ImGui::PushID(static_cast<int>(i));
+                
+                ImGui::TextColored(LevelColor(entry.level), "%s", entry.formatted.c_str());
+                
+                if (ImGui::BeginPopupContextItem("LogContext"))
+                {
+                    if (ImGui::MenuItem("Copy Message"))
+                    {
+                        ImGui::SetClipboardText(entry.message.c_str());
+                    }
+                    if (ImGui::MenuItem("Copy Full Line"))
+                    {
+                        ImGui::SetClipboardText(entry.formatted.c_str());
+                    }
+                    ImGui::EndPopup();
+                }
+                
+                ImGui::PopID();
+            }
+
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+            {
+                ImGui::SetScrollHereY(1.0f);
+            }
+
+            ImGui::EndChild();
+        }
+    }
+
     void DrawJobAndLogPanel(AppState& app)
     {
         DrawPanelTitle(UiIconId::Log, "Jobs and Logs");
@@ -1541,32 +1598,7 @@ namespace DagorAssetsExtractor::UI
 
         ImGui::Separator();
 
-        std::vector<LogEntry> logs;
-        {
-            std::lock_guard<std::mutex> lock(app.logMutex);
-            logs = app.logs;
-        }
-
-        if (ImGui::BeginTable("Logs", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0.0f, 0.0f)))
-        {
-            ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 72.0f);
-            ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, 82.0f);
-            ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableHeadersRow();
-
-            for (const LogEntry& entry : logs)
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(entry.time.c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextColored(LevelColor(entry.level), "%s", LevelName(entry.level));
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextWrapped("%s", entry.message.c_str());
-            }
-
-            ImGui::EndTable();
-        }
+        DrawLogPanel(app.logger, "GlobalLogs");
     }
 
     void DrawProgressJobWindow(AppState& app)
@@ -1626,31 +1658,229 @@ namespace DagorAssetsExtractor::UI
         }
 
         ImGui::Separator();
-        ImGui::TextUnformatted("Progress Log");
-        if (ImGui::BeginTable("ProgressJobLogs", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0.0f, 0.0f)))
-        {
-            ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 72.0f);
-            ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, 82.0f);
-            ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableHeadersRow();
-            for (const LogEntry& entry : snapshot.logs)
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(entry.time.c_str());
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextColored(LevelColor(entry.level), "%s", LevelName(entry.level));
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextWrapped("%s", entry.message.c_str());
-            }
-            ImGui::EndTable();
-        }
+        DrawLogPanel(app.logger, "ProgressJobLogs");
 
         {
             std::lock_guard<std::mutex> lock(app.progressJob.mutex);
             app.progressJob.windowOpen = open || snapshot.running;
         }
         ImGui::End();
+    }
+
+    void DrawRebuildProgressModal(AppState& app)
+    {
+        static bool wasRunning = false;
+        bool isRunning = app.scan.running.load();
+
+        if (isRunning && !wasRunning)
+        {
+            ImGui::OpenPopup("Rebuild Resources Progress");
+        }
+        wasRunning = isRunning;
+
+        ImGui::SetNextWindowSize(ImVec2(400, 150), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("Rebuild Resources Progress", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse))
+        {
+            std::string status = App::GetScanStatus(app.scan);
+            ImGui::TextUnformatted(status.c_str());
+
+            ImGui::Spacing();
+            ImGui::Text("Files visited: %llu", app.scan.filesVisited.load());
+            ImGui::Text("Records found: %llu", app.scan.recordsFound.load());
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            bool cancelRequested = app.scan.cancelRequested.load();
+            ImGui::BeginDisabled(cancelRequested);
+            if (ImGui::Button(cancelRequested ? "Canceling..." : "Cancel", ImVec2(120, 0)))
+            {
+                app.scan.cancelRequested.store(true);
+            }
+            ImGui::EndDisabled();
+
+            if (!isRunning)
+            {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    void DrawBlkRebuildProgressModal(AppState& app)
+    {
+        static bool wasRunning = false;
+        bool isRunning = false;
+        std::string status;
+        {
+            std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
+            isRunning = app.blkLinks.loading;
+            status = app.blkLinks.status;
+        }
+
+        if (isRunning && !wasRunning)
+        {
+            ImGui::OpenPopup("Rebuild BLK Progress");
+        }
+        wasRunning = isRunning;
+
+        ImGui::SetNextWindowSize(ImVec2(400, 120), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("Rebuild BLK Progress", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse))
+        {
+            ImGui::TextUnformatted("Rebuilding BLK Relationships...");
+            ImGui::Spacing();
+            ImGui::TextWrapped("%s", status.c_str());
+
+            if (!isRunning)
+            {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    void DrawExportProgressModal(AppState& app)
+    {
+        bool isRunning = false;
+        bool cancelRequested = false;
+        std::string title;
+        std::string status;
+        std::string currentItem;
+        std::string outputDir;
+        uint64_t current = 0;
+        uint64_t total = 0;
+
+        {
+            std::lock_guard<std::mutex> lock(app.exportProgress.mutex);
+            isRunning = app.exportProgress.running.load();
+            cancelRequested = app.exportProgress.cancelRequested.load();
+            title = app.exportProgress.title;
+            status = app.exportProgress.status;
+            currentItem = app.exportProgress.currentItem;
+            outputDir = app.exportProgress.outputDir;
+            current = app.exportProgress.current;
+            total = app.exportProgress.total;
+        }
+
+        static bool popupOpened = false;
+        static size_t lastLogCount = 0;
+
+        if (isRunning)
+        {
+            if (!popupOpened)
+            {
+                ImGui::OpenPopup("Export Progress");
+                popupOpened = true;
+                lastLogCount = 0;
+            }
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(520.0f, 350.0f), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("Export Progress", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse))
+        {
+            ImGui::TextColored(ImVec4(0.72f, 0.84f, 1.0f, 1.0f), "%s", title.empty() ? "Exporting Assets" : title.c_str());
+            ImGui::Spacing();
+
+            if (isRunning)
+            {
+                ImGui::TextWrapped("%s", status.empty() ? "Exporting..." : status.c_str());
+                if (!currentItem.empty())
+                {
+                    ImGui::TextDisabled("Current: %s", currentItem.c_str());
+                }
+                else
+                {
+                    ImGui::Spacing();
+                }
+            }
+            else
+            {
+                if (cancelRequested)
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Export canceled.");
+                }
+                else
+                {
+                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Export complete!");
+                }
+                ImGui::Spacing();
+            }
+
+            ImGui::Spacing();
+
+            const float fraction = isRunning
+                ? (total > 0 ? std::clamp(static_cast<float>(current) / static_cast<float>(total), 0.0f, 1.0f) : 0.0f)
+                : (cancelRequested ? (total > 0 ? std::clamp(static_cast<float>(current) / static_cast<float>(total), 0.0f, 1.0f) : 0.0f) : 1.0f);
+
+            std::string overlay;
+            if (isRunning)
+            {
+                if (total > 0)
+                {
+                    overlay = std::to_string(current) + " / " + std::to_string(total);
+                }
+                else
+                {
+                    overlay = "Working...";
+                }
+            }
+            else
+            {
+                if (cancelRequested)
+                {
+                    overlay = "Canceled (" + std::to_string(current) + " / " + std::to_string(total) + ")";
+                }
+                else
+                {
+                    overlay = "Success (" + std::to_string(total) + " / " + std::to_string(total) + ")";
+                }
+            }
+
+            ImGui::ProgressBar(fraction, ImVec2(-1.0f, 24.0f), overlay.c_str());
+
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Export Log:");
+            DrawLogPanel(app.logger, "ExportLogsChild", 120.0f);
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (isRunning)
+            {
+                ImGui::BeginDisabled(cancelRequested);
+                if (ImGui::Button(cancelRequested ? "Canceling..." : "Cancel Export", ImVec2(120.0f, 0.0f)))
+                {
+                    std::lock_guard<std::mutex> lock(app.exportProgress.mutex);
+                    app.exportProgress.cancelRequested.store(true);
+                }
+                ImGui::EndDisabled();
+            }
+            else
+            {
+                if (ImGui::Button("Close", ImVec2(120.0f, 0.0f)))
+                {
+                    ImGui::CloseCurrentPopup();
+                }
+
+                if (!outputDir.empty())
+                {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Show in Explorer", ImVec2(140.0f, 0.0f)))
+                    {
+                        Platform::ShowPathInExplorer(outputDir);
+                    }
+                }
+            }
+
+            ImGui::EndPopup();
+        }
+        else
+        {
+            popupOpened = false;
+        }
     }
 
     void DrawSettingsWindow(AppState& app)
@@ -1752,7 +1982,7 @@ namespace DagorAssetsExtractor::UI
         {
             app.settings.exportRoot = Platform::Utf8ToPath(app.exportRootBuffer.data());
             App::SetGameRoot(app, Platform::Utf8ToPath(app.gameRootBuffer.data()));
-            App::SaveSettingsWithLog(app);
+            SaveSettingsWithImGui(app);
         }
         ImGui::SameLine();
         ImGui::Text("Settings file: %s", Platform::PathToUtf8(app.settingsPath).c_str());
@@ -1889,7 +2119,7 @@ namespace DagorAssetsExtractor::UI
                 App::ApplyGameRootBuffer(app);
                 if (app.validation.IsValid())
                 {
-                    App::SaveSettingsWithLog(app);
+                    SaveSettingsWithImGui(app);
                     app.firstRunPromptOpen = false;
                     ImGui::CloseCurrentPopup();
                 }
@@ -1944,8 +2174,18 @@ namespace DagorAssetsExtractor::UI
         const std::vector<ResourceRecord>& records = *recordsPtr;
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float bottomHeight = std::min(190.0f, available.y * 0.32f);
-        const float topHeight = std::max(200.0f, available.y - bottomHeight - spacing);
+        const float splitterHeight = 6.0f;
+
+        if (app.bottomPanelHeight < 0.0f)
+        {
+            app.bottomPanelHeight = std::min(190.0f, available.y * 0.32f);
+        }
+
+        const float minBottomHeight = 100.0f;
+        const float maxBottomHeight = available.y - 200.0f;
+        app.bottomPanelHeight = std::clamp(app.bottomPanelHeight, minBottomHeight, std::max(minBottomHeight, maxBottomHeight));
+
+        const float topHeight = std::max(200.0f, available.y - app.bottomPanelHeight - splitterHeight - ImGui::GetStyle().ItemSpacing.y);
         const float leftWidth = 290.0f;
         // Initialize inspectorHeight if not set
         if (app.inspectorHeight < 0.0f)
@@ -1966,7 +2206,7 @@ namespace DagorAssetsExtractor::UI
         ImGui::SameLine();
         ImGui::BeginChild("MainStackPanel", ImVec2(0.0f, topHeight), false);
 
-        const float splitterHeight = 6.0f;
+
         const float contentBrowserHeight = topHeight - app.inspectorHeight - splitterHeight - ImGui::GetStyle().ItemSpacing.y;
 
         ImGui::BeginChild("ContentBrowserPanel", ImVec2(0.0f, contentBrowserHeight), true);
@@ -1998,6 +2238,25 @@ namespace DagorAssetsExtractor::UI
 
         ImGui::EndChild();
 
+        // Horizontal splitter between Top Area and Bottom Panel
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Separator]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyle().Colors[ImGuiCol_SeparatorActive]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyle().Colors[ImGuiCol_SeparatorActive]);
+
+        ImGui::Button("##bottom_splitter", ImVec2(-1.0f, splitterHeight));
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        }
+        if (ImGui::IsItemActive())
+        {
+            app.bottomPanelHeight -= ImGui::GetIO().MouseDelta.y;
+        }
+
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(1);
+
         ImGui::BeginChild("BottomPanel", ImVec2(0.0f, 0.0f), true);
         DrawJobAndLogPanel(app);
         ImGui::EndChild();
@@ -2009,5 +2268,8 @@ namespace DagorAssetsExtractor::UI
         DrawFirstRunModal(app);
         DrawDynModelExportModal(app);
         DrawProgressJobWindow(app);
+        DrawRebuildProgressModal(app);
+        DrawBlkRebuildProgressModal(app);
+        DrawExportProgressModal(app);
     }
 }

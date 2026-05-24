@@ -62,13 +62,189 @@ namespace DagorAssetsExtractor::App
     {
         const std::string lowered = ToLowerLocal(shaderClass);
         const bool layered = lowered.find("layered") != std::string::npos;
+        const bool dynamic = lowered.find("dynamic") != std::string::npos;
         const bool detail1IsDiffuse = layered && lowered != "rendinst_simple_layered";
+
+        if (dynamic)
+        {
+            if (layered)
+            {
+                return { "t4", "t3", "t5", "t6", "t7", "t8", "t9", "t10", "t0" };
+            }
+            else
+            {
+                return { "t0", "t4", "t6", "t8", "t10" };
+            }
+        }
+
         if (!detail1IsDiffuse || lowered == "dynamic_painted_by_mask")
         {
             return { "t0" };
         }
 
         return { "t3", "t5", "t7", "t9" };
+    }
+
+    std::vector<std::string> BuildNormalMapSlotPreference(std::string_view shaderClass)
+    {
+        const std::string lowered = ToLowerLocal(shaderClass);
+        const bool layered = lowered.find("layered") != std::string::npos;
+        const bool dynamic = lowered.find("dynamic") != std::string::npos;
+        const bool detail1IsDiffuse = layered && lowered != "rendinst_simple_layered";
+
+        if (dynamic)
+        {
+            if (layered)
+            {
+                return { "t5", "t4", "t7", "t6", "t9", "t8", "t10", "t2" };
+            }
+            else
+            {
+                return { "t2", "t5", "t7", "t9" };
+            }
+        }
+
+        if (!detail1IsDiffuse || lowered == "dynamic_painted_by_mask")
+        {
+            return { "t2" };
+        }
+
+        return { "t4", "t6", "t8", "t10" };
+    }
+
+    bool TryParseTextureSlotIndex(std::string_view slotName, size_t& slotIndex)
+    {
+        if (slotName.size() < 2 || slotName[0] != 't')
+        {
+            return false;
+        }
+
+        size_t value = 0;
+        for (size_t i = 1; i < slotName.size(); ++i)
+        {
+            const unsigned char c = static_cast<unsigned char>(slotName[i]);
+            if (std::isdigit(c) == 0)
+            {
+                return false;
+            }
+            value = (value * 10) + static_cast<size_t>(slotName[i] - '0');
+        }
+
+        if (value >= 16)
+        {
+            return false;
+        }
+
+        slotIndex = value;
+        return true;
+    }
+
+    std::string ResolveDescriptorTextureName(
+        const AssetIndex::DescriptorResourceLink& link,
+        uint32_t textureIndex)
+    {
+        if (textureIndex < link.textureNames.size())
+        {
+            const std::string& textureName = link.textureNames[textureIndex];
+            if (!textureName.empty())
+            {
+                return textureName;
+            }
+        }
+
+        for (const AssetIndex::DescriptorTextureLink& textureLink : link.textureLinks)
+        {
+            if (textureLink.textureIndex == textureIndex)
+            {
+                return textureLink.textureName;
+            }
+        }
+
+        return {};
+    }
+
+    std::vector<DagorFormats::InternalMaterial> BuildDescriptorMaterialSlots(
+        const AssetIndex::DescriptorResourceLink* link)
+    {
+        if (link == nullptr || link->materialTextureBindings.empty())
+        {
+            return {};
+        }
+
+        size_t materialCount = std::max(link->materialNames.size(), link->materialShaderClasses.size());
+        for (const AssetIndex::DescriptorMaterialTextureRef& binding : link->materialTextureBindings)
+        {
+            if (binding.materialIndex < 100000)
+            {
+                materialCount = std::max(materialCount, static_cast<size_t>(binding.materialIndex) + 1);
+            }
+        }
+
+        std::vector<DagorFormats::InternalMaterial> materials(materialCount);
+        for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
+        {
+            if (materialIndex < link->materialShaderClasses.size())
+            {
+                materials[materialIndex].shaderClass = link->materialShaderClasses[materialIndex];
+            }
+        }
+
+        for (const AssetIndex::DescriptorMaterialTextureRef& binding : link->materialTextureBindings)
+        {
+            if (binding.materialIndex >= materials.size())
+            {
+                continue;
+            }
+
+            size_t slotIndex = 0;
+            if (!TryParseTextureSlotIndex(binding.slotName, slotIndex))
+            {
+                continue;
+            }
+
+            const std::string textureName = ResolveDescriptorTextureName(*link, binding.textureIndex);
+            if (!textureName.empty())
+            {
+                materials[binding.materialIndex].textureSlots[slotIndex] = textureName;
+            }
+        }
+
+        return materials;
+    }
+
+    void MergeDescriptorMaterialSlots(
+        std::vector<DagorFormats::InternalMaterial>& materials,
+        const std::vector<DagorFormats::InternalMaterial>& descriptorMaterials)
+    {
+        if (descriptorMaterials.empty())
+        {
+            return;
+        }
+
+        if (materials.size() < descriptorMaterials.size())
+        {
+            materials.resize(descriptorMaterials.size());
+        }
+
+        for (size_t materialIndex = 0; materialIndex < descriptorMaterials.size(); ++materialIndex)
+        {
+            const DagorFormats::InternalMaterial& descriptorMaterial = descriptorMaterials[materialIndex];
+            DagorFormats::InternalMaterial& material = materials[materialIndex];
+
+            if (material.shaderClass.empty() && !descriptorMaterial.shaderClass.empty())
+            {
+                material.shaderClass = descriptorMaterial.shaderClass;
+            }
+
+            for (size_t slotIndex = 0; slotIndex < 16; ++slotIndex)
+            {
+                if (material.textureSlots[slotIndex].empty() &&
+                    !descriptorMaterial.textureSlots[slotIndex].empty())
+                {
+                    material.textureSlots[slotIndex] = descriptorMaterial.textureSlots[slotIndex];
+                }
+            }
+        }
     }
 
     template <typename TMesh>
@@ -226,34 +402,12 @@ namespace DagorAssetsExtractor::App
 
     void AddLog(AppState& app, LogLevel level, std::string message)
     {
-        std::lock_guard<std::mutex> lock(app.logMutex);
-        app.logs.push_back(LogEntry{ NowString(), level, message });
-        
-        // Format for OutputDebugStringA
-        std::string debugMsg = "[DagorExtractor] ";
-        switch (level)
-        {
-        case LogLevel::Info:    debugMsg += "[INFO] "; break;
-        case LogLevel::Warning: debugMsg += "[WARN] "; break;
-        case LogLevel::Error:   debugMsg += "[ERR]  "; break;
-        }
-        debugMsg += message + "\n";
-        ::OutputDebugStringA(debugMsg.c_str());
-
-        if (app.logs.size() > 1000)
-        {
-            app.logs.erase(app.logs.begin(), app.logs.begin() + 250);
-        }
+        app.logger.AddLog(level, message);
     }
 
     void AddProgressJobLog(AppState& app, LogLevel level, std::string message)
     {
-        std::lock_guard<std::mutex> lock(app.progressJob.mutex);
-        app.progressJob.logs.push_back(LogEntry{ NowString(), level, std::move(message) });
-        if (app.progressJob.logs.size() > 200)
-        {
-            app.progressJob.logs.erase(app.progressJob.logs.begin(), app.progressJob.logs.begin() + 50);
-        }
+        app.logger.AddLog(level, std::move(message));
     }
 
     void BeginProgressJob(AppState& app, std::string title, std::string status, uint64_t total)
@@ -265,7 +419,7 @@ namespace DagorAssetsExtractor::App
             app.progressJob.currentItem.clear();
             app.progressJob.current = 0;
             app.progressJob.total = total;
-            app.progressJob.logs.clear();
+            app.progressJob.total = total;
             app.progressJob.windowOpen = true;
         }
 
@@ -430,7 +584,26 @@ namespace DagorAssetsExtractor::App
 
             if (!result.loaded)
             {
-                AddLog(app, LogLevel::Info, "Descriptor-link cache skipped: " + result.message);
+                bool isCorrupt = false;
+                if (result.message.find("unsupported") != std::string::npos ||
+                    result.message.find("malformed") != std::string::npos ||
+                    result.message.find("truncated") != std::string::npos ||
+                    result.message.find("sparse") != std::string::npos)
+                {
+                    isCorrupt = true;
+                }
+
+                if (isCorrupt)
+                {
+                    const std::string errMsg = "Descriptor cache corruption detected: " + result.message + ". Auto-cleared descriptor cache.";
+                    AddLog(app, LogLevel::Error, errMsg);
+                    std::error_code ec;
+                    fs::remove(cachePath, ec);
+                }
+                else
+                {
+                    AddLog(app, LogLevel::Info, "Descriptor-link cache skipped: " + result.message);
+                }
                 return;
             }
 
@@ -497,21 +670,244 @@ namespace DagorAssetsExtractor::App
         }
     }
 
-    void LoadSettings(AppSettings& settings, const fs::path& path)
-    {
-        settings.exportRoot = Platform::GetDefaultExportRoot();
+    constexpr std::string_view SharedSettingsSectionHeader = "[DagorAssetsExtractor.Settings]";
 
-        std::ifstream file(path);
+    bool IsSectionHeader(std::string_view line)
+    {
+        return line.size() >= 2 && line.front() == '[' && line.back() == ']';
+    }
+
+    bool IsAppSettingKey(std::string_view key)
+    {
+        return key == "gameRoot"
+            || key == "exportRoot"
+            || key == "textureExportFormat"
+            || key == "modelExportFormat"
+            || key == "exportTexturesWithModels"
+            || key == "embedTexturesInGlb"
+            || key == "exportJsonManifest"
+            || key == "preserveOriginalDDS"
+            || key == "indexCacheEnabled"
+            || key == "maxLoadedPackContents"
+            || key == "showVromfs"
+            || key == "showGrp"
+            || key == "showDxp"
+            || key == "showDescriptors"
+            || key == "showBlk"
+            || key == "groupByBlk"
+            || key == "lastOpenedPackFilters";
+    }
+
+    void ApplySettingValue(AppSettings& settings, const std::string& key, const std::string& value)
+    {
+        if (key == "gameRoot")
+        {
+            settings.gameRoot = Platform::Utf8ToPath(value);
+        }
+        else if (key == "exportRoot")
+        {
+            settings.exportRoot = Platform::Utf8ToPath(value);
+        }
+        else if (key == "textureExportFormat")
+        {
+            settings.textureExportFormat = value;
+        }
+        else if (key == "modelExportFormat")
+        {
+            settings.modelExportFormat = value;
+        }
+        else if (key == "exportTexturesWithModels")
+        {
+            settings.exportTexturesWithModels = ParseBool(value, settings.exportTexturesWithModels);
+        }
+        else if (key == "embedTexturesInGlb")
+        {
+            settings.embedTexturesInGlb = ParseBool(value, settings.embedTexturesInGlb);
+        }
+        else if (key == "exportJsonManifest")
+        {
+            settings.exportJsonManifest = ParseBool(value, settings.exportJsonManifest);
+        }
+        else if (key == "preserveOriginalDDS")
+        {
+            settings.preserveOriginalDDS = ParseBool(value, settings.preserveOriginalDDS);
+        }
+        else if (key == "indexCacheEnabled")
+        {
+            settings.indexCacheEnabled = ParseBool(value, settings.indexCacheEnabled);
+        }
+        else if (key == "maxLoadedPackContents")
+        {
+            settings.maxLoadedPackContents = ParseSize(value, settings.maxLoadedPackContents);
+        }
+        else if (key == "showVromfs")
+        {
+            settings.showVromfs = ParseBool(value, settings.showVromfs);
+        }
+        else if (key == "showGrp")
+        {
+            settings.showGrp = ParseBool(value, settings.showGrp);
+        }
+        else if (key == "showDxp")
+        {
+            settings.showDxp = ParseBool(value, settings.showDxp);
+        }
+        else if (key == "showDescriptors")
+        {
+            settings.showDescriptors = ParseBool(value, settings.showDescriptors);
+        }
+        else if (key == "showBlk")
+        {
+            settings.showBlk = ParseBool(value, settings.showBlk);
+        }
+        else if (key == "groupByBlk")
+        {
+            settings.groupByBlk = ParseBool(value, settings.groupByBlk);
+        }
+        else if (key == "lastOpenedPackFilters")
+        {
+            settings.lastOpenedPackFilters = value;
+        }
+    }
+
+    std::string ReadTextFile(const fs::path& path)
+    {
+        std::ifstream file(path, std::ios::binary);
         if (!file)
         {
-            return;
+            return {};
         }
 
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    }
+
+    bool ReplaceFileWithTemp(const fs::path& tempPath, const fs::path& destinationPath, std::string& error)
+    {
+#if defined(_WIN32)
+        if (MoveFileExW(
+                tempPath.wstring().c_str(),
+                destinationPath.wstring().c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0)
+        {
+            return true;
+        }
+
+        const std::error_code ec(static_cast<int>(GetLastError()), std::system_category());
+        error = "Could not replace settings file: " + ec.message();
+        return false;
+#else
+        std::error_code ec;
+        fs::rename(tempPath, destinationPath, ec);
+        if (!ec)
+        {
+            return true;
+        }
+
+        fs::remove(destinationPath, ec);
+        ec.clear();
+        fs::rename(tempPath, destinationPath, ec);
+        if (ec)
+        {
+            error = "Could not replace settings file: " + ec.message();
+            return false;
+        }
+        return true;
+#endif
+    }
+
+    std::string BuildAppSettingsSection(const AppSettings& settings)
+    {
+        std::ostringstream stream;
+        stream << SharedSettingsSectionHeader << '\n';
+        stream << "gameRoot=" << Platform::PathToUtf8(settings.gameRoot) << '\n';
+        stream << "exportRoot=" << Platform::PathToUtf8(settings.exportRoot) << '\n';
+        stream << "textureExportFormat=" << settings.textureExportFormat << '\n';
+        stream << "modelExportFormat=" << settings.modelExportFormat << '\n';
+        stream << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
+        stream << "embedTexturesInGlb=" << (settings.embedTexturesInGlb ? "true" : "false") << '\n';
+        stream << "exportJsonManifest=" << (settings.exportJsonManifest ? "true" : "false") << '\n';
+        stream << "preserveOriginalDDS=" << (settings.preserveOriginalDDS ? "true" : "false") << '\n';
+        stream << "indexCacheEnabled=" << (settings.indexCacheEnabled ? "true" : "false") << '\n';
+        stream << "maxLoadedPackContents=" << settings.maxLoadedPackContents << '\n';
+        stream << "showVromfs=" << (settings.showVromfs ? "true" : "false") << '\n';
+        stream << "showGrp=" << (settings.showGrp ? "true" : "false") << '\n';
+        stream << "showDxp=" << (settings.showDxp ? "true" : "false") << '\n';
+        stream << "showDescriptors=" << (settings.showDescriptors ? "true" : "false") << '\n';
+        stream << "showBlk=" << (settings.showBlk ? "true" : "false") << '\n';
+        stream << "groupByBlk=" << (settings.groupByBlk ? "true" : "false") << '\n';
+        stream << "lastOpenedPackFilters=" << settings.lastOpenedPackFilters << '\n';
+        return stream.str();
+    }
+
+    std::string ExtractNonAppSettingsPayload(std::string_view text)
+    {
+        std::istringstream stream{std::string(text)};
+        std::ostringstream result;
         std::string line;
-        while (std::getline(file, line))
+        bool hasSeenAnySection = false;
+        bool inAppSection = false;
+
+        while (std::getline(stream, line))
+        {
+            const std::string trimmed = Trim(line);
+            if (IsSectionHeader(trimmed))
+            {
+                hasSeenAnySection = true;
+                inAppSection = trimmed == SharedSettingsSectionHeader;
+                if (!inAppSection)
+                {
+                    result << line << '\n';
+                }
+                continue;
+            }
+
+            if (inAppSection)
+            {
+                continue;
+            }
+
+            if (!hasSeenAnySection)
+            {
+                const size_t separator = line.find('=');
+                if (separator != std::string::npos)
+                {
+                    const std::string key = Trim(line.substr(0, separator));
+                    if (IsAppSettingKey(key))
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            result << line << '\n';
+        }
+
+        return result.str();
+    }
+
+    void ParseSettingsText(AppSettings& settings, std::string_view text)
+    {
+        std::istringstream stream{std::string(text)};
+        std::string line;
+        bool hasSeenAnySection = false;
+        bool inAppSection = false;
+
+        while (std::getline(stream, line))
         {
             line = Trim(line);
             if (line.empty() || line[0] == '#')
+            {
+                continue;
+            }
+
+            if (IsSectionHeader(line))
+            {
+                hasSeenAnySection = true;
+                inAppSection = line == SharedSettingsSectionHeader;
+                continue;
+            }
+
+            if (hasSeenAnySection && !inAppSection)
             {
                 continue;
             }
@@ -524,79 +920,95 @@ namespace DagorAssetsExtractor::App
 
             const std::string key = Trim(line.substr(0, separator));
             const std::string value = Trim(line.substr(separator + 1));
+            if (!IsAppSettingKey(key))
+            {
+                continue;
+            }
 
-            if (key == "gameRoot")
-            {
-                settings.gameRoot = Platform::Utf8ToPath(value);
-            }
-            else if (key == "exportRoot")
-            {
-                settings.exportRoot = Platform::Utf8ToPath(value);
-            }
-            else if (key == "textureExportFormat")
-            {
-                settings.textureExportFormat = value;
-            }
-            else if (key == "modelExportFormat")
-            {
-                settings.modelExportFormat = value;
-            }
-            else if (key == "exportTexturesWithModels")
-            {
-                settings.exportTexturesWithModels = ParseBool(value, settings.exportTexturesWithModels);
-            }
-            else if (key == "embedTexturesInGlb")
-            {
-                settings.embedTexturesInGlb = ParseBool(value, settings.embedTexturesInGlb);
-            }
-            else if (key == "exportJsonManifest")
-            {
-                settings.exportJsonManifest = ParseBool(value, settings.exportJsonManifest);
-            }
-            else if (key == "preserveOriginalDDS")
-            {
-                settings.preserveOriginalDDS = ParseBool(value, settings.preserveOriginalDDS);
-            }
-            else if (key == "indexCacheEnabled")
-            {
-                settings.indexCacheEnabled = ParseBool(value, settings.indexCacheEnabled);
-            }
-            else if (key == "maxLoadedPackContents")
-            {
-                settings.maxLoadedPackContents = ParseSize(value, settings.maxLoadedPackContents);
-            }
-            else if (key == "showVromfs")
-            {
-                settings.showVromfs = ParseBool(value, settings.showVromfs);
-            }
-            else if (key == "showGrp")
-            {
-                settings.showGrp = ParseBool(value, settings.showGrp);
-            }
-            else if (key == "showDxp")
-            {
-                settings.showDxp = ParseBool(value, settings.showDxp);
-            }
-            else if (key == "showDescriptors")
-            {
-                settings.showDescriptors = ParseBool(value, settings.showDescriptors);
-            }
-            else if (key == "showBlk")
-            {
-                settings.showBlk = ParseBool(value, settings.showBlk);
-            }
-            else if (key == "groupByBlk")
-            {
-                settings.groupByBlk = ParseBool(value, settings.groupByBlk);
-            }
-            else if (key == "lastOpenedPackFilters")
-            {
-                settings.lastOpenedPackFilters = value;
-            }
+            ApplySettingValue(settings, key, value);
         }
     }
 
-    bool SaveSettings(const AppSettings& settings, const fs::path& path, std::string& error)
+    std::string LoadSharedSettingsText(const fs::path& path)
+    {
+        if (const std::string currentText = ReadTextFile(path); !currentText.empty())
+        {
+            return currentText;
+        }
+
+        AppSettings migratedSettings;
+        migratedSettings.exportRoot = Platform::GetDefaultExportRoot();
+        bool hasLegacySettings = false;
+
+        const fs::path legacySettingsPath = path.parent_path() / L"settings";
+        if (legacySettingsPath != path)
+        {
+            const std::string legacySettingsText = ReadTextFile(legacySettingsPath);
+            if (!legacySettingsText.empty())
+            {
+                ParseSettingsText(migratedSettings, legacySettingsText);
+                hasLegacySettings = true;
+            }
+        }
+
+        std::string imguiPayload;
+        std::vector<fs::path> legacyImGuiPaths;
+        legacyImGuiPaths.push_back(fs::current_path() / L"imgui.ini");
+        legacyImGuiPaths.push_back(Platform::GetExecutableDirectory() / L"imgui.ini");
+
+        for (const fs::path& legacyImGuiPath : legacyImGuiPaths)
+        {
+            if (legacyImGuiPath == path)
+            {
+                continue;
+            }
+
+            const std::string legacyImGuiText = ReadTextFile(legacyImGuiPath);
+            if (!legacyImGuiText.empty())
+            {
+                imguiPayload = legacyImGuiText;
+                break;
+            }
+        }
+
+        if (!hasLegacySettings && imguiPayload.empty())
+        {
+            return {};
+        }
+
+        std::string combined = BuildAppSettingsSection(migratedSettings);
+        if (!imguiPayload.empty())
+        {
+            combined += '\n';
+            combined += imguiPayload;
+            if (!combined.empty() && combined.back() != '\n')
+            {
+                combined.push_back('\n');
+            }
+        }
+
+        return combined;
+    }
+
+    void LoadSettings(AppSettings& settings, const fs::path& path)
+    {
+        settings.exportRoot = Platform::GetDefaultExportRoot();
+
+        const std::string text = LoadSharedSettingsText(path);
+        if (text.empty())
+        {
+            return;
+        }
+
+        ParseSettingsText(settings, text);
+    }
+
+    std::string LoadImGuiSettings(const fs::path& path)
+    {
+        return ExtractNonAppSettingsPayload(LoadSharedSettingsText(path));
+    }
+
+    bool SaveSharedSettings(const AppSettings& settings, const fs::path& path, std::string_view imguiIniData, std::string& error)
     {
         std::error_code ec;
         fs::create_directories(path.parent_path(), ec);
@@ -606,31 +1018,42 @@ namespace DagorAssetsExtractor::App
             return false;
         }
 
-        std::ofstream file(path, std::ios::trunc);
+        std::string payload(imguiIniData);
+        if (payload.empty())
+        {
+            payload = ExtractNonAppSettingsPayload(LoadSharedSettingsText(path));
+        }
+
+        std::string fileText = BuildAppSettingsSection(settings);
+        if (!payload.empty())
+        {
+            fileText += '\n';
+            fileText += payload;
+            if (!fileText.empty() && fileText.back() != '\n')
+            {
+                fileText.push_back('\n');
+            }
+        }
+
+        fs::path tempPath = path;
+        tempPath += ".tmp";
+
+        std::ofstream file(tempPath, std::ios::binary | std::ios::trunc);
         if (!file)
         {
             error = "Could not open settings file for writing.";
             return false;
         }
 
-        file << "gameRoot=" << Platform::PathToUtf8(settings.gameRoot) << '\n';
-        file << "exportRoot=" << Platform::PathToUtf8(settings.exportRoot) << '\n';
-        file << "textureExportFormat=" << settings.textureExportFormat << '\n';
-        file << "modelExportFormat=" << settings.modelExportFormat << '\n';
-        file << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
-        file << "embedTexturesInGlb=" << (settings.embedTexturesInGlb ? "true" : "false") << '\n';
-        file << "exportJsonManifest=" << (settings.exportJsonManifest ? "true" : "false") << '\n';
-        file << "preserveOriginalDDS=" << (settings.preserveOriginalDDS ? "true" : "false") << '\n';
-        file << "indexCacheEnabled=" << (settings.indexCacheEnabled ? "true" : "false") << '\n';
-        file << "maxLoadedPackContents=" << settings.maxLoadedPackContents << '\n';
-        file << "showVromfs=" << (settings.showVromfs ? "true" : "false") << '\n';
-        file << "showGrp=" << (settings.showGrp ? "true" : "false") << '\n';
-        file << "showDxp=" << (settings.showDxp ? "true" : "false") << '\n';
-        file << "showDescriptors=" << (settings.showDescriptors ? "true" : "false") << '\n';
-        file << "showBlk=" << (settings.showBlk ? "true" : "false") << '\n';
-        file << "groupByBlk=" << (settings.groupByBlk ? "true" : "false") << '\n';
-        file << "lastOpenedPackFilters=" << settings.lastOpenedPackFilters << '\n';
-        return true;
+        file.write(fileText.data(), static_cast<std::streamsize>(fileText.size()));
+        if (!file)
+        {
+            error = "Could not finish writing settings file.";
+            return false;
+        }
+
+        file.close();
+        return ReplaceFileWithTemp(tempPath, path, error);
     }
 
     void ApplySettingsToUiState(AppState& app)
@@ -753,6 +1176,29 @@ namespace DagorAssetsExtractor::App
             return;
         }
 
+        bool isCorrupt = false;
+        if (result.fileFound && result.records.empty())
+        {
+            isCorrupt = true;
+        }
+        else if (result.message.find("unsupported") != std::string::npos ||
+                 result.message.find("malformed") != std::string::npos ||
+                 result.message.find("truncated") != std::string::npos ||
+                 result.message.find("missing") != std::string::npos)
+        {
+            isCorrupt = true;
+        }
+
+        if (isCorrupt)
+        {
+            const std::string errMsg = "Cache corruption detected: " + result.message + ". Auto-cleared index cache.";
+            AddLog(app, LogLevel::Error, errMsg);
+            std::error_code ec;
+            fs::remove(app.indexCachePath, ec);
+            ClearResourceIndex(app, "Not built");
+            return;
+        }
+
         if (!result.rootMatched)
         {
             SetCacheStatus(app.scan, result.message, false);
@@ -776,12 +1222,26 @@ namespace DagorAssetsExtractor::App
         app.scan.failed.store(false);
 
         AddLog(app, LogLevel::Info, result.message);
+        RequestBlkResourceLinks(app, loadedRecords, false);
         TryLoadDescriptorResourceLinkCache(app, loadedRecords);
     }
 
     void SetGameRoot(AppState& app, const fs::path& gameRoot)
     {
         StopScan(app);
+        if (app.settings.gameRoot != gameRoot)
+        {
+            std::error_code ec;
+            if (!app.indexCachePath.empty() && fs::exists(app.indexCachePath))
+            {
+                fs::remove(app.indexCachePath, ec);
+            }
+            if (!app.descriptorLinksCachePath.empty() && fs::exists(app.descriptorLinksCachePath))
+            {
+                fs::remove(app.descriptorLinksCachePath, ec);
+            }
+            AddLog(app, LogLevel::Info, "Game folder changed. Disk caches invalidated and cleared.");
+        }
         app.settings.gameRoot = gameRoot;
         app.validation = AssetIndex::ValidateGameRoot(app.settings.gameRoot);
         SyncSettingsBuffers(app);
@@ -796,9 +1256,14 @@ namespace DagorAssetsExtractor::App
 
     void SaveSettingsWithLog(AppState& app)
     {
+        SaveSettingsWithLog(app, {});
+    }
+
+    void SaveSettingsWithLog(AppState& app, std::string_view imguiIniData)
+    {
         std::string error;
         UpdateSettingsFromUiState(app);
-        if (SaveSettings(app.settings, app.settingsPath, error))
+        if (SaveSharedSettings(app.settings, app.settingsPath, imguiIniData, error))
         {
             AddLog(app, LogLevel::Info, "Settings saved to " + Platform::PathToUtf8(app.settingsPath));
         }
@@ -927,6 +1392,7 @@ namespace DagorAssetsExtractor::App
                         }
                     }
 
+                    RequestBlkResourceLinks(app, discoveredRecords);
                     TryLoadDescriptorResourceLinkCache(app, discoveredRecords);
                 }
             }
@@ -1489,16 +1955,26 @@ namespace DagorAssetsExtractor::App
         AddLog(app, LogLevel::Info, "Exporting texture: " + entry.name + "...");
         Export::TextureExportOptions options = GetTextureExportOptions(app);
 
+        BeginExportProgress(app, "Exporting " + entry.name, "Exporting texture: " + entry.name, 1);
+        SetExportProgressOutputDir(app, Platform::PathToUtf8(options.outputDir));
+
         app.backgroundJobs.Start("ExportTexture_" + entry.name, [&app, packPath, entry, options]() {
+            UpdateExportProgress(app, 0, 1, "Exporting texture...", entry.name);
+            AddExportProgressLog(app, "Starting export for texture: " + entry.name);
             auto result = Export::TextureExporter::ExportTexture(packPath, entry, options);
             if (result.success)
             {
                 AddLog(app, LogLevel::Info, "Exported texture: " + entry.name + " to " + Platform::PathToUtf8(result.outputPath));
+                AddExportProgressLog(app, "Export successful: " + Platform::PathToUtf8(result.outputPath.filename()));
+                UpdateExportProgress(app, 1, 1, "Export complete", entry.name);
             }
             else
             {
                 AddLog(app, LogLevel::Error, "Failed to export texture: " + entry.name + ". Error: " + result.error);
+                AddExportProgressLog(app, "Export failed: " + result.error);
+                UpdateExportProgress(app, 0, 1, "Export failed: " + result.error, entry.name);
             }
+            EndExportProgress(app);
         });
     }
 
@@ -1549,9 +2025,52 @@ namespace DagorAssetsExtractor::App
         Export::GlbExportOptions glbOptions;
         glbOptions.embedTexturesInGlb = app.settings.embedTexturesInGlb;
 
-        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, glbOptions, dynModelIncludeTexturesOverride, dynModelIncludeSkeletonRigOverride, dynModelIncludeAnimationsOverride]() {
+        // Calculate total steps for progress
+        const AssetIndex::DescriptorResourceLink* matchedLinkOnMain = nullptr;
+        if (descriptorLinks)
+        {
+            for (const auto& link : *descriptorLinks)
+            {
+                bool nameMatch = (link.matchedGrpEntryName && *link.matchedGrpEntryName == entry.name) || (link.resourceName == entry.name);
+                bool packMatch = !link.matchedGrpPath || (*link.matchedGrpPath == packPath);
+                if (nameMatch && packMatch)
+                {
+                    matchedLinkOnMain = &link;
+                    break;
+                }
+            }
+        }
+
+        constexpr uint32_t kDynModelClassIdOnMain = 0xB4B7D9C4u;
+        const bool isDynModelOnMain = (entry.grpClassId == kDynModelClassIdOnMain) ||
+                                      (entry.grpClassId == 0 && entry.size > 8);
+        const bool exportTexturesOnMain = isDynModelOnMain
+            ? (dynModelIncludeTexturesOverride.value_or(globalExportTextures))
+            : globalExportTextures;
+
+        uint64_t totalSteps = 1; // 1 step for model itself
+        if (matchedLinkOnMain && exportTexturesOnMain)
+        {
+            totalSteps += matchedLinkOnMain->textureLinks.size();
+        }
+
+        BeginExportProgress(app, "Exporting " + entry.name, "Preparing export...", totalSteps);
+        SetExportProgressOutputDir(app, Platform::PathToUtf8(exportRoot));
+        AddExportProgressLog(app, "Starting model export for: " + entry.name);
+
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, glbOptions, dynModelIncludeTexturesOverride, dynModelIncludeSkeletonRigOverride, dynModelIncludeAnimationsOverride, totalSteps]() {
+            struct ExportProgressGuard
+            {
+                AppState& guardApp;
+                ~ExportProgressGuard() { EndExportProgress(guardApp); }
+            };
+            ExportProgressGuard progressGuard{app};
+            uint64_t currentStep = 0;
+
             try
             {
+                UpdateExportProgress(app, currentStep, totalSteps, "Opening pack file...", entry.name);
+                AddExportProgressLog(app, "Opening GRP pack file: " + Platform::PathToUtf8(packPath.filename()));
                 std::ifstream file(packPath, std::ios::binary);
                 if (!file)
                 {
@@ -1621,8 +2140,6 @@ namespace DagorAssetsExtractor::App
                         " will use PNG only; DDS/TGA are not core glTF image formats and will not be linked into GLB materials.");
                 }
 
-                std::vector<Export::MaterialInfo> materials;
-                
                 // Find matching descriptor link for dependencies
                 const AssetIndex::DescriptorResourceLink* matchedLink = nullptr;
                 if (descriptorLinks)
@@ -1639,74 +2156,408 @@ namespace DagorAssetsExtractor::App
                     }
                 }
 
-                if (matchedLink)
+                const bool shouldParseRendInst = isRendInst || (!isDynModel && HasRendInstMagic(payload));
+                std::vector<std::string> internalTextureNames;
+                std::vector<DagorFormats::InternalMaterial> internalMaterials;
+                std::unique_ptr<DagorFormats::DynModelReader> dynReader;
+                std::unique_ptr<DagorFormats::RendInstReader> riReader;
+                bool descriptorMaterialsPreferred = false;
+
+                if (isDynModel)
                 {
-                    materials.reserve(matchedLink->materialNames.size());
-                    for (size_t materialIndex = 0; materialIndex < matchedLink->materialNames.size(); ++materialIndex)
+                    dynReader = std::make_unique<DagorFormats::DynModelReader>(payload);
+                    if (matchedLink)
                     {
-                        Export::MaterialInfo mat;
-                        mat.name = matchedLink->materialNames[materialIndex].empty()
-                            ? ("material_" + std::to_string(materialIndex))
-                            : matchedLink->materialNames[materialIndex];
-                        materials.push_back(std::move(mat));
+                        dynReader->SetExternalTextureNames(matchedLink->textureNames);
+                    }
+                    dynReader->Parse();
+                    internalTextureNames = dynReader->GetTextureNames();
+                    internalMaterials = dynReader->GetInternalMaterials();
+                    descriptorMaterialsPreferred = dynReader->UsesExternalMaterialTextureCounts();
+                }
+                else if (shouldParseRendInst)
+                {
+                    riReader = std::make_unique<DagorFormats::RendInstReader>(payload);
+                    if (matchedLink)
+                    {
+                        riReader->SetExternalTextureNames(matchedLink->textureNames);
+                    }
+                    riReader->Parse();
+                    internalTextureNames = riReader->GetTextureNames();
+                    internalMaterials = riReader->GetInternalMaterials();
+                    descriptorMaterialsPreferred = riReader->UsesExternalMaterialTextureCounts();
+                }
+
+                const std::vector<DagorFormats::InternalMaterial> descriptorMaterialSlots =
+                    BuildDescriptorMaterialSlots(matchedLink);
+                if (!descriptorMaterialSlots.empty())
+                {
+                    if (descriptorMaterialsPreferred || internalMaterials.empty())
+                    {
+                        internalMaterials = descriptorMaterialSlots;
+                    }
+                    else
+                    {
+                        MergeDescriptorMaterialSlots(internalMaterials, descriptorMaterialSlots);
+                    }
+
+                    AddExportProgressLog(
+                        app,
+                        "Resolved descriptor material slots: " +
+                            std::to_string(descriptorMaterialSlots.size()) +
+                            (descriptorMaterialsPreferred
+                                ? " descriptor-backed materials"
+                                : " supplemental materials"));
+                }
+
+                std::vector<std::string> uniqueTexturesToExport;
+                std::unordered_map<std::string, std::string> exportedTexturePaths;
+                std::unordered_map<std::string, fs::path> exportedTextureSourcePaths;
+
+                if (!internalMaterials.empty() && exportTextures)
+                {
+                    std::unordered_set<std::string> seenTex;
+                    for (const auto& mat : internalMaterials)
+                    {
+                        for (int i = 0; i < 16; ++i)
+                        {
+                            if (!mat.textureSlots[i].empty() && !seenTex.contains(mat.textureSlots[i]))
+                            {
+                                seenTex.insert(mat.textureSlots[i]);
+                                uniqueTexturesToExport.push_back(mat.textureSlots[i]);
+                            }
+                        }
                     }
                 }
-                else if (exportTextures)
+                else if (matchedLink && exportTextures)
                 {
-                    manifest.decodeWarnings.push_back("No descriptor relationship matched this model; material textures cannot be resolved.");
-                    AddLog(app, LogLevel::Warning, "No descriptor relationship matched " + entry.name + "; exporting geometry/material slots without texture dependencies.");
-                }
-
-                if (matchedLink && exportTextures)
-                {
-                    size_t exportedTextureCount = 0;
-                    std::unordered_map<uint32_t, std::string> exportedTexturesByDescriptorIndex;
-                    std::unordered_map<uint32_t, fs::path> exportedTextureSourcesByDescriptorIndex;
                     for (const auto& texLink : matchedLink->textureLinks)
                     {
-                        if (texLink.matchedDxpPath && texLink.matchedDxpEntryName)
+                        uniqueTexturesToExport.push_back(texLink.textureName);
+                    }
+                }
+
+                uint64_t totalSteps = 1 + uniqueTexturesToExport.size();
+
+                auto normalizeTextureName = [](std::string name) -> std::string {
+                    for (char& c : name)
+                    {
+                        if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+                        else if (c == '\\') c = '/';
+                    }
+                    size_t start = name.find_first_not_of(" \t\r\n");
+                    if (start != std::string::npos)
+                    {
+                        size_t end = name.find_last_not_of(" \t\r\n");
+                        name = name.substr(start, end - start + 1);
+                    }
+                    else
+                    {
+                        name.clear();
+                    }
+                    const size_t slash = name.find_last_of('/');
+                    const size_t dot = name.find_last_of('.');
+                    if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+                    {
+                        name.resize(dot);
+                    }
+                    const size_t star = name.find('*');
+                    if (star != std::string::npos)
+                    {
+                        name.resize(star);
+                    }
+                    size_t dollar = name.find('$');
+                    if (dollar != std::string::npos)
+                    {
+                        name.resize(dollar);
+                    }
+                    return name;
+                };
+
+                std::unordered_map<std::string, std::pair<fs::path, std::string>> globalTextureDxpLookup;
+                if (descriptorLinks)
+                {
+                    for (const auto& link : *descriptorLinks)
+                    {
+                        for (const auto& texLink : link.textureLinks)
                         {
-                            auto dxpContents = app.packContentsCache.Get(*texLink.matchedDxpPath);
-                            if (!dxpContents)
+                            if (texLink.matchedDxpPath && texLink.matchedDxpEntryName)
                             {
-                                auto newContents = AssetIndex::ParseDxpContents(*texLink.matchedDxpPath);
-                                if (newContents)
+                                const std::string normalizedTextureName = normalizeTextureName(texLink.textureName);
+                                if (!normalizedTextureName.empty())
                                 {
-                                    app.packContentsCache.Put(*texLink.matchedDxpPath, newContents);
-                                    dxpContents = newContents;
+                                    globalTextureDxpLookup[normalizedTextureName] = { *texLink.matchedDxpPath, *texLink.matchedDxpEntryName };
                                 }
                             }
+                        }
+                    }
+                }
 
-                            if (dxpContents)
+                std::unordered_map<std::string, std::pair<fs::path, std::string>> fastDxpTextureIndex;
+                bool fastDxpTextureIndexBuilt = false;
+
+                auto buildFastDxpTextureIndex = [&]() {
+                    if (fastDxpTextureIndexBuilt) return;
+                    fastDxpTextureIndexBuilt = true;
+
+                    if (!allRecords) return;
+
+                    for (const auto& record : *allRecords)
+                    {
+                        if (record.type == AssetIndex::AssetType::Dxp)
+                        {
+                            std::ifstream file(record.path, std::ios::binary);
+                            if (!file) continue;
+
+                            char magic[4];
+                            if (!file.read(magic, 4) || std::string_view(magic, 4) != "DxP2")
                             {
-                                auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
-                                    return e.name == *texLink.matchedDxpEntryName;
-                                });
+                                continue;
+                            }
 
-                                if (it != dxpContents->entries.end())
+                            file.seekg(0x8, std::ios::beg);
+                            uint16_t totalFiles = 0;
+                            if (!file.read(reinterpret_cast<char*>(&totalFiles), 2))
+                            {
+                                continue;
+                            }
+
+                            file.seekg(0x48, std::ios::beg);
+                            std::string currentName;
+                            for (uint16_t i = 0; i < totalFiles; ++i)
+                            {
+                                currentName.clear();
+                                char c;
+                                while (file.get(c))
                                 {
-                                    auto texResult = Export::TextureExporter::ExportTexture(*texLink.matchedDxpPath, *it, textureExportOptions);
-                                    if (texResult.success)
+                                    if (c == '\0')
                                     {
-                                        const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
-                                        exportedTexturesByDescriptorIndex.emplace(texLink.textureIndex, textureFile);
-                                        exportedTextureSourcesByDescriptorIndex.emplace(texLink.textureIndex, texResult.outputPath);
-                                        manifest.textureDependencies.push_back(textureFile);
-                                        ++exportedTextureCount;
+                                        break;
+                                    }
+                                    currentName.push_back(c);
+                                }
+                                if (file.eof() && currentName.empty())
+                                {
+                                    break;
+                                }
+
+                                std::string normName = normalizeTextureName(currentName);
+                                if (!normName.empty())
+                                {
+                                    auto existingIt = fastDxpTextureIndex.find(normName);
+                                    if (existingIt != fastDxpTextureIndex.end())
+                                    {
+                                        bool newHasHq = (currentName.find("$hq") != std::string::npos);
+                                        bool oldHasHq = (existingIt->second.second.find("$hq") != std::string::npos);
+                                        if (newHasHq && !oldHasHq)
+                                        {
+                                            fastDxpTextureIndex[normName] = { record.path, currentName };
+                                        }
                                     }
                                     else
                                     {
-                                        const std::string warning =
-                                            "Failed to export texture dependency: " + texLink.textureName +
-                                            " (" + texResult.error + ")";
-                                        manifest.decodeWarnings.push_back(warning);
-                                        AddLog(app, LogLevel::Warning, warning);
+                                        fastDxpTextureIndex[normName] = { record.path, currentName };
                                     }
                                 }
                             }
                         }
                     }
+                };
 
+                auto findTextureInDxpPacks = [&](const std::string& texName, fs::path& outDxpPath, std::string& outDxpEntryName) -> bool {
+                    const std::string normTexName = normalizeTextureName(texName);
+                    auto it = globalTextureDxpLookup.find(normTexName);
+                    if (it != globalTextureDxpLookup.end())
+                    {
+                        outDxpPath = it->second.first;
+                        outDxpEntryName = it->second.second;
+                        return true;
+                    }
+
+                    buildFastDxpTextureIndex();
+                    auto indexIt = fastDxpTextureIndex.find(normTexName);
+                    if (indexIt != fastDxpTextureIndex.end())
+                    {
+                        outDxpPath = indexIt->second.first;
+                        outDxpEntryName = indexIt->second.second;
+                        globalTextureDxpLookup[normTexName] = { outDxpPath, outDxpEntryName };
+                        return true;
+                    }
+
+                    return false;
+                };
+
+                auto exportTextureByName = [&](const std::string& texName) -> bool {
+                    if (texName.empty()) return false;
+                    if (exportedTexturePaths.contains(texName)) return true;
+
+                    fs::path dxpPath;
+                    std::string dxpEntryName;
+                    if (findTextureInDxpPacks(texName, dxpPath, dxpEntryName))
+                    {
+                        auto dxpContents = app.packContentsCache.Get(dxpPath);
+                        if (!dxpContents)
+                        {
+                            auto newContents = AssetIndex::ParseDxpContents(dxpPath);
+                            if (newContents)
+                            {
+                                app.packContentsCache.Put(dxpPath, newContents);
+                                dxpContents = newContents;
+                            }
+                        }
+
+                        if (dxpContents)
+                        {
+                            auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
+                                return e.name == dxpEntryName;
+                            });
+                            if (it != dxpContents->entries.end())
+                            {
+                                auto texResult = Export::TextureExporter::ExportTexture(dxpPath, *it, textureExportOptions);
+                                if (texResult.success)
+                                {
+                                    const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
+                                    exportedTexturePaths[texName] = textureFile;
+                                    exportedTextureSourcePaths[texName] = texResult.outputPath;
+                                    manifest.textureDependencies.push_back(textureFile);
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    return false;
+                };
+
+                std::vector<Export::MaterialInfo> materials;
+                size_t numMaterials = 0;
+                if (matchedLink)
+                {
+                    numMaterials = matchedLink->materialNames.size();
+                }
+                numMaterials = std::max(numMaterials, internalMaterials.size());
+
+                materials.resize(numMaterials);
+                for (size_t i = 0; i < numMaterials; ++i)
+                {
+                    if (matchedLink && i < matchedLink->materialNames.size() && !matchedLink->materialNames[i].empty())
+                    {
+                        materials[i].name = matchedLink->materialNames[i];
+                    }
+                    else
+                    {
+                        materials[i].name = "material_" + std::to_string(i);
+                    }
+                }
+
+                size_t exportedTextureCount = 0;
+                if (exportTextures && !uniqueTexturesToExport.empty())
+                {
+                    AddExportProgressLog(app, "Exporting " + std::to_string(uniqueTexturesToExport.size()) + " texture dependencies...");
+                    for (const auto& texName : uniqueTexturesToExport)
+                    {
+                        if (app.exportProgress.cancelRequested.load())
+                        {
+                            AddLog(app, LogLevel::Warning, "Export canceled by user.");
+                            AddExportProgressLog(app, "Export canceled by user.");
+                            return;
+                        }
+                        UpdateExportProgress(app, currentStep++, totalSteps, "Exporting texture dependency...", texName);
+                        AddExportProgressLog(app, "Exporting texture dependency: " + texName);
+
+                        if (exportTextureByName(texName))
+                        {
+                            exportedTextureCount++;
+                            AddExportProgressLog(app, "Successfully exported texture dependency: " + texName);
+                        }
+                        else
+                        {
+                            const std::string warning = "Failed to find or export texture dependency: " + texName;
+                            manifest.decodeWarnings.push_back(warning);
+                            AddLog(app, LogLevel::Warning, warning);
+                            AddExportProgressLog(app, "Warning: " + warning);
+                        }
+                    }
+                }
+
+                if (!internalMaterials.empty())
+                {
+                    size_t assignedTextureCount = 0;
+                    for (size_t matIdx = 0; matIdx < internalMaterials.size(); ++matIdx)
+                    {
+                        const auto& intMat = internalMaterials[matIdx];
+                        const std::vector<std::string> baseColorSlots = BuildBaseColorSlotPreference(intMat.shaderClass);
+                        const std::vector<std::string> normalMapSlots = BuildNormalMapSlotPreference(intMat.shaderClass);
+
+                        std::string diffuseTex;
+                        for (const auto& slot : baseColorSlots)
+                        {
+                            if (slot.size() > 1 && slot[0] == 't')
+                            {
+                                int slotIdx = std::stoi(slot.substr(1));
+                                if (slotIdx >= 0 && slotIdx < 16 && !intMat.textureSlots[slotIdx].empty())
+                                {
+                                    diffuseTex = intMat.textureSlots[slotIdx];
+                                    break;
+                                }
+                            }
+                        }
+
+                        std::string normalTex;
+                        for (const auto& slot : normalMapSlots)
+                        {
+                            if (slot.size() > 1 && slot[0] == 't')
+                            {
+                                int slotIdx = std::stoi(slot.substr(1));
+                                if (slotIdx >= 0 && slotIdx < 16 && !intMat.textureSlots[slotIdx].empty())
+                                {
+                                    normalTex = intMat.textureSlots[slotIdx];
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!diffuseTex.empty())
+                        {
+                            auto it = exportedTexturePaths.find(diffuseTex);
+                            if (it != exportedTexturePaths.end())
+                            {
+                                materials[matIdx].diffuseTexturePath = it->second;
+                                auto srcIt = exportedTextureSourcePaths.find(diffuseTex);
+                                if (srcIt != exportedTextureSourcePaths.end())
+                                {
+                                    materials[matIdx].diffuseTextureSourcePath = srcIt->second;
+                                }
+                                assignedTextureCount++;
+                            }
+                        }
+
+                        if (!normalTex.empty())
+                        {
+                            auto it = exportedTexturePaths.find(normalTex);
+                            if (it != exportedTexturePaths.end())
+                            {
+                                materials[matIdx].normalTexturePath = it->second;
+                                auto srcIt = exportedTextureSourcePaths.find(normalTex);
+                                if (srcIt != exportedTextureSourcePaths.end())
+                                {
+                                    materials[matIdx].normalTextureSourcePath = srcIt->second;
+                                }
+                                assignedTextureCount++;
+                            }
+                        }
+                    }
+
+                    AddLog(app,
+                        LogLevel::Info,
+                        "Model material dependency summary for " + entry.name +
+                        ": internalMaterials=" + std::to_string(internalMaterials.size()) +
+                        ", uniqueTextures=" + std::to_string(uniqueTexturesToExport.size()) +
+                        ", exportedTextures=" + std::to_string(exportedTextureCount) +
+                        ", assignedTextures=" + std::to_string(assignedTextureCount) +
+                        ", gltfMaterialSlots=" + std::to_string(materials.size()));
+                }
+                else if (matchedLink)
+                {
                     size_t assignedTextureCount = 0;
                     size_t skippedBindingCount = 0;
                     if (!matchedLink->materialTextureBindings.empty())
@@ -1732,84 +2583,63 @@ namespace DagorAssetsExtractor::App
                             }
                         }
 
-                        for (size_t materialIndex = 0; materialIndex <= maxBoundMaterialIndex; ++materialIndex)
-                        {
-                            const std::string shaderClass =
-                                materialIndex < matchedLink->materialShaderClasses.size()
-                                    ? matchedLink->materialShaderClasses[materialIndex]
-                                    : std::string();
-                            const std::vector<std::string> baseColorSlots = BuildBaseColorSlotPreference(shaderClass);
-                            std::optional<std::string> selectedTexturePath;
-                            std::optional<fs::path> selectedTextureSourcePath;
-
-                            for (const std::string& slotName : baseColorSlots)
-                            {
-                                for (const AssetIndex::DescriptorMaterialTextureRef& binding : matchedLink->materialTextureBindings)
-                                {
-                                    if (binding.materialIndex != materialIndex || binding.slotName != slotName)
-                                    {
-                                        continue;
-                                    }
-                                    const auto textureIt = exportedTexturesByDescriptorIndex.find(binding.textureIndex);
-                                    if (textureIt != exportedTexturesByDescriptorIndex.end())
-                                    {
-                                        selectedTexturePath = textureIt->second;
-                                        if (const auto sourceIt = exportedTextureSourcesByDescriptorIndex.find(binding.textureIndex);
-                                            sourceIt != exportedTextureSourcesByDescriptorIndex.end())
-                                        {
-                                            selectedTextureSourcePath = sourceIt->second;
-                                        }
-                                        break;
-                                    }
-                                }
-                                if (selectedTexturePath)
-                                {
-                                    break;
-                                }
-                            }
-
-                            Export::MaterialInfo& material = materials[materialIndex];
-                            if (material.name.empty())
-                            {
-                                material.name = "material_" + std::to_string(materialIndex);
-                            }
-                            if (selectedTexturePath && material.diffuseTexturePath.empty())
-                            {
-                                material.diffuseTexturePath = *selectedTexturePath;
-                                if (selectedTextureSourcePath)
-                                {
-                                    material.diffuseTextureSourcePath = *selectedTextureSourcePath;
-                                }
-                                ++assignedTextureCount;
-                            }
-                        }
-
                         for (const AssetIndex::DescriptorMaterialTextureRef& binding : matchedLink->materialTextureBindings)
                         {
-                            if (!exportedTexturesByDescriptorIndex.contains(binding.textureIndex))
+                            if (binding.materialIndex >= materials.size()) continue;
+
+                            std::string texName = ResolveDescriptorTextureName(*matchedLink, binding.textureIndex);
+                            if (texName.empty()) continue;
+
+                            auto pathIt = exportedTexturePaths.find(texName);
+                            if (pathIt != exportedTexturePaths.end())
                             {
-                                ++skippedBindingCount;
+                                const std::string shaderClass =
+                                    binding.materialIndex < matchedLink->materialShaderClasses.size()
+                                        ? matchedLink->materialShaderClasses[binding.materialIndex]
+                                        : std::string();
+                                const std::vector<std::string> baseColorSlots = BuildBaseColorSlotPreference(shaderClass);
+                                const std::vector<std::string> normalMapSlots = BuildNormalMapSlotPreference(shaderClass);
+
+                                bool isBaseColor = std::find(baseColorSlots.begin(), baseColorSlots.end(), binding.slotName) != baseColorSlots.end();
+                                bool isNormal = std::find(normalMapSlots.begin(), normalMapSlots.end(), binding.slotName) != normalMapSlots.end();
+
+                                if (isBaseColor && materials[binding.materialIndex].diffuseTexturePath.empty())
+                                {
+                                    materials[binding.materialIndex].diffuseTexturePath = pathIt->second;
+                                    auto srcIt = exportedTextureSourcePaths.find(texName);
+                                    if (srcIt != exportedTextureSourcePaths.end())
+                                    {
+                                        materials[binding.materialIndex].diffuseTextureSourcePath = srcIt->second;
+                                    }
+                                    assignedTextureCount++;
+                                }
+                                else if (isNormal && materials[binding.materialIndex].normalTexturePath.empty())
+                                {
+                                    materials[binding.materialIndex].normalTexturePath = pathIt->second;
+                                    auto srcIt = exportedTextureSourcePaths.find(texName);
+                                    if (srcIt != exportedTextureSourcePaths.end())
+                                    {
+                                        materials[binding.materialIndex].normalTextureSourcePath = srcIt->second;
+                                    }
+                                    assignedTextureCount++;
+                                }
+                            }
+                            else
+                            {
+                                skippedBindingCount++;
                             }
                         }
                     }
-                    else if (materials.size() == 1 && exportedTexturesByDescriptorIndex.size() == 1)
+                    else if (materials.size() == 1 && !exportedTexturePaths.empty())
                     {
-                        const auto textureIt = exportedTexturesByDescriptorIndex.begin();
+                        const auto textureIt = exportedTexturePaths.begin();
                         materials.front().diffuseTexturePath = textureIt->second;
-                        if (const auto sourceIt = exportedTextureSourcesByDescriptorIndex.find(textureIt->first);
-                            sourceIt != exportedTextureSourcesByDescriptorIndex.end())
+                        auto srcIt = exportedTextureSourcePaths.find(textureIt->first);
+                        if (srcIt != exportedTextureSourcePaths.end())
                         {
-                            materials.front().diffuseTextureSourcePath = sourceIt->second;
+                            materials.front().diffuseTextureSourcePath = srcIt->second;
                         }
                         assignedTextureCount = 1;
-                    }
-                    else if (!exportedTexturesByDescriptorIndex.empty())
-                    {
-                        const std::string warning =
-                            "Descriptor link for " + entry.name +
-                            " has no per-material texture bindings; textures were exported but not assigned to avoid corrupt material slots.";
-                        manifest.decodeWarnings.push_back(warning);
-                        AddLog(app, LogLevel::Warning, warning);
                     }
 
                     AddLog(app,
@@ -1824,13 +2654,21 @@ namespace DagorAssetsExtractor::App
                         ", gltfMaterialSlots=" + std::to_string(materials.size()));
                 }
 
+                if (app.exportProgress.cancelRequested.load())
+                {
+                    AddLog(app, LogLevel::Warning, "Export canceled by user.");
+                    AddExportProgressLog(app, "Export canceled by user.");
+                    return;
+                }
+                UpdateExportProgress(app, currentStep++, totalSteps, "Exporting model geometry...", entry.name);
+                AddExportProgressLog(app, "Exporting model geometry...");
+
                 bool success = false;
                 fs::path outPath;
 
-                if (isRendInst || (!isDynModel && HasRendInstMagic(payload)))
+                if (shouldParseRendInst)
                 {
-                    DagorFormats::RendInstReader reader(payload);
-                    reader.Parse();
+                    DagorFormats::RendInstReader& reader = *riReader;
                     AddLog(app,
                         LogLevel::Info,
                         "RendInst UV export summary for " + entry.name + ": " +
@@ -1843,12 +2681,14 @@ namespace DagorAssetsExtractor::App
                     {
                         outPath = exportRoot / (safeName + ".glb");
                         manifest.outputFiles.push_back(outPath.filename().string());
+                        AddExportProgressLog(app, "Writing GLB static model...");
                         success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest, materials, glbOptions);
                     }
                     else
                     {
                         outPath = exportRoot / (safeName + ".obj");
                         manifest.outputFiles.push_back(outPath.filename().string());
+                        AddExportProgressLog(app, "Writing OBJ static model...");
                         if (!reader.GetLods().empty())
                         {
                             success = DagorAssetsExtractor::Export::ModelExporter::ExportToObj(outPath, reader.GetLods()[0], manifest);
@@ -1857,19 +2697,7 @@ namespace DagorAssetsExtractor::App
                 }
                 else if (isDynModel)
                 {
-                    DagorFormats::DynModelReader reader(payload);
-                    try
-                    {
-                        reader.Parse();
-                    }
-                    catch (...)
-                    {
-                        for (const std::string& diagnostic : reader.GetDiagnostics())
-                        {
-                            AddLog(app, LogLevel::Warning, "DynModel diagnostic for " + entry.name + ": " + diagnostic);
-                        }
-                        throw;
-                    }
+                    DagorFormats::DynModelReader& reader = *dynReader;
 
                     for (const std::string& diagnostic : reader.GetDiagnostics())
                     {
@@ -2002,6 +2830,7 @@ namespace DagorAssetsExtractor::App
                                 LogLevel::Info,
                                 "Resolved skeleton " + skeletonEntry.name +
                                 " (" + std::to_string(skeleton.size()) + " nodes) from " + sourceDescription);
+                            AddExportProgressLog(app, "Resolved skeleton " + skeletonEntry.name + " (" + std::to_string(skeleton.size()) + " nodes)");
                             return true;
                         };
 
@@ -2165,6 +2994,7 @@ namespace DagorAssetsExtractor::App
                             ", includeSkeletonRig=" + std::string(includeSkeletonRig ? "true" : "false") +
                             ", animationClips=" + std::to_string(animations.size()) +
                             " to " + Platform::PathToUtf8(outPath));
+                        AddExportProgressLog(app, "Writing GLB skinned model (" + std::to_string(skeleton.size()) + " bones, " + std::to_string(animations.size()) + " animations)...");
                         success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, dynLods, skeleton, manifest, materials, includeSkeletonRig, glbOptions, animations);
                     }
                     else
@@ -2201,15 +3031,18 @@ namespace DagorAssetsExtractor::App
                 if (success)
                 {
                     AddLog(app, LogLevel::Info, "Exported model: " + entry.name + " to " + Platform::PathToUtf8(outPath));
+                    AddExportProgressLog(app, "Model export completed successfully.");
                 }
                 else
                 {
                     AddLog(app, LogLevel::Error, "Failed to export model: " + entry.name);
+                    AddExportProgressLog(app, "Error: Failed to export model.");
                 }
             }
             catch (const std::exception& e)
             {
                 AddLog(app, LogLevel::Error, "Exception while exporting model " + entry.name + ": " + e.what());
+                AddExportProgressLog(app, std::string("Error: Exception during model export: ") + e.what());
             }
         });
     }
@@ -2354,22 +3187,40 @@ namespace DagorAssetsExtractor::App
         AddLog(app, LogLevel::Info, "Starting batch export of textures from " + Platform::PathToUtf8(packPath.filename()) + "...");
         Export::TextureExportOptions options = GetTextureExportOptions(app);
 
+        BeginExportProgress(app, "Exporting " + std::to_string(contents->entries.size()) + " Textures", "Preparing texture export...", contents->entries.size());
+        SetExportProgressOutputDir(app, Platform::PathToUtf8(options.outputDir));
+        AddExportProgressLog(app, "Starting batch export of textures from " + Platform::PathToUtf8(packPath.filename()) + "...");
+
         app.backgroundJobs.Start("BatchExportTextures_" + packPath.filename().string(), [&app, packPath, contents, options]() {
-            auto result = Export::TextureExporter::ExportAllTextures(packPath, *contents, options, nullptr);
+            auto result = Export::TextureExporter::ExportAllTextures(packPath, *contents, options, [&app](size_t current, size_t total, const std::string& name) {
+                UpdateExportProgress(app, current, total, "Exporting textures...", name);
+                AddExportProgressLog(app, "[" + std::to_string(current) + "/" + std::to_string(total) + "] Exporting: " + name);
+                return !app.exportProgress.cancelRequested.load();
+            });
+
+            if (app.exportProgress.cancelRequested.load())
+            {
+                AddExportProgressLog(app, "Batch export canceled by user.");
+            }
 
             std::ostringstream msg;
             msg << "Batch texture export completed: " << result.succeeded << " succeeded, "
                 << result.failed << " failed, " << result.skipped << " skipped.";
             AddLog(app, LogLevel::Info, msg.str());
+            AddExportProgressLog(app, msg.str());
 
             for (const auto& err : result.errors)
             {
                 AddLog(app, LogLevel::Error, err);
+                AddExportProgressLog(app, "Error: " + err);
             }
             for (const auto& warn : result.warnings)
             {
                 AddLog(app, LogLevel::Warning, warn);
+                AddExportProgressLog(app, "Warning: " + warn);
             }
+
+            EndExportProgress(app);
         });
     }
 
@@ -2529,7 +3380,7 @@ namespace DagorAssetsExtractor::App
         });
     }
 
-    void RequestBlkResourceLinks(AppState& app, std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records)
+    void RequestBlkResourceLinks(AppState& app, std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records, bool invalidateDescriptors)
     {
         if (!records) return;
 
@@ -2541,7 +3392,7 @@ namespace DagorAssetsExtractor::App
             app.blkLinks.loadingRecords = records;
         }
 
-        app.backgroundJobs.Start("BlkResourceLinks", [&app, records]() {
+        app.backgroundJobs.Start("BlkResourceLinks", [&app, records, invalidateDescriptors]() {
             try
             {
                 auto result = AssetIndex::BuildBlkResourceLinks(*records);
@@ -2560,6 +3411,7 @@ namespace DagorAssetsExtractor::App
                     app.blkLinks.loadingRecords.reset();
                 }
 
+                if (invalidateDescriptors)
                 {
                     std::lock_guard<std::mutex> lock(app.descriptorLinks.mutex);
                     app.descriptorLinks.status = "Not built";
@@ -2927,7 +3779,7 @@ namespace DagorAssetsExtractor::App
         snapshot.currentItem = app.progressJob.currentItem;
         snapshot.current = app.progressJob.current;
         snapshot.total = app.progressJob.total;
-        snapshot.logs = app.progressJob.logs;
+        snapshot.total = app.progressJob.total;
         return snapshot;
     }
 
@@ -2935,6 +3787,46 @@ namespace DagorAssetsExtractor::App
     {
         app.progressJob.cancelRequested.store(true);
         AddProgressJobLog(app, LogLevel::Warning, "Cancel requested by user.");
+    }
+
+    void BeginExportProgress(AppState& app, std::string title, std::string status, uint64_t total)
+    {
+        std::lock_guard<std::mutex> lock(app.exportProgress.mutex);
+        app.exportProgress.title = std::move(title);
+        app.exportProgress.status = std::move(status);
+        app.exportProgress.currentItem.clear();
+        app.exportProgress.outputDir.clear();
+        app.exportProgress.current = 0;
+        app.exportProgress.total = total;
+        app.exportProgress.cancelRequested.store(false);
+        app.exportProgress.running.store(true);
+    }
+
+    void UpdateExportProgress(AppState& app, uint64_t current, uint64_t total, std::string status, std::string item)
+    {
+        std::lock_guard<std::mutex> lock(app.exportProgress.mutex);
+        app.exportProgress.current = current;
+        app.exportProgress.total = total;
+        app.exportProgress.status = std::move(status);
+        app.exportProgress.currentItem = std::move(item);
+    }
+
+    void AddExportProgressLog(AppState& app, std::string message)
+    {
+        app.logger.AddLog(LogLevel::Info, std::move(message));
+    }
+
+    void EndExportProgress(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.exportProgress.mutex);
+        app.exportProgress.running.store(false);
+        app.exportProgress.cancelRequested.store(false);
+    }
+
+    void SetExportProgressOutputDir(AppState& app, std::string dir)
+    {
+        std::lock_guard<std::mutex> lock(app.exportProgress.mutex);
+        app.exportProgress.outputDir = std::move(dir);
     }
 
     void JoinFinishedBackgroundJobs(AppState& app)
@@ -2945,5 +3837,27 @@ namespace DagorAssetsExtractor::App
     void WaitForBackgroundJobs(AppState& app)
     {
         app.backgroundJobs.JoinAll();
+    }
+
+    void InvalidateAndClearCache(AppState& app)
+    {
+        StopScan(app);
+        RequestDescriptorResourceLinkCancel(app);
+
+        // Delete disk caches
+        std::error_code ec;
+        if (!app.indexCachePath.empty() && fs::exists(app.indexCachePath))
+        {
+            fs::remove(app.indexCachePath, ec);
+        }
+        if (!app.descriptorLinksCachePath.empty() && fs::exists(app.descriptorLinksCachePath))
+        {
+            fs::remove(app.descriptorLinksCachePath, ec);
+        }
+
+        // Reset memory state
+        ClearResourceIndex(app, "Not built");
+
+        AddLog(app, LogLevel::Info, "Index, BLK, and descriptor link caches invalidated and cleared.");
     }
 }

@@ -17,6 +17,7 @@
 #include "AssetIndex/DependencyGraph.h"
 #include "AssetIndex/PackContents.h"
 #include "Jobs/JobSystem.h"
+#include "App/LogSystem.h"
 
 namespace DagorAssetsExtractor::App
 {
@@ -44,19 +45,6 @@ namespace DagorAssetsExtractor::App
         std::string lastOpenedPackFilters;
     };
 
-    enum class LogLevel
-    {
-        Info,
-        Warning,
-        Error
-    };
-
-    struct LogEntry
-    {
-        std::string time;
-        LogLevel level = LogLevel::Info;
-        std::string message;
-    };
 
     struct ScanState
     {
@@ -127,7 +115,6 @@ namespace DagorAssetsExtractor::App
         std::string currentItem;
         uint64_t current = 0;
         uint64_t total = 0;
-        std::vector<LogEntry> logs;
     };
 
     struct ProgressJobState
@@ -141,7 +128,19 @@ namespace DagorAssetsExtractor::App
         std::string currentItem;
         uint64_t current = 0;
         uint64_t total = 0;
-        std::vector<LogEntry> logs;
+    };
+
+    struct ExportProgressState
+    {
+        std::mutex mutex;
+        std::atomic_bool running = false;
+        std::atomic_bool cancelRequested = false;
+        std::string title;
+        std::string status;
+        std::string currentItem;
+        std::string outputDir;
+        uint64_t current = 0;
+        uint64_t total = 0;
     };
 
     struct PendingDynModelExport
@@ -163,8 +162,7 @@ namespace DagorAssetsExtractor::App
         std::filesystem::path descriptorLinksCachePath;
         AssetIndex::ValidationResult validation;
         ScanState scan;
-        std::mutex logMutex;
-        std::vector<LogEntry> logs;
+        LogSystem logger;
 
         std::array<char, PathBufferSize> gameRootBuffer = {};
         std::array<char, PathBufferSize> exportRootBuffer = {};
@@ -182,6 +180,7 @@ namespace DagorAssetsExtractor::App
         bool showBlk = true;
         bool groupByBlk = false;
         float inspectorHeight = -1.0f;
+        float bottomPanelHeight = -1.0f;
 
 
         // UI Cache
@@ -210,6 +209,7 @@ namespace DagorAssetsExtractor::App
         BlkResourceLinkState blkLinks;
         DescriptorResourceLinkState descriptorLinks;
         ProgressJobState progressJob;
+        ExportProgressState exportProgress;
         std::optional<PendingDynModelExport> pendingDynModelExport;
         Jobs::JobSystem backgroundJobs;
     };
@@ -223,10 +223,13 @@ namespace DagorAssetsExtractor::App
 
     // Core actions that UI can trigger
     void LoadSettings(AppSettings& settings, const std::filesystem::path& path);
+    std::string LoadImGuiSettings(const std::filesystem::path& path);
+    bool SaveSharedSettings(const AppSettings& settings, const std::filesystem::path& path, std::string_view imguiIniData, std::string& error);
     void ApplySettingsToUiState(AppState& app);
     void UpdateSettingsFromUiState(AppState& app);
     void SetGameRoot(AppState& app, const std::filesystem::path& gameRoot);
     void SaveSettingsWithLog(AppState& app);
+    void SaveSettingsWithLog(AppState& app, std::string_view imguiIniData);
     void ApplyGameRootBuffer(AppState& app);
     void SyncSettingsBuffers(AppState& app);
     void LoadIndexCacheIntoApp(AppState& app);
@@ -248,7 +251,7 @@ namespace DagorAssetsExtractor::App
     std::shared_ptr<const BlkPreview> SnapshotBlkPreview(AppState& app, const std::filesystem::path& path);
     bool IsBlkPreviewLoading(AppState& app, const std::filesystem::path& path);
     void RequestBlkPreview(AppState& app, const std::filesystem::path& path);
-    void RequestBlkResourceLinks(AppState& app, std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records);
+    void RequestBlkResourceLinks(AppState& app, std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>> records, bool invalidateDescriptors = true);
     std::shared_ptr<const std::vector<AssetIndex::BlkResourceLink>> SnapshotBlkResourceLinks(AppState& app);
     std::string GetBlkResourceLinkStatus(AppState& app);
     bool IsBlkResourceLinksLoading(AppState& app);
@@ -261,6 +264,12 @@ namespace DagorAssetsExtractor::App
     void RequestDescriptorResourceLinkCancel(AppState& app);
     ProgressJobSnapshot SnapshotProgressJob(AppState& app);
     void RequestProgressJobCancel(AppState& app);
+    void BeginExportProgress(AppState& app, std::string title, std::string status, uint64_t total);
+    void UpdateExportProgress(AppState& app, uint64_t current, uint64_t total, std::string status, std::string item);
+    void AddExportProgressLog(AppState& app, std::string message);
+    void EndExportProgress(AppState& app);
+    void SetExportProgressOutputDir(AppState& app, std::string dir);
     void JoinFinishedBackgroundJobs(AppState& app);
     void WaitForBackgroundJobs(AppState& app);
+    void InvalidateAndClearCache(AppState& app);
 }

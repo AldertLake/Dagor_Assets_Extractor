@@ -54,3 +54,9 @@ settings.ini
 
 Build.ps1
 Build.bat
+
+# Generated Visual Studio project files
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user

@@ -17,6 +17,7 @@
 #include "Export/ModelExporter.h"
 #include "DagorFormats/RendInstReader.h"
 #include "DagorFormats/DynModelReader.h"
+#include "App/AppState.h"
 
 #include "DagorIO/Decompression.h"
 #include <array>
@@ -482,6 +483,51 @@ namespace
             ok &= Expect(actual == expected, "Zstd decompression should work for 'Hello World'");
         } catch (const std::exception& e) {
             ok &= Expect(false, (std::string("Zstd decompression failed: ") + e.what()).c_str());
+        }
+
+        // Test LZMA decompression with explicit size
+        const uint8_t compressedLzmaExplicit[] = {
+            0x5D, 0x00, 0x00, 0x80, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x55, 0x2E,
+            0xD5, 0x8F, 0x6D, 0x14, 0x44, 0x03, 0x2D, 0x4B, 0x4C, 0x5E, 0xFF, 0xFF, 0xC0, 0x5F, 0x00, 0x00
+        };
+        const uint8_t expectedLzma[] = { 0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44 };
+
+        try {
+            std::vector<uint8_t> decompressed = DagorIO::Decompressor::DecompressLzma(compressedLzmaExplicit, 8);
+            ok &= Expect(decompressed.size() == 8, "LZMA decompression explicit size should output 8 bytes");
+            if (decompressed.size() == 8) {
+                bool match = true;
+                for (int i = 0; i < 8; ++i) {
+                    if (decompressed[i] != expectedLzma[i]) {
+                        match = false;
+                    }
+                }
+                ok &= Expect(match, "LZMA decompressed payload (explicit size) should match expected bytes");
+            }
+        } catch (const std::exception& e) {
+            ok &= Expect(false, (std::string("LZMA decompression (explicit size) failed: ") + e.what()).c_str());
+        }
+
+        // Test LZMA decompression with stream size (overload)
+        const uint8_t compressedLzmaStream[] = {
+            0x5D, 0x00, 0x00, 0x80, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55, 0x2E,
+            0xD5, 0x8F, 0x6D, 0x14, 0x44, 0x03, 0x2D, 0x4B, 0x4C, 0x5E, 0xFF, 0xFF, 0xC0, 0x5F, 0x00, 0x00
+        };
+
+        try {
+            std::vector<uint8_t> decompressed = DagorIO::Decompressor::DecompressLzma(compressedLzmaStream);
+            ok &= Expect(decompressed.size() == 8, "LZMA decompression stream size should output 8 bytes");
+            if (decompressed.size() == 8) {
+                bool match = true;
+                for (int i = 0; i < 8; ++i) {
+                    if (decompressed[i] != expectedLzma[i]) {
+                        match = false;
+                    }
+                }
+                ok &= Expect(match, "LZMA decompressed payload (stream size) should match expected bytes");
+            }
+        } catch (const std::exception& e) {
+            ok &= Expect(false, (std::string("LZMA decompression (stream size) failed: ") + e.what()).c_str());
         }
 
         return ok;
@@ -2527,6 +2573,220 @@ namespace
         return ok;
     }
 
+    bool TestTextureExporterReadableBc7PngExport()
+    {
+        bool ok = true;
+
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TextureBc7ReadableTest_" + std::to_string(stamp));
+        const fs::path packPath = tempDir / "synthetic_textures_bc7_readable.dxp.bin";
+        const fs::path outputDir = tempDir / "out";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp DDS fallback test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        auto put16 = [](std::vector<uint8_t>& data, size_t offset, uint16_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        };
+        auto put32 = [](std::vector<uint8_t>& data, size_t offset, uint32_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
+
+        std::vector<uint8_t> data(0xD0, 0);
+        data[0] = 'D'; data[1] = 'x'; data[2] = 'P'; data[3] = '2';
+        put16(data, 0x8, 1);
+        put32(data, 0x20, 0x60);
+        put32(data, 0x30, 0x80);
+
+        const std::string textureName = "bc7/fallback_tex";
+        std::copy(textureName.begin(), textureName.end(), data.begin() + 0x48);
+
+        data[0x70] = 0x44; data[0x71] = 0x44; data[0x72] = 0x53; data[0x73] = 0x78;
+        put32(data, 0x74, 98); // BC7_UNORM
+        put16(data, 0x7C, 4);
+        put16(data, 0x7E, 4);
+        data[0x80] = 1;
+        put16(data, 0x82, 1);
+        put16(data, 0x84, 8);
+        put32(data, 0x88, 16);
+        put32(data, 0x8C, 0);
+
+        put32(data, 0x9C, 0xB0);
+        put32(data, 0xA0, 16);
+        data[0xB0] = 0x03; data[0xB1] = 0x10; data[0xB2] = 0x77; data[0xB3] = 0xCC;
+        data[0xB4] = 0x55; data[0xB5] = 0xAA; data[0xB6] = 0x11; data[0xB7] = 0x22;
+        data[0xB8] = 0x33; data[0xB9] = 0x44; data[0xBA] = 0x99; data[0xBB] = 0x88;
+        data[0xBC] = 0xFE; data[0xBD] = 0xDC; data[0xBE] = 0xBA; data[0xBF] = 0x98;
+
+        {
+            std::ofstream pack(packPath, std::ios::binary);
+            pack.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> contents = AssetIndex::ParseDxpContents(packPath);
+        ok &= Expect(contents != nullptr, "BC7 readable export test should parse pack contents");
+        ok &= Expect(contents && contents->error.empty(), "BC7 readable export test should parse without DXP errors");
+        ok &= Expect(contents && contents->entries.size() == 1, "BC7 readable export test should expose one texture");
+
+        if (contents && !contents->entries.empty())
+        {
+            DagorAssetsExtractor::Export::TextureExportOptions options;
+            options.outputDir = outputDir;
+            options.gameRoot = tempDir;
+            options.format = "PNG";
+            options.preserveOriginalDDS = true;
+            options.overwrite = false;
+
+            DagorAssetsExtractor::Export::TextureExportResult result =
+                DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
+
+            if (!result.success || result.outputPath.extension() != ".png")
+            {
+                std::cerr << "BC7 readable export detail: success=" << result.success
+                    << ", output=" << result.outputPath.string()
+                    << ", error=" << result.error << '\n';
+                for (const std::string& warning : result.warnings)
+                {
+                    std::cerr << "  warning: " << warning << '\n';
+                }
+            }
+
+            ok &= Expect(result.success, "TextureExporter should export readable BC7 PNG output");
+            ok &= Expect(result.outputPath.extension() == ".png", "BC7 readable export should produce a .png file");
+            ok &= Expect(fs::exists(result.outputPath), "BC7 readable export should create the PNG output");
+
+            if (fs::exists(result.outputPath))
+            {
+                std::ifstream png(result.outputPath, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(png)), std::istreambuf_iterator<char>());
+                ok &= Expect(
+                    bytes.size() >= 8 &&
+                    bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+                    bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A,
+                    "BC7 readable export output should start with PNG magic");
+            }
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    bool TestTextureExporterReadableBc6hPngExport()
+    {
+        bool ok = true;
+
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TextureBc6hReadableTest_" + std::to_string(stamp));
+        const fs::path packPath = tempDir / "synthetic_textures_bc6h_readable.dxp.bin";
+        const fs::path outputDir = tempDir / "out";
+
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(tempDir, ec);
+        if (ec)
+        {
+            std::cerr << "FAIL: Could not create temp BC6H readable export test folder: " << ec.message() << '\n';
+            return false;
+        }
+
+        auto put16 = [](std::vector<uint8_t>& data, size_t offset, uint16_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        };
+        auto put32 = [](std::vector<uint8_t>& data, size_t offset, uint32_t value) {
+            data[offset + 0] = static_cast<uint8_t>(value & 0xFF);
+            data[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+            data[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            data[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        };
+
+        std::vector<uint8_t> data(0xD0, 0);
+        data[0] = 'D'; data[1] = 'x'; data[2] = 'P'; data[3] = '2';
+        put16(data, 0x8, 1);
+        put32(data, 0x20, 0x60);
+        put32(data, 0x30, 0x80);
+
+        const std::string textureName = "bc6h/readable_tex";
+        std::copy(textureName.begin(), textureName.end(), data.begin() + 0x48);
+
+        data[0x70] = 0x44; data[0x71] = 0x44; data[0x72] = 0x53; data[0x73] = 0x78;
+        put32(data, 0x74, 95); // BC6H_UF16
+        put16(data, 0x7C, 4);
+        put16(data, 0x7E, 4);
+        data[0x80] = 1;
+        put16(data, 0x82, 1);
+        put16(data, 0x84, 8);
+        put32(data, 0x88, 16);
+        put32(data, 0x8C, 0);
+
+        put32(data, 0x9C, 0xB0);
+        put32(data, 0xA0, 16);
+        // A zeroed BC6H block is sufficient for readable-export smoke coverage and
+        // avoids exercising undefined synthetic bit patterns that can vary by decoder.
+
+        {
+            std::ofstream pack(packPath, std::ios::binary);
+            pack.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+        }
+
+        const std::shared_ptr<AssetIndex::PackContents> contents = AssetIndex::ParseDxpContents(packPath);
+        ok &= Expect(contents != nullptr, "BC6H readable export test should parse pack contents");
+        ok &= Expect(contents && contents->error.empty(), "BC6H readable export test should parse without DXP errors");
+        ok &= Expect(contents && contents->entries.size() == 1, "BC6H readable export test should expose one texture");
+
+        if (contents && !contents->entries.empty())
+        {
+            DagorAssetsExtractor::Export::TextureExportOptions options;
+            options.outputDir = outputDir;
+            options.gameRoot = tempDir;
+            options.format = "PNG";
+            options.preserveOriginalDDS = true;
+            options.overwrite = false;
+
+            DagorAssetsExtractor::Export::TextureExportResult result =
+                DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
+
+            if (!result.success || result.outputPath.extension() != ".png")
+            {
+                std::cerr << "BC6H readable export detail: success=" << result.success
+                    << ", output=" << result.outputPath.string()
+                    << ", error=" << result.error << '\n';
+                for (const std::string& warning : result.warnings)
+                {
+                    std::cerr << "  warning: " << warning << '\n';
+                }
+            }
+
+            ok &= Expect(result.success, "TextureExporter should export readable BC6H PNG output");
+            ok &= Expect(result.outputPath.extension() == ".png", "BC6H readable export should produce a .png file");
+            ok &= Expect(fs::exists(result.outputPath), "BC6H readable export should create the PNG output");
+
+            if (fs::exists(result.outputPath))
+            {
+                std::ifstream png(result.outputPath, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(png)), std::istreambuf_iterator<char>());
+                ok &= Expect(
+                    bytes.size() >= 8 &&
+                    bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+                    bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A,
+                    "BC6H readable export output should start with PNG magic");
+            }
+        }
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
     bool TestTextureExporterReadableFallbackToDds()
     {
         bool ok = true;
@@ -2562,11 +2822,11 @@ namespace
         put32(data, 0x20, 0x60);
         put32(data, 0x30, 0x80);
 
-        const std::string textureName = "bc7/fallback_tex";
+        const std::string textureName = "invalid/fallback_tex";
         std::copy(textureName.begin(), textureName.end(), data.begin() + 0x48);
 
         data[0x70] = 0x44; data[0x71] = 0x44; data[0x72] = 0x53; data[0x73] = 0x78;
-        put32(data, 0x74, 98); // BC7_UNORM
+        put32(data, 0x74, 5000); // intentionally invalid DXGI format
         put16(data, 0x7C, 4);
         put16(data, 0x7E, 4);
         data[0x80] = 1;
@@ -2632,12 +2892,12 @@ namespace
         return ok;
     }
 
-    bool TestTextureExporterLzmaRawFallback()
+    bool TestTextureExporterLzmaDecompression()
     {
         bool ok = true;
 
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TextureLzmaFallbackTest_" + std::to_string(stamp));
+        const fs::path tempDir = fs::temp_directory_path() / ("DagorAssetsExtractor_TextureLzmaDecompressionTest_" + std::to_string(stamp));
         const fs::path packPath = tempDir / "synthetic_textures_lzma.dxp.bin";
         const fs::path outputDir = tempDir / "export";
 
@@ -2646,7 +2906,7 @@ namespace
         fs::create_directories(tempDir, ec);
         if (ec)
         {
-            std::cerr << "FAIL: Could not create temp LZMA fallback test folder: " << ec.message() << '\n';
+            std::cerr << "FAIL: Could not create temp LZMA decompression test folder: " << ec.message() << '\n';
             return false;
         }
 
@@ -2679,11 +2939,17 @@ namespace
         put16(data, 0x82, 1);
         put16(data, 0x84, 4);
         put32(data, 0x88, 8); // decompressed DXT1 block size
-        put32(data, 0x8C, 4); // packed bytes in DXP payload
+        put32(data, 0x8C, 32); // packed bytes in DXP payload (32 bytes)
 
         put32(data, 0x9C, 0xB0);
-        put32(data, 0xA0, 4);
-        data[0xB0] = 0xAA; data[0xB1] = 0xBB; data[0xB2] = 0xCC; data[0xB3] = 0xDD;
+        put32(data, 0xA0, 32);
+
+        // 32-byte valid LZMA stream
+        const uint8_t lzmaPayload[32] = {
+            0x5D, 0x00, 0x00, 0x80, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x55, 0x2E,
+            0xD5, 0x8F, 0x6D, 0x14, 0x44, 0x03, 0x2D, 0x4B, 0x4C, 0x5E, 0xFF, 0xFF, 0xC0, 0x5F, 0x00, 0x00
+        };
+        std::copy(std::begin(lzmaPayload), std::end(lzmaPayload), data.begin() + 0xB0);
 
         {
             std::ofstream pack(packPath, std::ios::binary);
@@ -2691,9 +2957,9 @@ namespace
         }
 
         const std::shared_ptr<AssetIndex::PackContents> contents = AssetIndex::ParseDxpContents(packPath);
-        ok &= Expect(contents != nullptr, "LZMA fallback test should parse pack contents");
-        ok &= Expect(contents && contents->error.empty(), "LZMA fallback test should parse without DXP errors");
-        ok &= Expect(contents && contents->entries.size() == 1, "LZMA fallback test should expose one texture");
+        ok &= Expect(contents != nullptr, "LZMA decompression test should parse pack contents");
+        ok &= Expect(contents && contents->error.empty(), "LZMA decompression test should parse without DXP errors");
+        ok &= Expect(contents && contents->entries.size() == 1, "LZMA decompression test should expose one texture");
 
         if (contents && !contents->entries.empty())
         {
@@ -2704,21 +2970,37 @@ namespace
             DagorAssetsExtractor::Export::TextureExportResult result =
                 DagorAssetsExtractor::Export::TextureExporter::ExportTexture(packPath, contents->entries[0], options);
 
-            ok &= Expect(result.success, "TextureExporter should export raw DDSx fallback for unsupported LZMA DDSx payloads");
+            ok &= Expect(result.success, "TextureExporter should export DDS successfully for decompressed LZMA DDSx payloads");
             if (!result.success)
             {
-                std::cerr << "LZMA fallback export error: " << result.error << '\n';
+                std::cerr << "LZMA export error: " << result.error << '\n';
             }
-            ok &= Expect(result.outputPath.extension() == ".ddsx", "LZMA fallback should produce .ddsx output");
-            ok &= Expect(fs::exists(result.outputPath), "LZMA fallback output should exist");
+            ok &= Expect(result.outputPath.extension() == ".dds", "LZMA decompression should produce .dds output");
+            ok &= Expect(fs::exists(result.outputPath), "LZMA decompression output should exist");
 
             if (fs::exists(result.outputPath))
             {
-                std::ifstream ddsx(result.outputPath, std::ios::binary);
-                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(ddsx)), std::istreambuf_iterator<char>());
-                ok &= Expect(bytes.size() == 36, "LZMA fallback DDSx output should contain header plus raw payload");
-                ok &= Expect(bytes.size() >= 4 && bytes[0] == 'D' && bytes[1] == 'D' && bytes[2] == 'S' && bytes[3] == 'x',
-                    "LZMA fallback output should start with DDSx magic");
+                std::ifstream dds(result.outputPath, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(dds)), std::istreambuf_iterator<char>());
+                ok &= Expect(bytes.size() == 136, "LZMA decompression DDS output should contain DDS header (128 bytes) plus decompressed payload (8 bytes)");
+                ok &= Expect(bytes.size() >= 4 && bytes[0] == 'D' && bytes[1] == 'D' && bytes[2] == 'S' && bytes[3] == ' ',
+                    "LZMA decompression output should start with DDS magic");
+                if (bytes.size() >= 136)
+                {
+                    const uint8_t expectedPayload[8] = { 0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44 };
+                    bool match = true;
+                    for (int i = 0; i < 8; ++i)
+                    {
+                        if (bytes[128 + i] != expectedPayload[i])
+                        {
+                            match = false;
+                            std::cerr << "Decompressed payload byte mismatch at offset " << i
+                                      << ": expected " << std::hex << (int)expectedPayload[i]
+                                      << ", got " << (int)bytes[128 + i] << std::dec << '\n';
+                        }
+                    }
+                    ok &= Expect(match, "Decompressed bytes should match the original synthetic test bytes");
+                }
             }
         }
 
@@ -3662,62 +3944,140 @@ namespace
         fs::remove_all(tempDir, ec);
         return ok;
     }
+
+    bool TestSharedSettingsSaveAndLoad()
+    {
+        bool ok = true;
+
+        namespace App = DagorAssetsExtractor::App;
+
+        const fs::path tempDir = fs::temp_directory_path() / "DagorAssetsExtractor_SharedSettings";
+        const fs::path settingsPath = tempDir / "cache" / "Settings.ini";
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+
+        App::AppSettings settings;
+        settings.gameRoot = fs::path(L"C:\\Games\\WarThunder");
+        settings.exportRoot = fs::path(L"C:\\Exports");
+        settings.textureExportFormat = "PNG";
+        settings.modelExportFormat = "OBJ";
+        settings.exportTexturesWithModels = false;
+        settings.embedTexturesInGlb = false;
+        settings.exportJsonManifest = true;
+        settings.preserveOriginalDDS = false;
+        settings.indexCacheEnabled = false;
+        settings.maxLoadedPackContents = 17;
+        settings.showVromfs = false;
+        settings.showGrp = false;
+        settings.showDxp = true;
+        settings.showDescriptors = false;
+        settings.showBlk = true;
+        settings.groupByBlk = true;
+        settings.lastOpenedPackFilters = "grp,blk";
+
+        const std::string imguiPayload =
+            "[Window][Main]\n"
+            "Pos=12,34\n"
+            "Size=560,420\n"
+            "Collapsed=0\n";
+
+        std::string error;
+        ok &= Expect(App::SaveSharedSettings(settings, settingsPath, imguiPayload, error), "Shared settings save should succeed");
+        if (!error.empty())
+        {
+            std::cerr << "Shared settings save detail: " << error << '\n';
+        }
+
+        ok &= Expect(fs::exists(settingsPath), "Shared settings save should create Settings.ini");
+
+        App::AppSettings loaded;
+        App::LoadSettings(loaded, settingsPath);
+        ok &= Expect(loaded.gameRoot == settings.gameRoot, "Shared settings load should restore game root");
+        ok &= Expect(loaded.exportRoot == settings.exportRoot, "Shared settings load should restore export root");
+        ok &= Expect(loaded.textureExportFormat == "PNG", "Shared settings load should restore texture format");
+        ok &= Expect(loaded.modelExportFormat == "OBJ", "Shared settings load should restore model format");
+        ok &= Expect(!loaded.exportTexturesWithModels, "Shared settings load should restore export-textures flag");
+        ok &= Expect(!loaded.embedTexturesInGlb, "Shared settings load should restore embed-textures flag");
+        ok &= Expect(loaded.exportJsonManifest, "Shared settings load should restore manifest flag");
+        ok &= Expect(!loaded.preserveOriginalDDS, "Shared settings load should restore DDS fallback flag");
+        ok &= Expect(!loaded.indexCacheEnabled, "Shared settings load should restore cache-enabled flag");
+        ok &= Expect(loaded.maxLoadedPackContents == 17, "Shared settings load should restore max-loaded-containers value");
+        ok &= Expect(!loaded.showVromfs && !loaded.showGrp && loaded.showDxp, "Shared settings load should restore browser visibility flags");
+        ok &= Expect(!loaded.showDescriptors && loaded.showBlk, "Shared settings load should restore descriptor/BLK flags");
+        ok &= Expect(loaded.groupByBlk, "Shared settings load should restore group-by-BLK flag");
+        ok &= Expect(loaded.lastOpenedPackFilters == "grp,blk", "Shared settings load should restore saved pack filters");
+
+        const std::string loadedImGui = App::LoadImGuiSettings(settingsPath);
+        ok &= Expect(loadedImGui.find("[Window][Main]") != std::string::npos, "Shared settings load should return ImGui sections");
+        ok &= Expect(loadedImGui.find("Pos=12,34") != std::string::npos, "Shared settings load should return ImGui values");
+        ok &= Expect(loadedImGui.find("textureExportFormat=PNG") == std::string::npos, "Shared settings load should not leak app key/value lines into ImGui payload");
+
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
+
+    bool TestSharedSettingsLegacyMigration()
+    {
+        bool ok = true;
+
+        namespace App = DagorAssetsExtractor::App;
+
+        const fs::path tempDir = fs::temp_directory_path() / "DagorAssetsExtractor_SharedSettingsLegacy";
+        const fs::path settingsDir = tempDir / "cache";
+        const fs::path legacySettingsPath = settingsDir / "settings";
+        const fs::path settingsPath = settingsDir / "Settings.ini";
+        std::error_code ec;
+        fs::remove_all(tempDir, ec);
+        fs::create_directories(settingsDir, ec);
+
+        {
+            std::ofstream file(legacySettingsPath, std::ios::trunc);
+            file << "gameRoot=C:/LegacyGame\n";
+            file << "textureExportFormat=TGA\n";
+            file << "maxLoadedPackContents=9\n";
+            file << "groupByBlk=true\n";
+        }
+
+        const fs::path originalCurrentPath = fs::current_path();
+        fs::current_path(tempDir, ec);
+        ok &= Expect(!ec, "Shared settings migration test should change current directory");
+
+        {
+            std::ofstream file(tempDir / "imgui.ini", std::ios::trunc);
+            file << "[Window][Legacy]\n";
+            file << "Pos=90,45\n";
+            file << "Collapsed=0\n";
+        }
+
+        App::AppSettings loaded;
+        App::LoadSettings(loaded, settingsPath);
+        ok &= Expect(loaded.gameRoot == fs::path(L"C:\\LegacyGame"), "Legacy settings load should restore game root from the old cache file");
+        ok &= Expect(loaded.textureExportFormat == "TGA", "Legacy settings load should restore texture format from the old cache file");
+        ok &= Expect(loaded.maxLoadedPackContents == 9, "Legacy settings load should restore max-loaded-containers from the old cache file");
+        ok &= Expect(loaded.groupByBlk, "Legacy settings load should restore group-by-BLK from the old cache file");
+
+        const std::string legacyImGui = App::LoadImGuiSettings(settingsPath);
+        ok &= Expect(legacyImGui.find("[Window][Legacy]") != std::string::npos, "Legacy settings load should migrate ImGui sections from imgui.ini");
+        ok &= Expect(legacyImGui.find("Pos=90,45") != std::string::npos, "Legacy settings load should migrate ImGui values from imgui.ini");
+
+        std::string error;
+        ok &= Expect(App::SaveSharedSettings(loaded, settingsPath, legacyImGui, error), "Shared settings migration save should create Settings.ini");
+        if (!error.empty())
+        {
+            std::cerr << "Shared settings migration save detail: " << error << '\n';
+        }
+        ok &= Expect(fs::exists(settingsPath), "Shared settings migration save should create the new Settings.ini file");
+
+        fs::current_path(originalCurrentPath, ec);
+        fs::remove_all(tempDir, ec);
+        return ok;
+    }
 }
 
 int main(int argc, char** argv)
 {
     fs::path repoRoot = argc > 1 ? fs::path(argv[1]) : fs::current_path();
     const fs::path fixtureRoot = repoRoot / "tests" / "fixtures" / "synthetic_wt";
-
-    // DEBUG ANIMATION RESOLVER
-    {
-        std::filesystem::path debugGrpPath = "D:\\SteamLibrary\\steamapps\\common\\War Thunder\\content.hq\\pkg_cockpits\\res\\pkg_cockpits_aircrafts\\fa_18c_finland.grp";
-        if (std::filesystem::exists(debugGrpPath))
-        {
-            std::cout << "\n[DIAGNOSTIC] Found debug GRP: " << debugGrpPath.string() << std::endl;
-            auto contents = DagorAssetsExtractor::AssetIndex::ParseGrpContents(debugGrpPath);
-            if (contents && contents->error.empty())
-            {
-                for (const auto& entry : contents->entries)
-                {
-                    if (entry.name == "fa_18c_finland_cockpit_anim")
-                    {
-                        std::cout << "[DIAGNOSTIC] Found anim entry: " << entry.name << std::endl;
-                        std::ifstream file(debugGrpPath, std::ios::binary);
-                        file.seekg(entry.offset);
-                        std::vector<uint8_t> payload(entry.size);
-                        file.read(reinterpret_cast<char*>(payload.data()), entry.size);
-
-                        DagorFormats::Anim2DataReader reader(payload);
-                        try
-                        {
-                            reader.Parse();
-                            const auto& info = reader.GetInfo();
-                            std::cout << "[DIAGNOSTIC] Parsed version: 0x" << std::hex << info.version << std::dec << std::endl;
-                            std::cout << "[DIAGNOSTIC] Dump size: " << info.dumpSize << std::endl;
-                            std::cout << "[DIAGNOSTIC] Channels count: " << info.channels.size() << std::endl;
-                            for (const auto& warning : info.decodeWarnings)
-                            {
-                                std::cout << "[DIAGNOSTIC WARNING] " << warning << std::endl;
-                            }
-                            for (const auto& clip : info.clips)
-                            {
-                                std::cout << "[DIAGNOSTIC CLIP] name=" << clip.name << ", duration=" << clip.durationSeconds << ", nodes=" << clip.nodes.size() << std::endl;
-                            }
-                        }
-                        catch (const std::exception& ex)
-                        {
-                            std::cout << "[DIAGNOSTIC ERROR] " << ex.what() << std::endl;
-                        }
-                    }
-                }
-            }
-        }
-        else
-        {
-            std::cout << "[DIAGNOSTIC] Debug GRP does not exist!" << std::endl;
-        }
-    }
 
     bool ok = true;
 
@@ -3744,8 +4104,10 @@ int main(int argc, char** argv)
     ok &= Expect(TestTextureExporterReadableRgba32fTgaExport(), "TextureExporter readable RGBA32F TGA export test should pass");
     ok &= Expect(TestTextureExporterReadableBc1TgaExport(), "TextureExporter readable BC1 TGA export test should pass");
     ok &= Expect(TestTextureExporterReadableBc5TgaExport(), "TextureExporter readable BC5 TGA export test should pass");
+    ok &= Expect(TestTextureExporterReadableBc7PngExport(), "TextureExporter readable BC7 PNG export test should pass");
+    ok &= Expect(TestTextureExporterReadableBc6hPngExport(), "TextureExporter readable BC6H PNG export test should pass");
     ok &= Expect(TestTextureExporterReadableFallbackToDds(), "TextureExporter readable export fallback test should pass");
-    ok &= Expect(TestTextureExporterLzmaRawFallback(), "TextureExporter LZMA raw fallback test should pass");
+    ok &= Expect(TestTextureExporterLzmaDecompression(), "TextureExporter LZMA decompression test should pass");
     ok &= Expect(TestTextureExporterReverseMipOrderNormalization(), "TextureExporter reverse-mip normalization test should pass");
     ok &= Expect(TestTextureExporterSplitMipClamping(), "TextureExporter split-mip clamping test should pass");
     ok &= Expect(TestTextureExporterMissingOodleFallback(), "TextureExporter missing-Oodle fallback test should pass");
@@ -3753,6 +4115,8 @@ int main(int argc, char** argv)
     ok &= Expect(TestMultiMaterialModelExport(), "Multi-material model export test should pass");
     ok &= Expect(TestModelExporterMaterialFallbackAndNormals(), "Material fallback and normal repair export test should pass");
     ok &= Expect(TestUnifiedModelExport(), "Unified model export test should pass");
+    ok &= Expect(TestSharedSettingsSaveAndLoad(), "Shared settings save/load test should pass");
+    ok &= Expect(TestSharedSettingsLegacyMigration(), "Shared settings legacy migration test should pass");
     ok &= Expect(TestDynModelParsingAndExport(), "DynModel parsing and skinned export tests should pass");
 
     const AssetIndex::ValidationResult validation = AssetIndex::ValidateGameRoot(fixtureRoot);
@@ -3820,130 +4184,6 @@ int main(int argc, char** argv)
     }
 
     std::cout << "AssetIndexTests passed\n";
-
-    // ----- TEST 10: Model Diagnostics -----
-    {
-        std::cout << "\nRunning Test 10: Model Diagnostics" << std::endl;
-        std::vector<std::pair<std::string, std::string>> filesToTest = {
-            { "D:\\SteamLibrary\\steamapps\\common\\War Thunder\\content\\base\\res\\abandoned_factory.grp", "af_chimney_metal_a" },
-            { "D:\\SteamLibrary\\steamapps\\common\\War Thunder\\content\\base\\res\\abandoned_coal_cart.grp", "coal_cart" }
-        };
-
-        for (const auto& testCase : filesToTest)
-        {
-            std::filesystem::path grpPath = testCase.first;
-            std::string assetName = testCase.second;
-
-            if (std::filesystem::exists(grpPath))
-            {
-                std::cout << "\n----------------------------------------\n";
-                std::cout << "Testing file: " << grpPath.filename().string() << " for asset: " << assetName << std::endl;
-
-                auto contents = DagorAssetsExtractor::AssetIndex::ParseGrpContents(grpPath);
-                if (contents && contents->error.empty())
-                {
-                    std::cout << "GRP contains " << contents->entries.size() << " entries:" << std::endl;
-                    for (const auto& entry : contents->entries)
-                    {
-                        std::cout << "  - Name: " << entry.name 
-                                  << ", ClassID: 0x" << std::hex << entry.grpClassId << std::dec
-                                  << ", Offset: " << entry.offset 
-                                  << ", Size: " << entry.size 
-                                  << std::endl;
-                    }
-
-                    for (const auto& entry : contents->entries)
-                    {
-                        if (entry.name == assetName)
-                        {
-                            std::ifstream file(grpPath, std::ios::binary);
-                            file.seekg(entry.offset);
-                            std::vector<uint8_t> payload(entry.size);
-                            file.read(reinterpret_cast<char*>(payload.data()), entry.size);
-
-                            std::cout << "\nPayload first 32 bytes (raw): ";
-                            for (size_t i = 0; i < std::min<size_t>(32, payload.size()); ++i)
-                            {
-                                printf("%02X ", payload[i]);
-                            }
-                            std::cout << std::endl;
-
-                            // Let's print the raw Phase 1 header details from raw payload:
-                            uint32_t lodHdrInfo = *reinterpret_cast<const uint32_t*>(payload.data());
-                            uint32_t lodHdrSize = lodHdrInfo & 0x00FFFFFFu;
-                            std::cout << "Raw lodHdrInfo: 0x" << std::hex << lodHdrInfo << std::dec << ", lodHdrSize: " << lodHdrSize << std::endl;
-
-                            // Let's try to parse as RendInst
-                            std::cout << "--- Parsing as RendInst ---" << std::endl;
-                            DagorFormats::RendInstReader riReader(payload);
-                            try {
-                                riReader.Parse();
-                                std::cout << "RendInst Parse SUCCESS! LODs: " << riReader.GetLods().size() << std::endl;
-                            } catch (const std::exception& e) {
-                                std::cout << "RendInst Parse failed: " << e.what() << std::endl;
-                            }
-
-                            // Let's get the decompressed payload by replicating ParseRealGrpPayload logic:
-                            // We know m_decompressedPayload has been extracted by readers.
-                            // Let's print decompressed payload bytes around lodHdrSize.
-                            // We can get it from dynReader if we Parse, or we can just run the decompression helper here.
-                            std::vector<uint8_t> decomp;
-                            const uint8_t zstdMagic[] = { 0x28, 0xB5, 0x2F, 0xFD };
-                            bool decompressed = false;
-                            for (size_t headerOfs = 0; headerOfs + 24 <= payload.size(); headerOfs += 4) {
-                                uint32_t blockHeader = *reinterpret_cast<const uint32_t*>(payload.data() + headerOfs);
-                                unsigned blockFlags = blockHeader >> 30;
-                                size_t blockSize = blockHeader & 0x3FFFFFFF;
-                                if (blockFlags == 2 && blockSize > 8 && blockSize + headerOfs + 4 <= payload.size()) {
-                                    auto blockData = std::span<const uint8_t>(payload.data() + headerOfs + 4, blockSize);
-                                    uint32_t decompSz = *reinterpret_cast<const uint32_t*>(blockData.data());
-                                    decomp = DagorIO::Decompressor::DecompressOodle(
-                                        blockData.subspan(4), decompSz, "", "");
-                                    decompressed = true;
-                                    break;
-                                }
-                            }
-                            if (decompressed) {
-                                std::cout << "Decompressed payload size: " << decomp.size() << std::endl;
-                                std::cout << "First 64 bytes of decompressed payload: ";
-                                for (size_t i = 0; i < std::min<size_t>(64, decomp.size()); ++i) {
-                                    printf("%02X ", decomp[i]);
-                                }
-                                std::cout << std::endl;
-
-                                if (lodHdrSize < decomp.size()) {
-                                    size_t startPrint = (lodHdrSize >= 16) ? (lodHdrSize - 16) : 0;
-                                    std::cout << "Decompressed payload at lodHdrSize - 16 (" << startPrint << "): ";
-                                    for (size_t i = startPrint; i < std::min<size_t>(lodHdrSize + 80, decomp.size()); ++i) {
-                                        printf("%02X ", decomp[i]);
-                                    }
-                                    std::cout << std::endl;
-                                }
-                            }
-
-                            // Let's try to parse as DynModel
-                            std::cout << "--- Parsing as DynModel ---" << std::endl;
-                            DagorFormats::DynModelReader dynReader(payload);
-                            try {
-                                dynReader.Parse();
-                                std::cout << "DynModel Parse SUCCESS! LODs: " << dynReader.GetLods().size() << std::endl;
-                            } catch (const std::exception& e) {
-                                std::cout << "DynModel Parse failed: " << e.what() << std::endl;
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    std::cout << "Failed to parse GRP: " << (contents ? contents->error : "null") << std::endl;
-                }
-            }
-            else
-            {
-                std::cout << "File does not exist: " << grpPath.string() << std::endl;
-            }
-        }
-    }
 
     return 0;
 }
