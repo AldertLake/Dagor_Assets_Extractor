@@ -1546,7 +1546,8 @@ namespace DagorAssetsExtractor::UI
 
         ImGui::Separator();
 
-        if (ImGui::BeginChild(id, ImVec2(0.0f, height), true, ImGuiWindowFlags_HorizontalScrollbar))
+        const bool childVisible = ImGui::BeginChild(id, ImVec2(0.0f, height), true, ImGuiWindowFlags_HorizontalScrollbar);
+        if (childVisible)
         {
             auto logs = logger.GetSnapshot();
             for (size_t i = 0; i < logs.size(); ++i)
@@ -1576,9 +1577,9 @@ namespace DagorAssetsExtractor::UI
             {
                 ImGui::SetScrollHereY(1.0f);
             }
-
-            ImGui::EndChild();
         }
+
+        ImGui::EndChild();
     }
 
     void DrawJobAndLogPanel(AppState& app)

@@ -24,6 +24,8 @@ namespace
 {
     using DagorAssetsExtractor::AssetIndex::SubAssetRecord;
     using DagorAssetsExtractor::Export::ExportManifest;
+    using DagorAssetsExtractor::Export::AnimationClip;
+    using DagorAssetsExtractor::Export::AnimationNodeTrack;
     using DagorAssetsExtractor::Export::GlbExportOptions;
     using DagorAssetsExtractor::Export::MaterialInfo;
     using DagorAssetsExtractor::Export::MaterialTextureSemantic;
@@ -281,6 +283,140 @@ namespace
         return std::string(reinterpret_cast<const char*>(bytes.data() + 20), jsonLength);
     }
 
+    std::vector<uint8_t> ExtractGlbBin(const std::filesystem::path& path)
+    {
+        const std::vector<uint8_t> bytes = ReadFileBytes(path);
+        Expect(bytes.size() >= 20, "GLB file is too small.");
+
+        const uint32_t jsonLength =
+            static_cast<uint32_t>(bytes[12]) |
+            (static_cast<uint32_t>(bytes[13]) << 8) |
+            (static_cast<uint32_t>(bytes[14]) << 16) |
+            (static_cast<uint32_t>(bytes[15]) << 24);
+        Expect(bytes.size() >= 20ull + jsonLength + 8ull, "GLB BIN chunk header is missing.");
+
+        const size_t binChunkOffset = 20ull + jsonLength;
+        const uint32_t binLength =
+            static_cast<uint32_t>(bytes[binChunkOffset + 0]) |
+            (static_cast<uint32_t>(bytes[binChunkOffset + 1]) << 8) |
+            (static_cast<uint32_t>(bytes[binChunkOffset + 2]) << 16) |
+            (static_cast<uint32_t>(bytes[binChunkOffset + 3]) << 24);
+        const uint32_t binType =
+            static_cast<uint32_t>(bytes[binChunkOffset + 4]) |
+            (static_cast<uint32_t>(bytes[binChunkOffset + 5]) << 8) |
+            (static_cast<uint32_t>(bytes[binChunkOffset + 6]) << 16) |
+            (static_cast<uint32_t>(bytes[binChunkOffset + 7]) << 24);
+
+        Expect(binType == 0x004E4942u, "GLB BIN chunk type is invalid.");
+        Expect(bytes.size() >= binChunkOffset + 8ull + binLength, "GLB BIN chunk is truncated.");
+        return std::vector<uint8_t>(
+            bytes.begin() + static_cast<std::ptrdiff_t>(binChunkOffset + 8ull),
+            bytes.begin() + static_cast<std::ptrdiff_t>(binChunkOffset + 8ull + binLength));
+    }
+
+    float ReadLeFloat(const std::vector<uint8_t>& bytes, size_t offset)
+    {
+        Expect(offset + sizeof(float) <= bytes.size(), "Float read is out of bounds.");
+        float value = 0.0f;
+        std::memcpy(&value, bytes.data() + offset, sizeof(float));
+        return value;
+    }
+
+    uint32_t ReadLeUInt32(const std::vector<uint8_t>& bytes, size_t offset)
+    {
+        Expect(offset + sizeof(uint32_t) <= bytes.size(), "UInt32 read is out of bounds.");
+        uint32_t value = 0;
+        std::memcpy(&value, bytes.data() + offset, sizeof(uint32_t));
+        return value;
+    }
+
+    void ExpectNear(float actual, float expected, const std::string& message)
+    {
+        if (std::fabs(actual - expected) > 1e-4f)
+        {
+            Fail(message + " expected=" + std::to_string(expected) + " actual=" + std::to_string(actual));
+        }
+    }
+
+    void ExpectRigidDynTriangleGeometry(
+        const std::filesystem::path& glbPath,
+        float expectedX,
+        float expectedY,
+        float expectedZ)
+    {
+        constexpr size_t kPackedVertexStride = 56;
+        constexpr size_t kVertexCount = 3;
+        constexpr size_t kIndexOffset = kPackedVertexStride * kVertexCount;
+
+        const std::vector<uint8_t> bin = ExtractGlbBin(glbPath);
+        Expect(bin.size() >= kIndexOffset + 12, "DynModel validation BIN payload is too small.");
+
+        ExpectNear(ReadLeFloat(bin, 0), expectedX, "DynModel vertex X mismatch.");
+        ExpectNear(ReadLeFloat(bin, 4), expectedY, "DynModel vertex Y mismatch.");
+        ExpectNear(ReadLeFloat(bin, 8), expectedZ, "DynModel vertex Z mismatch.");
+        ExpectNear(ReadLeFloat(bin, 12), 0.0f, "DynModel normal X mismatch.");
+        ExpectNear(ReadLeFloat(bin, 16), 0.0f, "DynModel normal Y mismatch.");
+        ExpectNear(ReadLeFloat(bin, 20), 1.0f, "DynModel normal Z mismatch.");
+
+        Expect(ReadLeUInt32(bin, kIndexOffset + 0) == 0, "DynModel triangle index 0 mismatch.");
+        Expect(ReadLeUInt32(bin, kIndexOffset + 4) == 1, "DynModel triangle index 1 mismatch.");
+        Expect(ReadLeUInt32(bin, kIndexOffset + 8) == 2, "DynModel triangle index 2 mismatch.");
+    }
+
+    std::array<float, 16> MakeTranslationMatrix(float x, float y, float z)
+    {
+        return {
+            1.0f, 0.0f, 0.0f, x,
+            0.0f, 1.0f, 0.0f, y,
+            0.0f, 0.0f, 1.0f, z,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+    }
+
+    std::array<float, 16> MakeInverseTranslationMatrix(float x, float y, float z)
+    {
+        return MakeTranslationMatrix(-x, -y, -z);
+    }
+
+    DagorFormats::GeomNodeTreeNode MakeSkeletonNode(const std::string& name, float x, float y, float z)
+    {
+        DagorFormats::GeomNodeTreeNode node;
+        node.name = name;
+        node.localTransform = MakeTranslationMatrix(x, y, z);
+        node.worldTransform = node.localTransform;
+        node.inverseBindTransform = MakeInverseTranslationMatrix(x, y, z);
+        return node;
+    }
+
+    DagorFormats::DynModelMesh MakeRigidDynMesh(const std::string& name, const std::string& parentNodeName)
+    {
+        DagorFormats::DynModelMesh mesh;
+        mesh.name = name;
+        mesh.parentNodeName = parentNodeName;
+        mesh.useSkinning = false;
+
+        DagorFormats::SkinnedVertex v0{};
+        v0.x = 0.0f;
+        v0.y = 0.0f;
+        v0.z = 0.0f;
+        v0.nz = 1.0f;
+        v0.u = 0.0f;
+        v0.v = 0.0f;
+
+        DagorFormats::SkinnedVertex v1 = v0;
+        v1.x = 1.0f;
+        v1.u = 1.0f;
+
+        DagorFormats::SkinnedVertex v2 = v0;
+        v2.y = 1.0f;
+        v2.v = 1.0f;
+
+        mesh.vertices = { v0, v1, v2 };
+        mesh.indices = { 0, 1, 2 };
+        mesh.primitives.push_back({ 0, 0, 3 });
+        return mesh;
+    }
+
     void RunStep2Validation(const std::filesystem::path& tempRoot)
     {
         DirectX::ScratchImage rgba = MakeRgbaImage();
@@ -465,6 +601,175 @@ namespace
         Expect(maxActiveWorkers.load() >= 2, "JobSystem did not execute jobs concurrently.");
         Expect(jobs.RunningCount() == 0, "JobSystem still reports running jobs after JoinAll.");
     }
+
+    void RunDynModelRigidSkinValidation(const std::filesystem::path& tempRoot)
+    {
+        ExportManifest manifest;
+        manifest.skipWrite = true;
+
+        const std::filesystem::path glbPath = tempRoot / "dynmodel_rigid_skin.glb";
+        const std::vector<DagorFormats::GeomNodeTreeNode> skeleton = {
+            MakeSkeletonNode("hardpoint", 3.0f, 4.0f, 5.0f)
+        };
+        const std::vector<DagorFormats::DynModelMesh> lods = {
+            MakeRigidDynMesh("rigid_piece", "hardpoint")
+        };
+
+        Expect(
+            ModelExporter::ExportToGlb(glbPath, lods, skeleton, manifest),
+            "DynModel rigid-skin validation export failed.");
+
+        const std::string json = ExtractGlbJson(glbPath);
+        Expect(json.find("\"skins\"") != std::string::npos, "Rigid DynModel export did not emit a skin.");
+        Expect(
+            json.find("\"name\": \"rigid_piece\",\n      \"mesh\": 0,\n      \"skin\": 0\n    }") != std::string::npos,
+            "Rigid DynModel mesh node should be skinned without its own transform matrix.");
+        Expect(json.find("\"hardpoint__bind\"") == std::string::npos,
+            "Rigid DynModel export should not emit bind-wrapper nodes without animations.");
+        ExpectRigidDynTriangleGeometry(glbPath, 3.0f, 4.0f, -5.0f);
+    }
+
+    void RunDynModelRigidPlacementWithoutSkeletonValidation(const std::filesystem::path& tempRoot)
+    {
+        ExportManifest manifest;
+        manifest.skipWrite = true;
+
+        const std::filesystem::path glbPath = tempRoot / "dynmodel_rigid_no_skeleton.glb";
+        const std::vector<DagorFormats::GeomNodeTreeNode> skeleton = {
+            MakeSkeletonNode("hardpoint_no_skeleton", 6.0f, 7.0f, 8.0f)
+        };
+        const std::vector<DagorFormats::DynModelMesh> lods = {
+            MakeRigidDynMesh("rigid_piece_no_skeleton", "hardpoint_no_skeleton")
+        };
+
+        Expect(
+            ModelExporter::ExportToGlb(glbPath, lods, skeleton, manifest, {}, false),
+            "DynModel rigid no-skeleton export failed.");
+
+        const std::string json = ExtractGlbJson(glbPath);
+        Expect(json.find("\"skin\"") == std::string::npos,
+            "Rigid DynModel export without skeleton should not emit a skin.");
+        Expect(json.find("\"matrix\"") == std::string::npos,
+            "Rigid DynModel export without skeleton should bake placement instead of emitting node matrices.");
+        ExpectRigidDynTriangleGeometry(glbPath, 6.0f, 7.0f, -8.0f);
+    }
+
+    void RunDynModelBindRelativeAnimationValidation(const std::filesystem::path& tempRoot)
+    {
+        ExportManifest manifest;
+        manifest.skipWrite = true;
+
+        std::vector<DagorFormats::GeomNodeTreeNode> skeleton;
+        skeleton.reserve(6);
+        for (int i = 0; i < 6; ++i)
+        {
+            skeleton.push_back(MakeSkeletonNode(
+                "bone" + std::to_string(i),
+                1.0f + static_cast<float>(i),
+                0.5f * static_cast<float>(i + 1),
+                0.0f));
+        }
+
+        AnimationNodeTrack animatedTrack;
+        animatedTrack.nodeName = "bone0";
+        animatedTrack.times = { 0.0f, 1.0f };
+        animatedTrack.translations = {
+            { 0.0f, 0.0f, 0.0f },
+            { 0.25f, 0.0f, 0.0f }
+        };
+
+        AnimationClip clip;
+        clip.name = "bind_relative";
+        clip.nodeTracks.push_back(animatedTrack);
+        for (int i = 1; i < 6; ++i)
+        {
+            AnimationNodeTrack idleTrack;
+            idleTrack.nodeName = "bone" + std::to_string(i);
+            idleTrack.times = { 0.0f, 1.0f };
+            idleTrack.translations = {
+                { 0.0f, 0.0f, 0.0f },
+                { 0.0f, 0.0f, 0.0f }
+            };
+            clip.nodeTracks.push_back(std::move(idleTrack));
+        }
+
+        const std::filesystem::path glbPath = tempRoot / "dynmodel_bind_relative.glb";
+        Expect(
+            ModelExporter::ExportToGlb(
+                glbPath,
+                { MakeRigidDynMesh("rigid_piece_anim", "bone0") },
+                skeleton,
+                manifest,
+                {},
+                true,
+                GlbExportOptions{},
+                { clip }),
+            "DynModel bind-relative animation export failed.");
+
+        const std::string json = ExtractGlbJson(glbPath);
+        Expect(json.find("\"animations\"") != std::string::npos,
+            "Bind-relative DynModel export did not emit animation data.");
+        Expect(json.find("\"bone0__bind\"") != std::string::npos,
+            "Bind-relative DynModel export did not emit bind-wrapper nodes.");
+        Expect(json.find("skeleton_dummy") == std::string::npos,
+            "Bind-relative DynModel export should not add the legacy skeleton dummy mesh.");
+        Expect(
+            json.find("\"name\": \"rigid_piece_anim\",\n      \"mesh\": 0,\n      \"skin\": 0\n    }") != std::string::npos,
+            "Bind-relative rigid DynModel mesh node should stay skinned without an object transform.");
+        ExpectRigidDynTriangleGeometry(glbPath, 1.0f, 0.5f, 0.0f);
+    }
+
+    void RunDynModelAbsoluteAnimationValidation(const std::filesystem::path& tempRoot)
+    {
+        ExportManifest manifest;
+        manifest.skipWrite = true;
+
+        const std::vector<DagorFormats::GeomNodeTreeNode> skeleton = {
+            MakeSkeletonNode("bone_absolute_0", 2.0f, 0.0f, 0.0f),
+            MakeSkeletonNode("bone_absolute_1", 4.0f, 1.0f, 0.0f)
+        };
+
+        AnimationClip clip;
+        clip.name = "absolute_local";
+
+        AnimationNodeTrack track0;
+        track0.nodeName = "bone_absolute_0";
+        track0.times = { 0.0f, 1.0f };
+        track0.translations = {
+            { 2.0f, 0.0f, 0.0f },
+            { 2.5f, 0.0f, 0.0f }
+        };
+        clip.nodeTracks.push_back(track0);
+
+        AnimationNodeTrack track1;
+        track1.nodeName = "bone_absolute_1";
+        track1.times = { 0.0f, 1.0f };
+        track1.translations = {
+            { 4.0f, 1.0f, 0.0f },
+            { 4.5f, 1.0f, 0.0f }
+        };
+        clip.nodeTracks.push_back(track1);
+
+        const std::filesystem::path glbPath = tempRoot / "dynmodel_absolute.glb";
+        Expect(
+            ModelExporter::ExportToGlb(
+                glbPath,
+                { MakeRigidDynMesh("rigid_piece_absolute", "bone_absolute_0") },
+                skeleton,
+                manifest,
+                {},
+                true,
+                GlbExportOptions{},
+                { clip }),
+            "DynModel absolute animation export failed.");
+
+        const std::string json = ExtractGlbJson(glbPath);
+        Expect(json.find("\"animations\"") != std::string::npos,
+            "Absolute DynModel export did not emit animation data.");
+        Expect(json.find("__bind") == std::string::npos,
+            "Absolute DynModel export should not emit bind-wrapper nodes.");
+        ExpectRigidDynTriangleGeometry(glbPath, 2.0f, 0.0f, 0.0f);
+    }
 }
 
 int main()
@@ -477,6 +782,10 @@ int main()
         RunStep3GlbValidation(tempRoot);
         RunVromfsValidation();
         RunJobSystemValidation();
+        RunDynModelRigidSkinValidation(tempRoot);
+        RunDynModelRigidPlacementWithoutSkeletonValidation(tempRoot);
+        RunDynModelBindRelativeAnimationValidation(tempRoot);
+        RunDynModelAbsoluteAnimationValidation(tempRoot);
         std::cout << "Validation succeeded: " << tempRoot.string() << std::endl;
         return 0;
     }
