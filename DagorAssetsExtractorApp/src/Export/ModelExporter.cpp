@@ -1217,6 +1217,12 @@ namespace DagorAssetsExtractor::Export
             return result;
         }
 
+        std::array<float, 4> InverseQuaternion(std::array<float, 4> rotation)
+        {
+            NormalizeQuatInPlace(rotation);
+            return { -rotation[0], -rotation[1], -rotation[2], rotation[3] };
+        }
+
         GltfNodeTrs ApplyAdditiveTrackToBase(
             const GltfNodeTrs& base,
             const std::array<float, 3>& translation,
@@ -1382,13 +1388,51 @@ namespace DagorAssetsExtractor::Export
             std::vector<std::array<float, 3>> scales;
         };
 
-        void ForcePreparedTrackToStartAtRest(
+        void RebasePreparedTrackToRest(
             PreparedAnimationNodeTrack& prepared,
             const GltfNodeTrs& restTrs)
         {
             if (prepared.times.empty())
             {
                 return;
+            }
+
+            const std::array<float, 3> firstTranslation =
+                prepared.translations.empty()
+                    ? restTrs.translation
+                    : prepared.translations.front();
+            const std::array<float, 4> firstRotation =
+                prepared.rotations.empty()
+                    ? restTrs.rotation
+                    : prepared.rotations.front();
+            const std::array<float, 3> firstScale =
+                prepared.scales.empty()
+                    ? restTrs.scale
+                    : prepared.scales.front();
+            const std::array<float, 4> invFirstRotation = InverseQuaternion(firstRotation);
+
+            for (std::array<float, 3>& translation : prepared.translations)
+            {
+                translation = {
+                    restTrs.translation[0] + (translation[0] - firstTranslation[0]),
+                    restTrs.translation[1] + (translation[1] - firstTranslation[1]),
+                    restTrs.translation[2] + (translation[2] - firstTranslation[2]),
+                };
+            }
+
+            for (std::array<float, 4>& rotation : prepared.rotations)
+            {
+                const std::array<float, 4> delta = MultiplyQuaternions(rotation, invFirstRotation);
+                rotation = MultiplyQuaternions(delta, restTrs.rotation);
+            }
+
+            for (std::array<float, 3>& scale : prepared.scales)
+            {
+                scale = {
+                    std::fabs(firstScale[0]) > 1e-6f ? restTrs.scale[0] * (scale[0] / firstScale[0]) : restTrs.scale[0],
+                    std::fabs(firstScale[1]) > 1e-6f ? restTrs.scale[1] * (scale[1] / firstScale[1]) : restTrs.scale[1],
+                    std::fabs(firstScale[2]) > 1e-6f ? restTrs.scale[2] * (scale[2] / firstScale[2]) : restTrs.scale[2],
+                };
             }
 
             constexpr float kFirstSampleEpsilon = 1e-5f;
@@ -1589,7 +1633,7 @@ namespace DagorAssetsExtractor::Export
                 }
             }
 
-            ForcePreparedTrackToStartAtRest(prepared, firstSampleRestTrs);
+            RebasePreparedTrackToRest(prepared, firstSampleRestTrs);
             return prepared;
         }
 
@@ -1895,7 +1939,7 @@ namespace DagorAssetsExtractor::Export
                             track,
                             restTrs,
                             targetRestTrs,
-                            !useBindWrapperAnimationNodes);
+                            false);
                     const std::vector<std::array<float, 3>>& preparedTranslations = preparedTrack.translations;
                     const std::vector<std::array<float, 4>>& preparedRotations = preparedTrack.rotations;
                     const std::vector<std::array<float, 3>>& preparedScales = preparedTrack.scales;
@@ -1937,7 +1981,7 @@ namespace DagorAssetsExtractor::Export
                         "translation",
                         "VEC3",
                         nextBufferView,
-                        track.times,
+                        preparedTrack.times,
                         preparedTranslations,
                         [](const std::array<float, 3>& value) { return value; },
                         skipTranslationCurve || redundantTranslationCurve);
@@ -1956,7 +2000,7 @@ namespace DagorAssetsExtractor::Export
                         "rotation",
                         "VEC4",
                         nextBufferView,
-                        track.times,
+                        preparedTrack.times,
                         preparedRotations,
                         [](const std::array<float, 4>& value) { return value; },
                         skipRotationCurve || redundantRotationCurve);
@@ -1975,7 +2019,7 @@ namespace DagorAssetsExtractor::Export
                         "scale",
                         "VEC3",
                         nextBufferView,
-                        track.times,
+                        preparedTrack.times,
                         preparedScales,
                         [](const std::array<float, 3>& value) { return value; },
                         true);
@@ -2052,7 +2096,8 @@ namespace DagorAssetsExtractor::Export
                         clip,
                         track,
                         skeletonLocalTrsGltf[skeletonNodeIndex],
-                        skeletonLocalTrsGltf[skeletonNodeIndex]);
+                        skeletonLocalTrsGltf[skeletonNodeIndex],
+                        false);
                     hasPreparedTrack[skeletonNodeIndex] = true;
                 }
 

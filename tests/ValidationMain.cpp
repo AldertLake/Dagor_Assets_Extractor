@@ -999,10 +999,10 @@ namespace
 
         AnimationNodeTrack track;
         track.nodeName = "rotated_action_bone";
-        track.times = { 0.0f, 1.0f };
+        track.times = { 0.5f, 1.0f };
         track.rotations = {
             { 0.0f, 0.0f, 0.0f, 1.0f },
-            { 0.0f, 0.0f, 0.0f, 1.0f }
+            { 0.0f, 0.0f, 0.38268343f, 0.9238795f }
         };
         clip.nodeTracks.push_back(track);
 
