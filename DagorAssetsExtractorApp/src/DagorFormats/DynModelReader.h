@@ -12,7 +12,7 @@ struct SkinnedVertex {
     float x, y, z;
     float nx, ny, nz;
     float u, v;
-    uint8_t jointIndices[4];
+    uint16_t jointIndices[4];
     float jointWeights[4];
     UvTransform uvTransform = UvTransform::None;
 };
@@ -24,6 +24,9 @@ struct DynModelMesh {
     std::vector<SkinnedVertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<RendInstPrimitive> primitives;
+    std::vector<std::string> skinJointNodeNames;
+    std::vector<std::array<float, 16>> skinInverseBindTransforms;
+    std::vector<std::vector<uint16_t>> skinMaterialPalettes;
 };
 
 class DynModelReader {

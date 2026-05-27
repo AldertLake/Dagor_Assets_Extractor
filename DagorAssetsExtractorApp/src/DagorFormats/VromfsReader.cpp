@@ -108,16 +108,22 @@ void VromfsReader::Parse() {
     std::string platform = reader.ReadString(4);
     uint32_t originalSize = reader.ReadUInt32();
     
-    uint32_t packedAndType = reader.ReadUInt32();
-    uint32_t packedSize = packedAndType & 0x00FFFFFF;
-    uint8_t type = (packedAndType >> 24) & 0xFF;
+    const uint32_t packedAndType = reader.ReadUInt32();
+    const uint32_t packedSizeLow24 = packedAndType & 0x00FFFFFFu;
+    const uint8_t type = static_cast<uint8_t>((packedAndType >> 24) & 0xFFu);
     const uint8_t typeClass = type & 0xC0u;
-    const uint8_t typeFlags = type & 0x3Fu;
+    const uint8_t packedSizeHighBits = type & 0x3Fu;
+    // Dagor VROMFS stores the packed body size across the low 24 header bits and
+    // the low 6 bits of the type byte. Large archives such as aces.vromfs.bin use
+    // those extra bits once the packed body grows past 16 MiB.
+    const uint32_t packedSize = packedSizeLow24 | (static_cast<uint32_t>(packedSizeHighBits) << 24);
     AddDiagnostic(
         "Header: magic=" + magic +
         ", platform=" + formatAscii(platform) +
         ", originalSize=" + std::to_string(originalSize) +
         ", packedSize=" + std::to_string(packedSize) +
+        ", packedSizeLow24=" + std::to_string(packedSizeLow24) +
+        ", packedSizeHighBits=" + std::to_string(packedSizeHighBits) +
         ", type=0x" + [&]() {
             std::ostringstream out;
             out << std::hex << std::uppercase << static_cast<unsigned int>(type);
@@ -128,9 +134,9 @@ void VromfsReader::Parse() {
             out << std::hex << std::uppercase << static_cast<unsigned int>(typeClass);
             return out.str();
         }() +
-        ", typeFlags=0x" + [&]() {
+        ", typeLowBits=0x" + [&]() {
             std::ostringstream out;
-            out << std::hex << std::uppercase << static_cast<unsigned int>(typeFlags);
+            out << std::hex << std::uppercase << static_cast<unsigned int>(packedSizeHighBits);
             return out.str();
         }());
 

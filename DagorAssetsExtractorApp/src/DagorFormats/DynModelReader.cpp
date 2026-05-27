@@ -491,6 +491,20 @@ void DynModelReader::ParseRealGrpPayload() {
         std::vector<ShaderMeshElem> elements;
     };
 
+    struct PatchableTabRef
+    {
+        uint32_t offset = 0;
+        uint32_t count = 0;
+    };
+
+    struct SkinnedMeshBlock
+    {
+        ShaderMesh mesh;
+        std::vector<uint16_t> boneNodeIds;
+        std::vector<std::array<float, 16>> inverseBindTransforms;
+        std::vector<std::vector<uint16_t>> materialBonePalettes;
+    };
+
     struct RigidObject
     {
         uint32_t nodeId = 0;
@@ -507,8 +521,12 @@ void DynModelReader::ParseRealGrpPayload() {
     struct SkinnedLod
     {
         std::vector<uint32_t> skinNodes;
-        std::vector<ShaderMesh> meshes;
+        std::vector<SkinnedMeshBlock> meshes;
     };
+
+    constexpr size_t kPatchableTabSize = 16;
+    constexpr size_t kPatchablePtrSize = 8;
+    constexpr size_t kTMatrixByteSize = sizeof(float) * 12;
 
     auto readU24 = [](std::span<const uint8_t> data) -> uint32_t
     {
@@ -617,6 +635,151 @@ void DynModelReader::ParseRealGrpPayload() {
         }
 
         return mesh;
+    };
+
+    auto readU64 = [](std::span<const uint8_t> data, size_t offset) -> uint64_t
+    {
+        return static_cast<uint64_t>(ReadU32(data, offset)) |
+            (static_cast<uint64_t>(ReadU32(data, offset + sizeof(uint32_t))) << 32);
+    };
+
+    const auto readPatchablePtrOffset = [&](std::span<const uint8_t> data, size_t offset) -> uint32_t
+    {
+        const uint32_t rawOffset = ReadU32(data, offset);
+        if (static_cast<int32_t>(rawOffset) < 0)
+        {
+            return 0xFFFFFFFFu;
+        }
+        return rawOffset;
+    };
+
+    const auto readPatchableTab = [&](std::span<const uint8_t> data, size_t offset) -> PatchableTabRef
+    {
+        const uint64_t raw = readU64(data, offset);
+        PatchableTabRef ref;
+        ref.offset = static_cast<uint32_t>(raw & 0xFFFFFFFFu);
+        ref.count = static_cast<uint32_t>(raw >> 32);
+        if (ref.count == 0)
+        {
+            ref.offset = 0;
+        }
+        return ref;
+    };
+
+    const auto readTMatrix43AsRowMajor = [&](std::span<const uint8_t> data, size_t offset) -> std::array<float, 16>
+    {
+        if (!IsRangeWithin(offset, kTMatrixByteSize, data.size()))
+        {
+            throw std::runtime_error("DynModel skinned inverse-bind matrix is out of bounds");
+        }
+
+        DagorIO::MemoryReader reader(data.subspan(offset, kTMatrixByteSize));
+        float columns[12] = {};
+        for (float& value : columns)
+        {
+            value = reader.ReadFloat();
+        }
+
+        return {
+            columns[0], columns[3], columns[6],  columns[9],
+            columns[1], columns[4], columns[7],  columns[10],
+            columns[2], columns[5], columns[8],  columns[11],
+            0.0f,       0.0f,       0.0f,        1.0f,
+        };
+    };
+
+    const auto parseSkinnedMeshBlock = [&](std::span<const uint8_t> blockBytes) -> SkinnedMeshBlock
+    {
+        if (blockBytes.size() < (kPatchableTabSize * 2) + (kPatchablePtrSize * 3))
+        {
+            throw std::runtime_error("DynModel skinned mesh block header is truncated");
+        }
+
+        SkinnedMeshBlock block;
+        const PatchableTabRef boneOrgTmRef = readPatchableTab(blockBytes, 0);
+        const PatchableTabRef matTabRef = readPatchableTab(blockBytes, kPatchableTabSize);
+        const uint32_t boneNodeIdOffset = readPatchablePtrOffset(blockBytes, kPatchableTabSize * 2);
+        const size_t shaderMeshOffset = (kPatchableTabSize * 2) + (kPatchablePtrSize * 3);
+
+        if (boneOrgTmRef.count > 0)
+        {
+            const size_t boneTableBytes = static_cast<size_t>(boneOrgTmRef.count) * kTMatrixByteSize;
+            if (!IsRangeWithin(boneOrgTmRef.offset, boneTableBytes, blockBytes.size()))
+            {
+                throw std::runtime_error("DynModel skinned bone-org table is out of bounds");
+            }
+            block.inverseBindTransforms.reserve(boneOrgTmRef.count);
+            for (uint32_t boneIndex = 0; boneIndex < boneOrgTmRef.count; ++boneIndex)
+            {
+                block.inverseBindTransforms.push_back(
+                    readTMatrix43AsRowMajor(
+                        blockBytes,
+                        static_cast<size_t>(boneOrgTmRef.offset) + (static_cast<size_t>(boneIndex) * kTMatrixByteSize)));
+            }
+        }
+
+        if (boneNodeIdOffset != 0xFFFFFFFFu && boneOrgTmRef.count > 0)
+        {
+            const size_t boneNodeBytes = static_cast<size_t>(boneOrgTmRef.count) * sizeof(int16_t);
+            if (!IsRangeWithin(boneNodeIdOffset, boneNodeBytes, blockBytes.size()))
+            {
+                throw std::runtime_error("DynModel skinned bone-node table is out of bounds");
+            }
+
+            DagorIO::MemoryReader boneReader(blockBytes.subspan(boneNodeIdOffset, boneNodeBytes));
+            block.boneNodeIds.reserve(boneOrgTmRef.count);
+            for (uint32_t boneIndex = 0; boneIndex < boneOrgTmRef.count; ++boneIndex)
+            {
+                const int16_t nodeId = boneReader.ReadInt16();
+                block.boneNodeIds.push_back(nodeId >= 0 ? static_cast<uint16_t>(nodeId) : 0u);
+            }
+        }
+
+        if (matTabRef.count > 0)
+        {
+            const size_t matTableBytes = static_cast<size_t>(matTabRef.count) * kPatchableTabSize;
+            if (!IsRangeWithin(matTabRef.offset, matTableBytes, blockBytes.size()))
+            {
+                throw std::runtime_error("DynModel skinned material palette table is out of bounds");
+            }
+
+            block.materialBonePalettes.resize(matTabRef.count);
+            for (uint32_t matIndex = 0; matIndex < matTabRef.count; ++matIndex)
+            {
+                const PatchableTabRef paletteRef = readPatchableTab(
+                    blockBytes,
+                    static_cast<size_t>(matTabRef.offset) + (static_cast<size_t>(matIndex) * kPatchableTabSize));
+
+                std::vector<uint16_t>& palette = block.materialBonePalettes[matIndex];
+                if (paletteRef.count == 0)
+                {
+                    palette.resize(block.inverseBindTransforms.size());
+                    for (size_t boneIndex = 0; boneIndex < palette.size(); ++boneIndex)
+                    {
+                        palette[boneIndex] = static_cast<uint16_t>(boneIndex);
+                    }
+                    continue;
+                }
+
+                const size_t paletteBytes = static_cast<size_t>(paletteRef.count) * sizeof(int16_t);
+                if (!IsRangeWithin(paletteRef.offset, paletteBytes, blockBytes.size()))
+                {
+                    throw std::runtime_error("DynModel skinned material bone palette is out of bounds");
+                }
+
+                DagorIO::MemoryReader paletteReader(blockBytes.subspan(paletteRef.offset, paletteBytes));
+                palette.reserve(paletteRef.count);
+                for (uint32_t paletteIndex = 0; paletteIndex < paletteRef.count; ++paletteIndex)
+                {
+                    const int16_t boneIndex = paletteReader.ReadInt16();
+                    palette.push_back(boneIndex >= 0 ? static_cast<uint16_t>(boneIndex) : 0u);
+                }
+            }
+        }
+
+        DagorIO::MemoryReader shaderMeshReader(blockBytes.subspan(shaderMeshOffset));
+        block.mesh = readShaderMesh(shaderMeshReader);
+        return block;
     };
 
     auto decodeMatVData = [&](std::span<const uint8_t> payload, int mvdFlag) -> std::vector<DecodedVertexData>
@@ -1189,7 +1352,8 @@ void DynModelReader::ParseRealGrpPayload() {
                             const float positionScale[3],
                             const float positionOffset[3],
                             bool useSkinning,
-                            size_t materialIndexOffset) -> DynModelMesh
+                            size_t materialIndexOffset,
+                            const std::vector<std::vector<uint16_t>>* materialBonePalettes = nullptr) -> DynModelMesh
     {
         DynModelMesh mesh;
         mesh.name = meshName;
@@ -1198,7 +1362,30 @@ void DynModelReader::ParseRealGrpPayload() {
 
         std::unordered_map<uint32_t, size_t> orderGroupIndices;
         std::vector<std::vector<const ShaderMeshElem*>> orderedGroups;
-        std::unordered_map<uint64_t, uint32_t> remappedVertices;
+        struct VertexRemapKey
+        {
+            uint32_t vertexDataIndex = 0;
+            uint32_t localVertex = 0;
+            uint32_t paletteSeed = 0;
+
+            bool operator==(const VertexRemapKey& other) const
+            {
+                return vertexDataIndex == other.vertexDataIndex &&
+                    localVertex == other.localVertex &&
+                    paletteSeed == other.paletteSeed;
+            }
+        };
+        struct VertexRemapKeyHash
+        {
+            size_t operator()(const VertexRemapKey& key) const noexcept
+            {
+                size_t hash = static_cast<size_t>(key.vertexDataIndex);
+                hash ^= (static_cast<size_t>(key.localVertex) << 1);
+                hash ^= (static_cast<size_t>(key.paletteSeed) << 2);
+                return hash;
+            }
+        };
+        std::unordered_map<VertexRemapKey, uint32_t, VertexRemapKeyHash> remappedVertices;
 
         for (const auto& element : elements)
         {
@@ -1274,9 +1461,15 @@ void DynModelReader::ParseRealGrpPayload() {
                     const uint32_t localVertex =
                         source.indices[element->startIndex + localIndex] +
                         element->baseVertex;
-                    const uint64_t vertexKey =
-                        (static_cast<uint64_t>(element->vertexDataIndex) << 32) |
-                        static_cast<uint64_t>(localVertex);
+                    const uint32_t paletteSeed =
+                        (useSkinning && materialBonePalettes != nullptr && !materialBonePalettes->empty())
+                            ? element->materialIndex
+                            : 0u;
+                    const VertexRemapKey vertexKey{
+                        element->vertexDataIndex,
+                        localVertex,
+                        paletteSeed,
+                    };
 
                     const auto existing = remappedVertices.find(vertexKey);
                     if (existing != remappedVertices.end())
@@ -1291,6 +1484,23 @@ void DynModelReader::ParseRealGrpPayload() {
                     }
 
                     SkinnedVertex vertex = source.vertices[localVertex];
+                    if (useSkinning &&
+                        materialBonePalettes != nullptr &&
+                        element->materialIndex < materialBonePalettes->size())
+                    {
+                        const std::vector<uint16_t>& palette = (*materialBonePalettes)[element->materialIndex];
+                        if (!palette.empty())
+                        {
+                            for (int joint = 0; joint < 4; ++joint)
+                            {
+                                const uint16_t paletteIndex = vertex.jointIndices[joint];
+                                if (paletteIndex < palette.size())
+                                {
+                                    vertex.jointIndices[joint] = palette[paletteIndex];
+                                }
+                            }
+                        }
+                    }
                     vertex.x = (vertex.x * positionScale[0]) + positionOffset[0];
                     vertex.y = (vertex.y * positionScale[1]) + positionOffset[1];
                     vertex.z = (vertex.z * positionScale[2]) + positionOffset[2];
@@ -1707,20 +1917,9 @@ void DynModelReader::ParseRealGrpPayload() {
                         skinnedLod.meshes.reserve(skinCount);
                         for (uint32_t skinIdx = 0; skinIdx < skinCount; ++skinIdx)
                         {
-                            DagorIO::MemoryReader blockReader(skinsReader.ReadSpan(static_cast<size_t>(blockSizes[skinIdx])));
-                            blockReader.ReadUInt32();
-                            blockReader.ReadUInt32();
-                            blockReader.Skip(8);
-                            blockReader.ReadUInt32();
-                            blockReader.ReadUInt32();
-                            blockReader.Skip(8);
-                            blockReader.ReadUInt32();
-                            blockReader.ReadUInt32();
-                            blockReader.ReadUInt32();
-                            blockReader.ReadUInt32();
-                            blockReader.ReadUInt32();
-                            blockReader.ReadUInt32();
-                            skinnedLod.meshes.push_back(readShaderMesh(blockReader));
+                            skinnedLod.meshes.push_back(
+                                parseSkinnedMeshBlock(
+                                    skinsReader.ReadSpan(static_cast<size_t>(blockSizes[skinIdx]))));
                         }
                     }
                 }
@@ -1746,6 +1945,13 @@ void DynModelReader::ParseRealGrpPayload() {
             }
         }
     };
+    auto appendMaterialIdsFromBlock = [&](const SkinnedMeshBlock& meshBlock)
+    {
+        for (const ShaderMeshElem& element : meshBlock.mesh.elements)
+        {
+            rawMaterialIds.push_back(element.materialIndex);
+        }
+    };
 
     if (exportLod < lods.size())
     {
@@ -1753,7 +1959,10 @@ void DynModelReader::ParseRealGrpPayload() {
     }
     if (exportLod < skinnedLods.size())
     {
-        appendMaterialIds(skinnedLods[exportLod].meshes);
+        for (const SkinnedMeshBlock& meshBlock : skinnedLods[exportLod].meshes)
+        {
+            appendMaterialIdsFromBlock(meshBlock);
+        }
     }
 
     std::sort(rawMaterialIds.begin(), rawMaterialIds.end());
@@ -1800,6 +2009,7 @@ void DynModelReader::ParseRealGrpPayload() {
         const auto& skinnedLod = skinnedLods[exportLod];
         for (size_t skinIndex = 0; skinIndex < skinnedLod.meshes.size(); ++skinIndex)
         {
+            const SkinnedMeshBlock& meshBlock = skinnedLod.meshes[skinIndex];
             const std::string parentNodeName = skinIndex < skinnedLod.skinNodes.size()
                 ? resolveNodeName(sceneNodeNames, skinNodeMap, skinnedLod.skinNodes[skinIndex])
                 : std::string();
@@ -1809,12 +2019,20 @@ void DynModelReader::ParseRealGrpPayload() {
             DynModelMesh mesh = assembleMesh(
                 meshName,
                 parentNodeName,
-                skinnedLod.meshes[skinIndex].elements,
+                meshBlock.mesh.elements,
                 skinnedVertexData,
                 positionScale,
                 positionOffset,
                 true,
-                numRigidMaterials);
+                numRigidMaterials,
+                &meshBlock.materialBonePalettes);
+            mesh.skinInverseBindTransforms = meshBlock.inverseBindTransforms;
+            mesh.skinMaterialPalettes = meshBlock.materialBonePalettes;
+            mesh.skinJointNodeNames.reserve(meshBlock.boneNodeIds.size());
+            for (uint16_t nodeId : meshBlock.boneNodeIds)
+            {
+                mesh.skinJointNodeNames.push_back(resolveNodeName(sceneNodeNames, skinNodeMap, nodeId));
+            }
             if (!mesh.vertices.empty() && !mesh.indices.empty())
             {
                 m_lods.push_back(std::move(mesh));

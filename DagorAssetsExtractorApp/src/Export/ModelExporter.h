@@ -42,6 +42,7 @@ namespace DagorAssetsExtractor::Export
     struct AnimationClip
     {
         std::string name;
+        bool additive = false;
         std::vector<AnimationNodeTrack> nodeTracks;
         std::vector<std::string> diagnostics;
     };

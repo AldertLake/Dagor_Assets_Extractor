@@ -314,6 +314,185 @@ namespace
             bytes.begin() + static_cast<std::ptrdiff_t>(binChunkOffset + 8ull + binLength));
     }
 
+    void VerifyGlbBufferViewsAndAccessors(const std::filesystem::path& glbPath)
+    {
+        const std::string json = ExtractGlbJson(glbPath);
+
+        // Find "bufferViews" array
+        size_t bufferViewsPos = json.find("\"bufferViews\"");
+        Expect(bufferViewsPos != std::string::npos, "GLB JSON lacks bufferViews array.");
+
+        // Find the start and end of the bufferViews array block
+        size_t startBracket = json.find('[', bufferViewsPos);
+        Expect(startBracket != std::string::npos, "GLB JSON bufferViews array start not found.");
+
+        // Find matching closing bracket for bufferViews
+        int bracketDepth = 1;
+        size_t endBracket = startBracket + 1;
+        while (endBracket < json.size() && bracketDepth > 0)
+        {
+            if (json[endBracket] == '[') bracketDepth++;
+            else if (json[endBracket] == ']') bracketDepth--;
+            endBracket++;
+        }
+        Expect(bracketDepth == 0, "GLB JSON bufferViews array is not properly closed.");
+
+        std::string bufferViewsSection = json.substr(startBracket, endBracket - startBracket);
+
+        // Count occurrences of `"buffer":` in the bufferViews array
+        size_t numBufferViews = 0;
+        size_t searchPos = 0;
+        while ((searchPos = bufferViewsSection.find("\"buffer\"", searchPos)) != std::string::npos)
+        {
+            numBufferViews++;
+            searchPos += 8;
+        }
+
+        Expect(numBufferViews > 0, "GLB JSON has zero bufferViews.");
+
+        // Find all occurrences of `"bufferView": X` in the entire JSON
+        searchPos = 0;
+        while ((searchPos = json.find("\"bufferView\"", searchPos)) != std::string::npos)
+        {
+            // Skip the key and find the colon and the integer value
+            size_t colonPos = json.find(':', searchPos);
+            Expect(colonPos != std::string::npos, "GLB JSON bufferView key has no colon.");
+
+            // Parse integer
+            size_t valPos = colonPos + 1;
+            while (valPos < json.size() && (std::isspace(static_cast<unsigned char>(json[valPos]))))
+            {
+                valPos++;
+            }
+            Expect(valPos < json.size(), "GLB JSON bufferView value is missing.");
+
+            size_t valEnd = valPos;
+            while (valEnd < json.size() && std::isdigit(static_cast<unsigned char>(json[valEnd])))
+            {
+                valEnd++;
+            }
+            Expect(valEnd > valPos, "GLB JSON bufferView value is not an integer.");
+
+            std::string valStr = json.substr(valPos, valEnd - valPos);
+            long long bufferViewIndex = std::stoll(valStr);
+
+            Expect(bufferViewIndex >= 0 && bufferViewIndex < static_cast<long long>(numBufferViews),
+                "GLB JSON bufferView index " + valStr + " is out of bounds (total bufferViews: " + std::to_string(numBufferViews) + ").");
+
+            searchPos = valEnd;
+        }
+    }
+
+    long long ParseJsonIntegerAfter(const std::string& json, size_t start, const std::string& key)
+    {
+        const size_t keyPos = json.find(key, start);
+        Expect(keyPos != std::string::npos, "GLB JSON key not found: " + key);
+        const size_t colonPos = json.find(':', keyPos);
+        Expect(colonPos != std::string::npos, "GLB JSON key has no colon: " + key);
+
+        size_t valuePos = colonPos + 1;
+        while (valuePos < json.size() && std::isspace(static_cast<unsigned char>(json[valuePos])))
+        {
+            ++valuePos;
+        }
+        Expect(valuePos < json.size(), "GLB JSON integer value is missing: " + key);
+
+        size_t valueEnd = valuePos;
+        if (json[valueEnd] == '-')
+        {
+            ++valueEnd;
+        }
+        while (valueEnd < json.size() && std::isdigit(static_cast<unsigned char>(json[valueEnd])))
+        {
+            ++valueEnd;
+        }
+        Expect(valueEnd > valuePos, "GLB JSON value is not an integer: " + key);
+        return std::stoll(json.substr(valuePos, valueEnd - valuePos));
+    }
+
+    size_t FindJsonObjectInArray(const std::string& json, size_t arrayStart, size_t objectIndex)
+    {
+        Expect(arrayStart < json.size() && json[arrayStart] == '[', "GLB JSON array start is invalid.");
+
+        size_t currentObject = 0;
+        int objectDepth = 0;
+        for (size_t pos = arrayStart + 1; pos < json.size(); ++pos)
+        {
+            if (json[pos] == '{')
+            {
+                if (objectDepth == 0)
+                {
+                    if (currentObject == objectIndex)
+                    {
+                        return pos;
+                    }
+                    ++currentObject;
+                }
+                ++objectDepth;
+            }
+            else if (json[pos] == '}')
+            {
+                --objectDepth;
+                Expect(objectDepth >= 0, "GLB JSON object nesting underflow.");
+            }
+            else if (json[pos] == ']' && objectDepth == 0)
+            {
+                break;
+            }
+        }
+
+        Fail("GLB JSON array object index is out of bounds: " + std::to_string(objectIndex));
+    }
+
+    size_t FindJsonObjectInNamedArray(const std::string& json, const std::string& arrayName, size_t objectIndex)
+    {
+        const size_t arrayNamePos = json.find("\"" + arrayName + "\"");
+        Expect(arrayNamePos != std::string::npos, "GLB JSON array not found: " + arrayName);
+        const size_t arrayStart = json.find('[', arrayNamePos);
+        Expect(arrayStart != std::string::npos, "GLB JSON array start not found: " + arrayName);
+        return FindJsonObjectInArray(json, arrayStart, objectIndex);
+    }
+
+    std::array<float, 4> ReadFirstAnimationVec4ForPath(
+        const std::filesystem::path& glbPath,
+        const std::string& path)
+    {
+        const std::string json = ExtractGlbJson(glbPath);
+        const std::vector<uint8_t> bin = ExtractGlbBin(glbPath);
+
+        const size_t pathPos = json.find("\"path\": \"" + path + "\"");
+        Expect(pathPos != std::string::npos, "GLB JSON animation path not found: " + path);
+        const size_t samplerKeyPos = json.rfind("\"sampler\"", pathPos);
+        Expect(samplerKeyPos != std::string::npos, "GLB JSON animation channel lacks sampler.");
+        const size_t samplerIndex = static_cast<size_t>(ParseJsonIntegerAfter(json, samplerKeyPos, "\"sampler\""));
+
+        const size_t samplersPos = json.find("\"samplers\"", json.rfind("\"animations\"", pathPos));
+        Expect(samplersPos != std::string::npos, "GLB JSON animation samplers array not found.");
+        const size_t samplersArrayStart = json.find('[', samplersPos);
+        Expect(samplersArrayStart != std::string::npos, "GLB JSON animation samplers array start not found.");
+        const size_t samplerObject = FindJsonObjectInArray(json, samplersArrayStart, samplerIndex);
+        const size_t outputAccessor = static_cast<size_t>(ParseJsonIntegerAfter(json, samplerObject, "\"output\""));
+
+        const size_t accessorObject = FindJsonObjectInNamedArray(json, "accessors", outputAccessor);
+        const size_t bufferView = static_cast<size_t>(ParseJsonIntegerAfter(json, accessorObject, "\"bufferView\""));
+        const size_t bufferViewObject = FindJsonObjectInNamedArray(json, "bufferViews", bufferView);
+        const size_t byteOffset = static_cast<size_t>(ParseJsonIntegerAfter(json, bufferViewObject, "\"byteOffset\""));
+
+        Expect(byteOffset + (sizeof(float) * 4) <= bin.size(), "Animation VEC4 first sample is out of bounds.");
+        const auto readFloat = [&](size_t offset)
+        {
+            float value = 0.0f;
+            std::memcpy(&value, bin.data() + offset, sizeof(float));
+            return value;
+        };
+        return {
+            readFloat(byteOffset + 0),
+            readFloat(byteOffset + 4),
+            readFloat(byteOffset + 8),
+            readFloat(byteOffset + 12)
+        };
+    }
+
     float ReadLeFloat(const std::vector<uint8_t>& bytes, size_t offset)
     {
         Expect(offset + sizeof(float) <= bytes.size(), "Float read is out of bounds.");
@@ -385,6 +564,26 @@ namespace
         node.localTransform = MakeTranslationMatrix(x, y, z);
         node.worldTransform = node.localTransform;
         node.inverseBindTransform = MakeInverseTranslationMatrix(x, y, z);
+        return node;
+    }
+
+    DagorFormats::GeomNodeTreeNode MakeZRotatedSkeletonNode(const std::string& name)
+    {
+        DagorFormats::GeomNodeTreeNode node;
+        node.name = name;
+        node.localTransform = {
+            0.0f, -1.0f, 0.0f, 0.0f,
+            1.0f,  0.0f, 0.0f, 0.0f,
+            0.0f,  0.0f, 1.0f, 0.0f,
+            0.0f,  0.0f, 0.0f, 1.0f
+        };
+        node.worldTransform = node.localTransform;
+        node.inverseBindTransform = {
+             0.0f, 1.0f, 0.0f, 0.0f,
+            -1.0f, 0.0f, 0.0f, 0.0f,
+             0.0f, 0.0f, 1.0f, 0.0f,
+             0.0f, 0.0f, 0.0f, 1.0f
+        };
         return node;
     }
 
@@ -515,6 +714,7 @@ namespace
         Expect(json.find("normal.png") != std::string::npos, "GLB JSON is missing the normal image URI.");
         Expect(json.find("orm.png") != std::string::npos, "GLB JSON is missing the metallic-roughness image URI.");
         Expect(json.find("ao.png") != std::string::npos, "GLB JSON is missing the occlusion image URI.");
+        VerifyGlbBufferViewsAndAccessors(glbPath);
     }
 
     void RunVromfsValidation()
@@ -524,7 +724,7 @@ namespace
         file[6] = 'P';
         file[7] = 'C';
         WriteLe<uint32_t>(file, 0x08, 0u);
-        WriteLe<uint32_t>(file, 0x0C, 0x81000000u);
+        WriteLe<uint32_t>(file, 0x0C, 0x80000000u);
 
         const size_t body = 16;
         WriteLe<uint32_t>(file, body + 0x00, 0x20u);
@@ -619,7 +819,15 @@ namespace
             ModelExporter::ExportToGlb(glbPath, lods, skeleton, manifest),
             "DynModel rigid-skin validation export failed.");
 
+        VerifyGlbBufferViewsAndAccessors(glbPath);
+
         const std::string json = ExtractGlbJson(glbPath);
+        Expect(json.find("\"matrix\"") == std::string::npos,
+            "Rigid DynModel skeleton should be exported as TRS, not raw node matrices.");
+        Expect(json.find("\"scale\": [-") == std::string::npos,
+            "Rigid DynModel skeleton should not use negative scale to repair handedness.");
+        Expect(json.find("\"translation\": [3, 4, -5]") != std::string::npos,
+            "Rigid DynModel skeleton TRS did not preserve converted bind-pose translation.");
         Expect(json.find("\"skins\"") != std::string::npos, "Rigid DynModel export did not emit a skin.");
         Expect(
             json.find("\"name\": \"rigid_piece\",\n      \"mesh\": 0,\n      \"skin\": 0\n    }") != std::string::npos,
@@ -645,6 +853,8 @@ namespace
         Expect(
             ModelExporter::ExportToGlb(glbPath, lods, skeleton, manifest, {}, false),
             "DynModel rigid no-skeleton export failed.");
+
+        VerifyGlbBufferViewsAndAccessors(glbPath);
 
         const std::string json = ExtractGlbJson(glbPath);
         Expect(json.find("\"skin\"") == std::string::npos,
@@ -706,6 +916,8 @@ namespace
                 { clip }),
             "DynModel bind-relative animation export failed.");
 
+        VerifyGlbBufferViewsAndAccessors(glbPath);
+
         const std::string json = ExtractGlbJson(glbPath);
         Expect(json.find("\"animations\"") != std::string::npos,
             "Bind-relative DynModel export did not emit animation data.");
@@ -763,12 +975,71 @@ namespace
                 { clip }),
             "DynModel absolute animation export failed.");
 
+        VerifyGlbBufferViewsAndAccessors(glbPath);
+
         const std::string json = ExtractGlbJson(glbPath);
         Expect(json.find("\"animations\"") != std::string::npos,
             "Absolute DynModel export did not emit animation data.");
         Expect(json.find("__bind") == std::string::npos,
             "Absolute DynModel export should not emit bind-wrapper nodes.");
         ExpectRigidDynTriangleGeometry(glbPath, 2.0f, 0.0f, 0.0f);
+    }
+
+    void RunDynModelActionFirstFrameRestPoseValidation(const std::filesystem::path& tempRoot)
+    {
+        ExportManifest manifest;
+        manifest.skipWrite = true;
+
+        const std::vector<DagorFormats::GeomNodeTreeNode> skeleton = {
+            MakeZRotatedSkeletonNode("rotated_action_bone")
+        };
+
+        AnimationClip clip;
+        clip.name = "rest_frame_rotation";
+
+        AnimationNodeTrack track;
+        track.nodeName = "rotated_action_bone";
+        track.times = { 0.0f, 1.0f };
+        track.rotations = {
+            { 0.0f, 0.0f, 0.0f, 1.0f },
+            { 0.0f, 0.0f, 0.0f, 1.0f }
+        };
+        clip.nodeTracks.push_back(track);
+
+        const std::filesystem::path glbPath = tempRoot / "dynmodel_action_rest_frame.glb";
+        Expect(
+            ModelExporter::ExportToGlb(
+                glbPath,
+                { MakeRigidDynMesh("action_rest_mesh", std::string()) },
+                skeleton,
+                manifest,
+                {},
+                true,
+                GlbExportOptions{},
+                { clip }),
+            "DynModel action first-frame validation export failed.");
+
+        VerifyGlbBufferViewsAndAccessors(glbPath);
+
+        const std::array<float, 4> firstRotation =
+            ReadFirstAnimationVec4ForPath(glbPath, "rotation");
+        const float xyzMagnitude =
+            std::fabs(firstRotation[0]) +
+            std::fabs(firstRotation[1]) +
+            std::fabs(firstRotation[2]);
+        const float length =
+            std::sqrt(
+                (firstRotation[0] * firstRotation[0]) +
+                (firstRotation[1] * firstRotation[1]) +
+                (firstRotation[2] * firstRotation[2]) +
+                (firstRotation[3] * firstRotation[3]));
+        Expect(xyzMagnitude > 0.1f,
+            "Action first rotation sample should be restored to the non-identity rest pose.");
+        ExpectNear(length, 1.0f, "Action first rotation sample should remain normalized.");
+
+        const std::string json = ExtractGlbJson(glbPath);
+        Expect(json.find("\"scale\": [-") == std::string::npos,
+            "Action export should not use negative scale to repair handedness.");
     }
 }
 
@@ -786,6 +1057,7 @@ int main()
         RunDynModelRigidPlacementWithoutSkeletonValidation(tempRoot);
         RunDynModelBindRelativeAnimationValidation(tempRoot);
         RunDynModelAbsoluteAnimationValidation(tempRoot);
+        RunDynModelActionFirstFrameRestPoseValidation(tempRoot);
         std::cout << "Validation succeeded: " << tempRoot.string() << std::endl;
         return 0;
     }

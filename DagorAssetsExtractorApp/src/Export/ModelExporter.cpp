@@ -6,6 +6,7 @@
 #include <limits>
 #include <iomanip>
 #include <unordered_map>
+#include <unordered_set>
 #include <cctype>
 #include <string_view>
 #include <charconv>
@@ -231,6 +232,16 @@ namespace DagorAssetsExtractor::Export
             return fallback.str();
         }
 
+        std::array<float, 16> TransposeMatrix(const std::array<float, 16>& matrix)
+        {
+            return {
+                matrix[0], matrix[4], matrix[8],  matrix[12],
+                matrix[1], matrix[5], matrix[9],  matrix[13],
+                matrix[2], matrix[6], matrix[10], matrix[14],
+                matrix[3], matrix[7], matrix[11], matrix[15],
+            };
+        }
+
         bool NormalizeVector(float& x, float& y, float& z)
         {
             if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
@@ -291,6 +302,30 @@ namespace DagorAssetsExtractor::Export
             };
         }
 
+        std::array<float, 16> MultiplyAffineRowMajor(
+            const std::array<float, 16>& left,
+            const std::array<float, 16>& right)
+        {
+            std::array<float, 16> result = {};
+            result[0] = (left[0] * right[0]) + (left[1] * right[4]) + (left[2] * right[8]);
+            result[1] = (left[0] * right[1]) + (left[1] * right[5]) + (left[2] * right[9]);
+            result[2] = (left[0] * right[2]) + (left[1] * right[6]) + (left[2] * right[10]);
+            result[3] = (left[0] * right[3]) + (left[1] * right[7]) + (left[2] * right[11]) + left[3];
+
+            result[4] = (left[4] * right[0]) + (left[5] * right[4]) + (left[6] * right[8]);
+            result[5] = (left[4] * right[1]) + (left[5] * right[5]) + (left[6] * right[9]);
+            result[6] = (left[4] * right[2]) + (left[5] * right[6]) + (left[6] * right[10]);
+            result[7] = (left[4] * right[3]) + (left[5] * right[7]) + (left[6] * right[11]) + left[7];
+
+            result[8] = (left[8] * right[0]) + (left[9] * right[4]) + (left[10] * right[8]);
+            result[9] = (left[8] * right[1]) + (left[9] * right[5]) + (left[10] * right[9]);
+            result[10] = (left[8] * right[2]) + (left[9] * right[6]) + (left[10] * right[10]);
+            result[11] = (left[8] * right[3]) + (left[9] * right[7]) + (left[10] * right[11]) + left[11];
+
+            result[15] = 1.0f;
+            return result;
+        }
+
         float DotVec3(const std::array<float, 3>& left, const std::array<float, 3>& right)
         {
             return (left[0] * right[0]) + (left[1] * right[1]) + (left[2] * right[2]);
@@ -323,6 +358,56 @@ namespace DagorAssetsExtractor::Export
             value[0] *= invLength;
             value[1] *= invLength;
             value[2] *= invLength;
+            return true;
+        }
+
+        bool InvertAffineRowMajor(const std::array<float, 16>& matrix, std::array<float, 16>& inverse)
+        {
+            const float m00 = matrix[0];
+            const float m01 = matrix[1];
+            const float m02 = matrix[2];
+            const float m10 = matrix[4];
+            const float m11 = matrix[5];
+            const float m12 = matrix[6];
+            const float m20 = matrix[8];
+            const float m21 = matrix[9];
+            const float m22 = matrix[10];
+
+            const float c00 = (m11 * m22) - (m12 * m21);
+            const float c01 = (m02 * m21) - (m01 * m22);
+            const float c02 = (m01 * m12) - (m02 * m11);
+            const float c10 = (m12 * m20) - (m10 * m22);
+            const float c11 = (m00 * m22) - (m02 * m20);
+            const float c12 = (m02 * m10) - (m00 * m12);
+            const float c20 = (m10 * m21) - (m11 * m20);
+            const float c21 = (m01 * m20) - (m00 * m21);
+            const float c22 = (m00 * m11) - (m01 * m10);
+
+            const float det = (m00 * c00) + (m01 * c10) + (m02 * c20);
+            if (!std::isfinite(det) || std::fabs(det) <= 1e-8f)
+            {
+                return false;
+            }
+
+            const float invDet = 1.0f / det;
+            inverse = {};
+            inverse[0] = c00 * invDet;
+            inverse[1] = c01 * invDet;
+            inverse[2] = c02 * invDet;
+            inverse[4] = c10 * invDet;
+            inverse[5] = c11 * invDet;
+            inverse[6] = c12 * invDet;
+            inverse[8] = c20 * invDet;
+            inverse[9] = c21 * invDet;
+            inverse[10] = c22 * invDet;
+            inverse[15] = 1.0f;
+
+            const float tx = matrix[3];
+            const float ty = matrix[7];
+            const float tz = matrix[11];
+            inverse[3] = -((tx * inverse[0]) + (ty * inverse[1]) + (tz * inverse[2]));
+            inverse[7] = -((tx * inverse[4]) + (ty * inverse[5]) + (tz * inverse[6]));
+            inverse[11] = -((tx * inverse[8]) + (ty * inverse[9]) + (tz * inverse[10]));
             return true;
         }
 
@@ -993,6 +1078,13 @@ namespace DagorAssetsExtractor::Export
             size_t bufferViewCount = 0;
         };
 
+        struct RigidAnimationBindingInfo
+        {
+            std::string nodeName;
+            size_t targetNodeIndex = 0;
+            uint16_t parentJoint = 0;
+        };
+
         std::array<float, 3> ConvertAnimationTranslationForGltf(const std::array<float, 3>& value)
         {
             return { value[0], value[1], -value[2] };
@@ -1089,6 +1181,61 @@ namespace DagorAssetsExtractor::Export
         bool IsIdentityScale(const std::array<float, 3>& scale)
         {
             return NearlyEqualVec3(scale, { 1.0f, 1.0f, 1.0f });
+        }
+
+        void NormalizeQuatInPlace(std::array<float, 4>& rotation)
+        {
+            const float lengthSq =
+                (rotation[0] * rotation[0]) +
+                (rotation[1] * rotation[1]) +
+                (rotation[2] * rotation[2]) +
+                (rotation[3] * rotation[3]);
+            if (!std::isfinite(lengthSq) || lengthSq <= 1e-12f)
+            {
+                rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+                return;
+            }
+
+            const float invLength = 1.0f / std::sqrt(lengthSq);
+            rotation[0] *= invLength;
+            rotation[1] *= invLength;
+            rotation[2] *= invLength;
+            rotation[3] *= invLength;
+        }
+
+        std::array<float, 4> MultiplyQuaternions(
+            const std::array<float, 4>& left,
+            const std::array<float, 4>& right)
+        {
+            std::array<float, 4> result{
+                (left[3] * right[0]) + (left[0] * right[3]) + (left[1] * right[2]) - (left[2] * right[1]),
+                (left[3] * right[1]) - (left[0] * right[2]) + (left[1] * right[3]) + (left[2] * right[0]),
+                (left[3] * right[2]) + (left[0] * right[1]) - (left[1] * right[0]) + (left[2] * right[3]),
+                (left[3] * right[3]) - (left[0] * right[0]) - (left[1] * right[1]) - (left[2] * right[2]),
+            };
+            NormalizeQuatInPlace(result);
+            return result;
+        }
+
+        GltfNodeTrs ApplyAdditiveTrackToBase(
+            const GltfNodeTrs& base,
+            const std::array<float, 3>& translation,
+            const std::array<float, 4>& rotation,
+            const std::array<float, 3>& scale)
+        {
+            GltfNodeTrs result;
+            result.translation = {
+                base.translation[0] + translation[0],
+                base.translation[1] + translation[1],
+                base.translation[2] + translation[2],
+            };
+            result.rotation = MultiplyQuaternions(rotation, base.rotation);
+            result.scale = {
+                base.scale[0] * scale[0],
+                base.scale[1] * scale[1],
+                base.scale[2] * scale[2],
+            };
+            return result;
         }
 
         GltfNodeTrs DecomposeGltfMatrix(const std::array<float, 16>& matrix)
@@ -1227,6 +1374,301 @@ namespace DagorAssetsExtractor::Export
             return trs;
         }
 
+        struct PreparedAnimationNodeTrack
+        {
+            std::vector<float> times;
+            std::vector<std::array<float, 3>> translations;
+            std::vector<std::array<float, 4>> rotations;
+            std::vector<std::array<float, 3>> scales;
+        };
+
+        void ForcePreparedTrackToStartAtRest(
+            PreparedAnimationNodeTrack& prepared,
+            const GltfNodeTrs& restTrs)
+        {
+            if (prepared.times.empty())
+            {
+                return;
+            }
+
+            constexpr float kFirstSampleEpsilon = 1e-5f;
+            if (prepared.times.front() > kFirstSampleEpsilon)
+            {
+                prepared.times.insert(prepared.times.begin(), 0.0f);
+                if (!prepared.translations.empty())
+                {
+                    prepared.translations.insert(prepared.translations.begin(), restTrs.translation);
+                }
+                if (!prepared.rotations.empty())
+                {
+                    prepared.rotations.insert(prepared.rotations.begin(), restTrs.rotation);
+                }
+                if (!prepared.scales.empty())
+                {
+                    prepared.scales.insert(prepared.scales.begin(), restTrs.scale);
+                }
+                return;
+            }
+
+            prepared.times.front() = 0.0f;
+            if (!prepared.translations.empty())
+            {
+                prepared.translations.front() = restTrs.translation;
+            }
+            if (!prepared.rotations.empty())
+            {
+                prepared.rotations.front() = restTrs.rotation;
+            }
+            if (!prepared.scales.empty())
+            {
+                prepared.scales.front() = restTrs.scale;
+            }
+        }
+
+        std::array<float, 3> LerpVec3(
+            const std::array<float, 3>& left,
+            const std::array<float, 3>& right,
+            float t)
+        {
+            return {
+                left[0] + ((right[0] - left[0]) * t),
+                left[1] + ((right[1] - left[1]) * t),
+                left[2] + ((right[2] - left[2]) * t)
+            };
+        }
+
+        std::array<float, 4> NlerpQuat(
+            std::array<float, 4> left,
+            std::array<float, 4> right,
+            float t)
+        {
+            const float dot =
+                (left[0] * right[0]) +
+                (left[1] * right[1]) +
+                (left[2] * right[2]) +
+                (left[3] * right[3]);
+            if (dot < 0.0f)
+            {
+                right[0] = -right[0];
+                right[1] = -right[1];
+                right[2] = -right[2];
+                right[3] = -right[3];
+            }
+
+            std::array<float, 4> blended{
+                left[0] + ((right[0] - left[0]) * t),
+                left[1] + ((right[1] - left[1]) * t),
+                left[2] + ((right[2] - left[2]) * t),
+                left[3] + ((right[3] - left[3]) * t)
+            };
+            NormalizeQuatInPlace(blended);
+            return blended;
+        }
+
+        std::array<float, 16> ComposeRowMajorMatrixFromTrs(const GltfNodeTrs& trs)
+        {
+            const float x = trs.rotation[0];
+            const float y = trs.rotation[1];
+            const float z = trs.rotation[2];
+            const float w = trs.rotation[3];
+
+            const float xx = x * x;
+            const float yy = y * y;
+            const float zz = z * z;
+            const float xy = x * y;
+            const float xz = x * z;
+            const float yz = y * z;
+            const float wx = w * x;
+            const float wy = w * y;
+            const float wz = w * z;
+
+            const float m00 = 1.0f - (2.0f * (yy + zz));
+            const float m01 = 2.0f * (xy - wz);
+            const float m02 = 2.0f * (xz + wy);
+            const float m10 = 2.0f * (xy + wz);
+            const float m11 = 1.0f - (2.0f * (xx + zz));
+            const float m12 = 2.0f * (yz - wx);
+            const float m20 = 2.0f * (xz - wy);
+            const float m21 = 2.0f * (yz + wx);
+            const float m22 = 1.0f - (2.0f * (xx + yy));
+
+            return {
+                m00 * trs.scale[0], m01 * trs.scale[1], m02 * trs.scale[2], trs.translation[0],
+                m10 * trs.scale[0], m11 * trs.scale[1], m12 * trs.scale[2], trs.translation[1],
+                m20 * trs.scale[0], m21 * trs.scale[1], m22 * trs.scale[2], trs.translation[2],
+                0.0f,               0.0f,               0.0f,               1.0f
+            };
+        }
+
+        PreparedAnimationNodeTrack PrepareAnimationTrackForSampling(
+            const AnimationClip& clip,
+            const AnimationNodeTrack& track,
+            const GltfNodeTrs& restTrs,
+            const GltfNodeTrs& firstSampleRestTrs,
+            bool restoreZeroTranslationPlaceholders = true)
+        {
+            PreparedAnimationNodeTrack prepared;
+            prepared.times = track.times;
+            prepared.translations.reserve(track.translations.size());
+            for (const std::array<float, 3>& translation : track.translations)
+            {
+                prepared.translations.push_back(ConvertAnimationTranslationForGltf(translation));
+            }
+
+            prepared.rotations.reserve(track.rotations.size());
+            for (const std::array<float, 4>& rotation : track.rotations)
+            {
+                prepared.rotations.push_back(ConvertAnimationRotationForGltf(rotation));
+            }
+
+            prepared.scales = track.scales;
+
+            const size_t sampleCount = prepared.times.size();
+            const auto expandVec3 = [sampleCount](std::vector<std::array<float, 3>>& values, const std::array<float, 3>& fallback)
+            {
+                if (sampleCount == 0)
+                {
+                    return;
+                }
+                if (values.empty())
+                {
+                    values.resize(sampleCount, fallback);
+                }
+                else if (values.size() < sampleCount)
+                {
+                    values.resize(sampleCount, values.back());
+                }
+            };
+            const auto expandQuat = [sampleCount](std::vector<std::array<float, 4>>& values, const std::array<float, 4>& fallback)
+            {
+                if (sampleCount == 0)
+                {
+                    return;
+                }
+                if (values.empty())
+                {
+                    values.resize(sampleCount, fallback);
+                }
+                else if (values.size() < sampleCount)
+                {
+                    values.resize(sampleCount, values.back());
+                }
+            };
+
+            if (clip.additive)
+            {
+                if (sampleCount > 0)
+                {
+                    expandVec3(prepared.translations, { 0.0f, 0.0f, 0.0f });
+                    expandQuat(prepared.rotations, { 0.0f, 0.0f, 0.0f, 1.0f });
+                    expandVec3(prepared.scales, { 1.0f, 1.0f, 1.0f });
+
+                    for (size_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+                    {
+                        const GltfNodeTrs combined = ApplyAdditiveTrackToBase(
+                            restTrs,
+                            prepared.translations[sampleIndex],
+                            prepared.rotations[sampleIndex],
+                            prepared.scales[sampleIndex]);
+                        prepared.translations[sampleIndex] = combined.translation;
+                        prepared.rotations[sampleIndex] = combined.rotation;
+                        prepared.scales[sampleIndex] = combined.scale;
+                    }
+                }
+            }
+            else if (restoreZeroTranslationPlaceholders &&
+                     !prepared.translations.empty() &&
+                     !IsIdentityTranslation(restTrs.translation))
+            {
+                for (std::array<float, 3>& translation : prepared.translations)
+                {
+                    if (IsIdentityTranslation(translation))
+                    {
+                        translation = restTrs.translation;
+                    }
+                }
+            }
+
+            ForcePreparedTrackToStartAtRest(prepared, firstSampleRestTrs);
+            return prepared;
+        }
+
+        GltfNodeTrs EvaluatePreparedAnimationTrackAtTime(
+            const PreparedAnimationNodeTrack* track,
+            const GltfNodeTrs& restTrs,
+            float time)
+        {
+            if (!track || !HasValidAnimationTimes(track->times))
+            {
+                return restTrs;
+            }
+
+            const std::vector<float>& times = track->times;
+            if (times.size() == 1)
+            {
+                GltfNodeTrs evaluated = restTrs;
+                if (!track->translations.empty())
+                {
+                    evaluated.translation = track->translations.front();
+                }
+                if (!track->rotations.empty())
+                {
+                    evaluated.rotation = track->rotations.front();
+                }
+                if (!track->scales.empty())
+                {
+                    evaluated.scale = track->scales.front();
+                }
+                return evaluated;
+            }
+
+            size_t upperIndex = static_cast<size_t>(
+                std::lower_bound(times.begin(), times.end(), time) - times.begin());
+            if (upperIndex == 0)
+            {
+                upperIndex = 1;
+            }
+            else if (upperIndex >= times.size())
+            {
+                upperIndex = times.size() - 1;
+            }
+
+            const size_t lowerIndex = upperIndex - 1;
+            const float t0 = times[lowerIndex];
+            const float t1 = times[upperIndex];
+            const float alpha =
+                (upperIndex == lowerIndex || !std::isfinite(t1 - t0) || std::fabs(t1 - t0) <= 1e-6f)
+                    ? 0.0f
+                    : std::clamp((time - t0) / (t1 - t0), 0.0f, 1.0f);
+
+            GltfNodeTrs evaluated = restTrs;
+            if (!track->translations.empty())
+            {
+                const auto getTranslation = [&](size_t index) -> const std::array<float, 3>&
+                {
+                    return track->translations[std::min(index, track->translations.size() - 1)];
+                };
+                evaluated.translation = LerpVec3(getTranslation(lowerIndex), getTranslation(upperIndex), alpha);
+            }
+            if (!track->rotations.empty())
+            {
+                const auto getRotation = [&](size_t index) -> const std::array<float, 4>&
+                {
+                    return track->rotations[std::min(index, track->rotations.size() - 1)];
+                };
+                evaluated.rotation = NlerpQuat(getRotation(lowerIndex), getRotation(upperIndex), alpha);
+            }
+            if (!track->scales.empty())
+            {
+                const auto getScale = [&](size_t index) -> const std::array<float, 3>&
+                {
+                    return track->scales[std::min(index, track->scales.size() - 1)];
+                };
+                evaluated.scale = LerpVec3(getScale(lowerIndex), getScale(upperIndex), alpha);
+            }
+            return evaluated;
+        }
+
         enum class AnimationBindingMode
         {
             AbsoluteLocal,
@@ -1256,11 +1698,13 @@ namespace DagorAssetsExtractor::Export
 
                     if (!track.translations.empty() && !IsIdentityTranslation(rest.translation))
                     {
-                        if (NearlyEqualVec3(track.translations.front(), rest.translation))
+                        const std::array<float, 3> firstTranslation =
+                            ConvertAnimationTranslationForGltf(track.translations.front());
+                        if (NearlyEqualVec3(firstTranslation, rest.translation))
                         {
                             ++restLikeSamples;
                         }
-                        else if (IsIdentityTranslation(track.translations.front()))
+                        else if (IsIdentityTranslation(firstTranslation))
                         {
                             ++defaultLikeSamples;
                         }
@@ -1268,11 +1712,13 @@ namespace DagorAssetsExtractor::Export
 
                     if (!track.rotations.empty() && !IsIdentityRotation(rest.rotation))
                     {
-                        if (NearlyEqualQuat(track.rotations.front(), rest.rotation))
+                        const std::array<float, 4> firstRotation =
+                            ConvertAnimationRotationForGltf(track.rotations.front());
+                        if (NearlyEqualQuat(firstRotation, rest.rotation))
                         {
                             ++restLikeSamples;
                         }
-                        else if (IsIdentityRotation(track.rotations.front()))
+                        else if (IsIdentityRotation(firstRotation))
                         {
                             ++defaultLikeSamples;
                         }
@@ -1385,6 +1831,7 @@ namespace DagorAssetsExtractor::Export
             const std::vector<size_t>& skeletonTargetNodeIndices,
             const std::vector<GltfNodeTrs>& skeletonRestTrs,
             bool emitSkeletonNodes,
+            bool useBindWrapperAnimationNodes,
             size_t bufferViewBase,
             std::vector<uint8_t>& binBuffer,
             std::ostream& debugLog)
@@ -1431,6 +1878,8 @@ namespace DagorAssetsExtractor::Export
 
                     const size_t targetNodeIndex = skeletonTargetNodeIndices[skeletonNode];
                     const GltfNodeTrs& restTrs = skeletonRestTrs[skeletonNode];
+                    const GltfNodeTrs targetRestTrs =
+                        useBindWrapperAnimationNodes ? GltfNodeTrs{} : restTrs;
                     const auto compareVec3 = [](const std::array<float, 3>& left, const std::array<float, 3>& right)
                     {
                         return NearlyEqualVec3(left, right);
@@ -1440,28 +1889,39 @@ namespace DagorAssetsExtractor::Export
                         return NearlyEqualQuat(left, right);
                     };
 
+                    const PreparedAnimationNodeTrack preparedTrack =
+                        PrepareAnimationTrackForSampling(
+                            clip,
+                            track,
+                            restTrs,
+                            targetRestTrs,
+                            !useBindWrapperAnimationNodes);
+                    const std::vector<std::array<float, 3>>& preparedTranslations = preparedTrack.translations;
+                    const std::vector<std::array<float, 4>>& preparedRotations = preparedTrack.rotations;
+                    const std::vector<std::array<float, 3>>& preparedScales = preparedTrack.scales;
+
                     const bool skipTranslationCurve =
-                        !track.translations.empty() &&
-                        CurveIsConstant(track.translations, std::array<float, 3>{ 0.0f, 0.0f, 0.0f }, compareVec3) &&
-                        !IsIdentityTranslation(restTrs.translation);
+                        !preparedTranslations.empty() &&
+                        CurveIsConstant(preparedTranslations, std::array<float, 3>{ 0.0f, 0.0f, 0.0f }, compareVec3) &&
+                        IsIdentityTranslation(targetRestTrs.translation);
                     const bool skipRotationCurve =
-                        !track.rotations.empty() &&
-                        CurveIsConstant(track.rotations, std::array<float, 4>{ 0.0f, 0.0f, 0.0f, 1.0f }, compareQuat) &&
-                        !IsIdentityRotation(restTrs.rotation);
+                        !preparedRotations.empty() &&
+                        CurveIsConstant(preparedRotations, std::array<float, 4>{ 0.0f, 0.0f, 0.0f, 1.0f }, compareQuat) &&
+                        IsIdentityRotation(targetRestTrs.rotation);
                     const bool skipScaleCurve =
-                        !track.scales.empty() &&
-                        CurveIsConstant(track.scales, std::array<float, 3>{ 1.0f, 1.0f, 1.0f }, compareVec3) &&
-                        !IsIdentityScale(restTrs.scale);
+                        !preparedScales.empty() &&
+                        CurveIsConstant(preparedScales, std::array<float, 3>{ 1.0f, 1.0f, 1.0f }, compareVec3) &&
+                        IsIdentityScale(targetRestTrs.scale);
 
                     const bool redundantTranslationCurve =
-                        !track.translations.empty() &&
-                        CurveIsConstant(track.translations, restTrs.translation, compareVec3);
+                        !preparedTranslations.empty() &&
+                        CurveIsConstant(preparedTranslations, targetRestTrs.translation, compareVec3);
                     const bool redundantRotationCurve =
-                        !track.rotations.empty() &&
-                        CurveIsConstant(track.rotations, restTrs.rotation, compareQuat);
+                        !preparedRotations.empty() &&
+                        CurveIsConstant(preparedRotations, targetRestTrs.rotation, compareQuat);
                     const bool redundantScaleCurve =
-                        !track.scales.empty() &&
-                        CurveIsConstant(track.scales, restTrs.scale, compareVec3);
+                        !preparedScales.empty() &&
+                        CurveIsConstant(preparedScales, targetRestTrs.scale, compareVec3);
 
                     if (skipTranslationCurve || redundantTranslationCurve)
                     {
@@ -1478,8 +1938,8 @@ namespace DagorAssetsExtractor::Export
                         "VEC3",
                         nextBufferView,
                         track.times,
-                        track.translations,
-                        ConvertAnimationTranslationForGltf,
+                        preparedTranslations,
+                        [](const std::array<float, 3>& value) { return value; },
                         skipTranslationCurve || redundantTranslationCurve);
 
                     if (skipRotationCurve || redundantRotationCurve)
@@ -1497,8 +1957,8 @@ namespace DagorAssetsExtractor::Export
                         "VEC4",
                         nextBufferView,
                         track.times,
-                        track.rotations,
-                        ConvertAnimationRotationForGltf,
+                        preparedRotations,
+                        [](const std::array<float, 4>& value) { return value; },
                         skipRotationCurve || redundantRotationCurve);
 
                     if (skipScaleCurve || redundantScaleCurve)
@@ -1516,9 +1976,9 @@ namespace DagorAssetsExtractor::Export
                         "VEC3",
                         nextBufferView,
                         track.times,
-                        track.scales,
+                        preparedScales,
                         [](const std::array<float, 3>& value) { return value; },
-                        skipScaleCurve || redundantScaleCurve);
+                        true);
                 }
 
                 for (const std::string& diagnostic : clip.diagnostics)
@@ -1534,6 +1994,233 @@ namespace DagorAssetsExtractor::Export
                 else
                 {
                     debugLog << "  Animation clip " << clipInfo.name
+                             << " had no exportable curves." << std::endl;
+                }
+            }
+
+            return sections;
+        }
+
+        GlbAnimationSections PrepareRigidNodeAnimationSections(
+            const std::vector<AnimationClip>& animations,
+            const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
+            const std::vector<GltfNodeTrs>& skeletonLocalTrsGltf,
+            const std::vector<std::array<float, 16>>& skeletonWorldMatricesRealRowMajor,
+            const std::vector<RigidAnimationBindingInfo>& rigidBindings,
+            size_t bufferViewBase,
+            std::vector<uint8_t>& binBuffer,
+            std::ostream& debugLog)
+        {
+            GlbAnimationSections sections;
+            if (animations.empty() || skeleton.empty() || rigidBindings.empty())
+            {
+                return sections;
+            }
+
+            size_t nextBufferView = bufferViewBase;
+            for (const AnimationClip& clip : animations)
+            {
+                GlbAnimationClipInfo clipInfo;
+                clipInfo.name = clip.name.empty() ? "animation" : clip.name;
+
+                std::vector<const AnimationNodeTrack*> tracksByNode(skeleton.size(), nullptr);
+                std::vector<PreparedAnimationNodeTrack> preparedTracks(skeleton.size());
+                std::vector<bool> hasPreparedTrack(skeleton.size(), false);
+                for (const AnimationNodeTrack& track : clip.nodeTracks)
+                {
+                    const auto nodeIt = std::find_if(
+                        skeleton.begin(),
+                        skeleton.end(),
+                        [&](const DagorFormats::GeomNodeTreeNode& node)
+                        {
+                            return node.name == track.nodeName;
+                        });
+                    if (nodeIt == skeleton.end())
+                    {
+                        continue;
+                    }
+
+                    const size_t skeletonNodeIndex = static_cast<size_t>(nodeIt - skeleton.begin());
+                    if (skeletonNodeIndex >= skeletonLocalTrsGltf.size() ||
+                        !HasValidAnimationTimes(track.times))
+                    {
+                        continue;
+                    }
+
+                    tracksByNode[skeletonNodeIndex] = &track;
+                    preparedTracks[skeletonNodeIndex] = PrepareAnimationTrackForSampling(
+                        clip,
+                        track,
+                        skeletonLocalTrsGltf[skeletonNodeIndex],
+                        skeletonLocalTrsGltf[skeletonNodeIndex]);
+                    hasPreparedTrack[skeletonNodeIndex] = true;
+                }
+
+                for (const RigidAnimationBindingInfo& binding : rigidBindings)
+                {
+                    if (binding.parentJoint >= skeleton.size())
+                    {
+                        continue;
+                    }
+
+                    const std::array<float, 16> restWorldRowMajor = skeletonWorldMatricesRealRowMajor[binding.parentJoint];
+
+                    std::array<float, 16> inverseRestWorld = {};
+                    if (!InvertAffineRowMajor(restWorldRowMajor, inverseRestWorld))
+                    {
+                        debugLog << "  Rigid animation clip " << clipInfo.name
+                                 << " skipped mesh node '" << binding.nodeName
+                                 << "': parent rest world matrix is non-invertible." << std::endl;
+                        continue;
+                    }
+
+                    std::vector<size_t> ancestorChain;
+                    size_t nodeIndex = binding.parentJoint;
+                    size_t guard = 0;
+                    while (nodeIndex != static_cast<size_t>(DagorFormats::GeomNodeTreeNode::InvalidIndex) &&
+                           nodeIndex < skeleton.size() &&
+                           guard++ < skeleton.size())
+                    {
+                        ancestorChain.push_back(nodeIndex);
+                        nodeIndex = skeleton[nodeIndex].parentIndex;
+                    }
+                    std::reverse(ancestorChain.begin(), ancestorChain.end());
+
+                    std::vector<float> sampleTimes;
+                    for (size_t skeletonNodeIndex : ancestorChain)
+                    {
+                        if (!hasPreparedTrack[skeletonNodeIndex])
+                        {
+                            continue;
+                        }
+
+                        sampleTimes.insert(
+                            sampleTimes.end(),
+                            preparedTracks[skeletonNodeIndex].times.begin(),
+                            preparedTracks[skeletonNodeIndex].times.end());
+                    }
+
+                    if (sampleTimes.empty())
+                    {
+                        continue;
+                    }
+
+                    std::sort(sampleTimes.begin(), sampleTimes.end());
+                    sampleTimes.erase(
+                        std::unique(
+                            sampleTimes.begin(),
+                            sampleTimes.end(),
+                            [](float left, float right)
+                            {
+                                return std::fabs(left - right) <= 1e-6f;
+                            }),
+                        sampleTimes.end());
+
+                    std::vector<std::array<float, 3>> translations;
+                    std::vector<std::array<float, 4>> rotations;
+                    std::vector<std::array<float, 3>> scales;
+                    translations.reserve(sampleTimes.size());
+                    rotations.reserve(sampleTimes.size());
+                    scales.reserve(sampleTimes.size());
+
+                    for (float time : sampleTimes)
+                    {
+                        std::array<float, 16> animatedWorld = {
+                            1.0f, 0.0f, 0.0f, 0.0f,
+                            0.0f, 1.0f, 0.0f, 0.0f,
+                            0.0f, 0.0f, 1.0f, 0.0f,
+                            0.0f, 0.0f, 0.0f, 1.0f
+                        };
+
+                        for (size_t skeletonNodeIndex : ancestorChain)
+                        {
+                            const PreparedAnimationNodeTrack* preparedTrack =
+                                hasPreparedTrack[skeletonNodeIndex]
+                                    ? &preparedTracks[skeletonNodeIndex]
+                                    : nullptr;
+                            const GltfNodeTrs localTrs = EvaluatePreparedAnimationTrackAtTime(
+                                preparedTrack,
+                                skeletonLocalTrsGltf[skeletonNodeIndex],
+                                time);
+                            animatedWorld = MultiplyAffineRowMajor(
+                                animatedWorld,
+                                ComposeRowMajorMatrixFromTrs(localTrs));
+                        }
+
+                        const std::array<float, 16> rigidDeltaRowMajor =
+                            MultiplyAffineRowMajor(animatedWorld, inverseRestWorld);
+                        const std::array<float, 16> gltfDelta = TransposeMatrix(rigidDeltaRowMajor);
+                        const GltfNodeTrs deltaTrs = DecomposeGltfMatrix(gltfDelta);
+                        translations.push_back(deltaTrs.translation);
+                        rotations.push_back(deltaTrs.rotation);
+                        scales.push_back(deltaTrs.scale);
+                    }
+
+                    const auto compareVec3 = [](const std::array<float, 3>& left, const std::array<float, 3>& right)
+                    {
+                        return NearlyEqualVec3(left, right);
+                    };
+                    const auto compareQuat = [](const std::array<float, 4>& left, const std::array<float, 4>& right)
+                    {
+                        return NearlyEqualQuat(left, right);
+                    };
+
+                    const bool redundantTranslationCurve =
+                        !translations.empty() &&
+                        CurveIsConstant(translations, std::array<float, 3>{ 0.0f, 0.0f, 0.0f }, compareVec3);
+                    const bool redundantRotationCurve =
+                        !rotations.empty() &&
+                        CurveIsConstant(rotations, std::array<float, 4>{ 0.0f, 0.0f, 0.0f, 1.0f }, compareQuat);
+                    const bool redundantScaleCurve =
+                        !scales.empty() &&
+                        CurveIsConstant(scales, std::array<float, 3>{ 1.0f, 1.0f, 1.0f }, compareVec3);
+
+                    AppendAnimationCurve(
+                        binBuffer,
+                        clipInfo,
+                        binding.nodeName,
+                        binding.targetNodeIndex,
+                        "translation",
+                        "VEC3",
+                        nextBufferView,
+                        sampleTimes,
+                        translations,
+                        [](const std::array<float, 3>& value) { return value; },
+                        redundantTranslationCurve);
+                    AppendAnimationCurve(
+                        binBuffer,
+                        clipInfo,
+                        binding.nodeName,
+                        binding.targetNodeIndex,
+                        "rotation",
+                        "VEC4",
+                        nextBufferView,
+                        sampleTimes,
+                        rotations,
+                        [](const std::array<float, 4>& value) { return value; },
+                        redundantRotationCurve);
+                    AppendAnimationCurve(
+                        binBuffer,
+                        clipInfo,
+                        binding.nodeName,
+                        binding.targetNodeIndex,
+                        "scale",
+                        "VEC3",
+                        nextBufferView,
+                        sampleTimes,
+                        scales,
+                        [](const std::array<float, 3>& value) { return value; },
+                        redundantScaleCurve);
+                }
+
+                if (!clipInfo.curves.empty())
+                {
+                    sections.bufferViewCount += clipInfo.curves.size() * 2;
+                    sections.clips.push_back(std::move(clipInfo));
+                }
+                else
+                {
+                    debugLog << "  Direct-node animation clip " << clipInfo.name
                              << " had no exportable curves." << std::endl;
                 }
             }
@@ -2257,21 +2944,15 @@ namespace DagorAssetsExtractor::Export
             return false;
         }
 
-        const auto transposeMatrix = [](const std::array<float, 16>& matrix)
+        const auto makeGltfColumnMajorMatrix = [&](const std::array<float, 16>& matrix)
         {
-            return std::array<float, 16>{
-                matrix[0], matrix[4], matrix[8],  matrix[12],
-                matrix[1], matrix[5], matrix[9],  matrix[13],
-                matrix[2], matrix[6], matrix[10], matrix[14],
-                matrix[3], matrix[7], matrix[11], matrix[15],
-            };
-        };
-
-        const auto makeGltfMatrix = [&](const std::array<float, 16>& matrix)
-        {
-            std::array<float, 16> gltfMatrix = transposeMatrix(matrix);
+            std::array<float, 16> gltfMatrix = TransposeMatrix(matrix);
             ConvertMatrixHandedness(gltfMatrix);
             return gltfMatrix;
+        };
+        const auto makeGltfRowMajorMatrix = [&](const std::array<float, 16>& matrix)
+        {
+            return TransposeMatrix(makeGltfColumnMajorMatrix(matrix));
         };
 
         const bool hasPlacementSkeleton = !skeleton.empty();
@@ -2287,12 +2968,42 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
-        std::vector<std::array<float, 16>> skeletonBindMatrices(skeleton.size());
+        std::vector<std::array<float, 16>> skeletonWorldMatricesRealRowMajor(skeleton.size());
+        std::vector<std::array<float, 16>> skeletonWorldMatricesGltfRowMajor(skeleton.size());
+        for (size_t i = 0; i < skeleton.size(); ++i)
+        {
+            std::array<float, 16> gltfWorldMatrix = makeGltfColumnMajorMatrix(skeleton[i].worldTransform);
+            GltfNodeTrs worldTrs = DecomposeGltfMatrix(gltfWorldMatrix);
+            skeletonWorldMatricesRealRowMajor[i] = ComposeRowMajorMatrixFromTrs(worldTrs);
+            worldTrs.scale = { 1.0f, 1.0f, 1.0f };
+            skeletonWorldMatricesGltfRowMajor[i] = ComposeRowMajorMatrixFromTrs(worldTrs);
+        }
+
         std::vector<GltfNodeTrs> skeletonRestTrs(skeleton.size());
         for (size_t i = 0; i < skeleton.size(); ++i)
         {
-            skeletonBindMatrices[i] = makeGltfMatrix(skeleton[i].localTransform);
-            skeletonRestTrs[i] = DecomposeGltfMatrix(skeletonBindMatrices[i]);
+            const uint16_t parentIndex = skeleton[i].parentIndex;
+            std::array<float, 16> localMatrix;
+            if (parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex || parentIndex >= skeleton.size())
+            {
+                localMatrix = skeletonWorldMatricesGltfRowMajor[i];
+            }
+            else
+            {
+                std::array<float, 16> invParentWorld = {};
+                if (InvertAffineRowMajor(skeletonWorldMatricesGltfRowMajor[parentIndex], invParentWorld))
+                {
+                    localMatrix = MultiplyAffineRowMajor(invParentWorld, skeletonWorldMatricesGltfRowMajor[i]);
+                }
+                else
+                {
+                    localMatrix = skeletonWorldMatricesGltfRowMajor[i];
+                }
+            }
+
+            GltfNodeTrs localTrs = DecomposeGltfMatrix(TransposeMatrix(localMatrix));
+            localTrs.scale = { 1.0f, 1.0f, 1.0f };
+            skeletonRestTrs[i] = localTrs;
         }
 
         const AnimationBindingMode animationBindingMode =
@@ -2348,62 +3059,27 @@ namespace DagorAssetsExtractor::Export
                 });
         };
 
+        const auto hasExplicitSkinBinding = [](const DagorFormats::DynModelMesh& mesh)
+        {
+            return !mesh.skinJointNodeNames.empty() &&
+                mesh.skinJointNodeNames.size() == mesh.skinInverseBindTransforms.size();
+        };
+
         struct DynExportMesh
         {
             DagorFormats::DynModelMesh mesh;
             bool skinned = false;
-            bool rigidSkinned = false;
+            bool explicitSkin = false;
+            bool bakeBindPoseSkin = false;
             bool bakeRigidTransform = false;
-            bool hasParentJoint = false;
+            bool usesSkeletonPlacement = false;
+            bool animateAsRigidNode = false;
             uint16_t parentJoint = 0;
             bool hasNodeMatrix = false;
             std::array<float, 16> nodeMatrix = {};
+            std::vector<uint16_t> skinJoints;
+            std::vector<std::array<float, 16>> skinInverseBindMatrices;
         };
-
-        if (emitSkeletonNodes)
-        {
-            bool hasSkinnedMesh = false;
-            for (const auto& mesh : lods)
-            {
-                if ((mesh.useSkinning && !hasOnlyRootWeights(mesh)) ||
-                    resolveJoint(mesh) != kNoJoint)
-                {
-                    hasSkinnedMesh = true;
-                    break;
-                }
-            }
-
-            if (!hasSkinnedMesh && !animations.empty())
-            {
-                DagorFormats::DynModelMesh dummyMesh;
-                dummyMesh.name = "skeleton_dummy";
-                dummyMesh.parentNodeName = "";
-                dummyMesh.useSkinning = true;
-
-                DagorFormats::SkinnedVertex v1{};
-                v1.x = v1.y = v1.z = 0.0f;
-                v1.nx = 0.0f; v1.ny = 1.0f; v1.nz = 0.0f;
-                v1.u = v1.v = 0.0f;
-                v1.jointIndices[0] = 0; v1.jointIndices[1] = 0; v1.jointIndices[2] = 0; v1.jointIndices[3] = 0;
-                v1.jointWeights[0] = 1.0f; v1.jointWeights[1] = 0.0f; v1.jointWeights[2] = 0.0f; v1.jointWeights[3] = 0.0f;
-
-                DagorFormats::SkinnedVertex v2 = v1;
-                v2.x = 0.001f;
-                DagorFormats::SkinnedVertex v3 = v1;
-                v3.y = 0.001f;
-
-                dummyMesh.vertices = { v1, v2, v3 };
-                dummyMesh.indices = { 0, 1, 2 };
-
-                DagorFormats::RendInstPrimitive prim;
-                prim.materialIndex = 0;
-                prim.firstIndex = 0;
-                prim.indexCount = 3;
-                dummyMesh.primitives = { prim };
-
-                lods.push_back(std::move(dummyMesh));
-            }
-        }
 
         std::vector<DynExportMesh> exportMeshes;
         exportMeshes.reserve(lods.size());
@@ -2413,16 +3089,60 @@ namespace DagorAssetsExtractor::Export
             exportMesh.mesh = mesh;
             const uint16_t jointIndex = resolveJoint(mesh);
             const bool hasPlaceholderSkinWeights = mesh.useSkinning && hasOnlyRootWeights(mesh);
+            const bool hasExplicitSkin = mesh.useSkinning && hasExplicitSkinBinding(mesh);
 
-            if (emitSkeletonNodes && mesh.useSkinning && (!hasPlaceholderSkinWeights || mesh.name == "skeleton_dummy"))
+            if (hasExplicitSkin && hasPlacementSkeleton)
+            {
+                bool explicitSkinValid = true;
+                exportMesh.skinJoints.reserve(mesh.skinJointNodeNames.size());
+                exportMesh.skinInverseBindMatrices = mesh.skinInverseBindTransforms;
+                for (const std::string& jointName : mesh.skinJointNodeNames)
+                {
+                    const auto jointIt = skeletonNodeLookup.find(jointName);
+                    if (jointIt == skeletonNodeLookup.end() ||
+                        jointIt->second > std::numeric_limits<uint16_t>::max())
+                    {
+                        explicitSkinValid = false;
+                        debugLog << "  DynModel mesh " << mesh.name
+                                 << " could not resolve explicit skin joint '"
+                                 << jointName << "' to the placement skeleton." << std::endl;
+                        break;
+                    }
+                    exportMesh.skinJoints.push_back(static_cast<uint16_t>(jointIt->second));
+                }
+
+                if (explicitSkinValid && !hasPlaceholderSkinWeights)
+                {
+                    if (emitSkeletonNodes)
+                    {
+                        exportMesh.skinned = true;
+                        exportMesh.explicitSkin = true;
+                    }
+                    else
+                    {
+                        exportMesh.bakeBindPoseSkin = true;
+                    }
+                }
+                else if (!explicitSkinValid)
+                {
+                    exportMesh.skinJoints.clear();
+                    exportMesh.skinInverseBindMatrices.clear();
+                }
+            }
+
+            if (!exportMesh.explicitSkin &&
+                emitSkeletonNodes &&
+                mesh.useSkinning &&
+                (!hasPlaceholderSkinWeights || mesh.name == "skeleton_dummy"))
             {
                 exportMesh.skinned = true;
             }
             else if (emitSkeletonNodes && jointIndex != kNoJoint)
             {
                 exportMesh.skinned = true;
-                exportMesh.rigidSkinned = true;
                 exportMesh.bakeRigidTransform = true;
+                exportMesh.usesSkeletonPlacement = true;
+                exportMesh.animateAsRigidNode = false;
                 exportMesh.parentJoint = jointIndex;
             }
             else if (!emitSkeletonNodes && jointIndex != kNoJoint && (!mesh.useSkinning || hasPlaceholderSkinWeights))
@@ -2438,6 +3158,23 @@ namespace DagorAssetsExtractor::Export
         {
             debugLog << "[ExportToGlb DynModel] Failed: no exportable meshes after skeleton layout preparation." << std::endl;
             return false;
+        }
+
+        std::unordered_set<std::string> exportMeshNames;
+        exportMeshNames.reserve(exportMeshes.size());
+        for (const DynExportMesh& exportMesh : exportMeshes)
+        {
+            exportMeshNames.insert(exportMesh.mesh.name);
+        }
+
+        std::vector<std::string> skeletonExportNames(skeleton.size());
+        for (size_t skeletonIndex = 0; skeletonIndex < skeleton.size(); ++skeletonIndex)
+        {
+            skeletonExportNames[skeletonIndex] = skeleton[skeletonIndex].name;
+            if (exportMeshNames.contains(skeletonExportNames[skeletonIndex]))
+            {
+                skeletonExportNames[skeletonIndex] += "__node";
+            }
         }
 
         const MaterialSelection materialSelection = SelectUsedMaterials(lods, materials);
@@ -2470,7 +3207,7 @@ namespace DagorAssetsExtractor::Export
             {
                 for (const DynExportMesh& exportMesh : exportMeshes)
                 {
-                    if (!exportMesh.hasParentJoint)
+                    if (!exportMesh.usesSkeletonPlacement)
                     {
                         continue;
                     }
@@ -2555,6 +3292,118 @@ namespace DagorAssetsExtractor::Export
             return (emitSkeletonNodes ? emittedSkeletonNodeCount : 0) + meshIndex;
         };
 
+        struct GlbSkinInfo
+        {
+            std::vector<size_t> jointNodeIndices;
+            std::vector<std::array<float, 16>> inverseBindMatrices;
+            std::vector<uint16_t> skeletonJointIndices;
+        };
+
+        std::vector<GlbSkinInfo> skinInfos;
+        std::vector<size_t> meshSkinIndices(exportMeshes.size(), kInvalidNodeIndex);
+        std::vector<uint16_t> globalFallbackJointRemap(skeleton.size(), kNoJoint);
+        size_t globalFallbackSkinIndex = kInvalidNodeIndex;
+
+        if (emitSkeletonNodes)
+        {
+            for (size_t meshIndex = 0; meshIndex < exportMeshes.size(); ++meshIndex)
+            {
+                const DynExportMesh& exportMesh = exportMeshes[meshIndex];
+                if (!exportMesh.skinned)
+                {
+                    continue;
+                }
+
+                if (exportMesh.explicitSkin)
+                {
+                    GlbSkinInfo skinInfo;
+                    skinInfo.jointNodeIndices.reserve(exportMesh.skinJoints.size());
+                    skinInfo.skeletonJointIndices.reserve(exportMesh.skinJoints.size());
+                    skinInfo.inverseBindMatrices.reserve(exportMesh.skinJoints.size());
+                    for (size_t jointSlot = 0; jointSlot < exportMesh.skinJoints.size(); ++jointSlot)
+                    {
+                        uint16_t skeletonJoint = exportMesh.skinJoints[jointSlot];
+                        if (skeletonJoint >= skeletonTargetNodeIndices.size() ||
+                            skeletonTargetNodeIndices[skeletonJoint] == kInvalidNodeIndex)
+                        {
+                            continue;
+                        }
+                        skinInfo.jointNodeIndices.push_back(skeletonTargetNodeIndices[skeletonJoint]);
+                        skinInfo.skeletonJointIndices.push_back(skeletonJoint);
+
+                        std::array<float, 16> invBindMatrix = {};
+                        if (skeletonJoint < skeletonWorldMatricesGltfRowMajor.size() &&
+                            InvertAffineRowMajor(skeletonWorldMatricesGltfRowMajor[skeletonJoint], invBindMatrix))
+                        {
+                            skinInfo.inverseBindMatrices.push_back(invBindMatrix);
+                        }
+                        else
+                        {
+                            std::array<float, 16> rawIbm = exportMesh.skinInverseBindMatrices[jointSlot];
+                            std::array<float, 16> gltfIbm = makeGltfRowMajorMatrix(rawIbm);
+                            skinInfo.inverseBindMatrices.push_back(gltfIbm);
+                        }
+                    }
+
+                    if (skinInfo.jointNodeIndices.size() == skinInfo.inverseBindMatrices.size() &&
+                        !skinInfo.jointNodeIndices.empty())
+                    {
+                        meshSkinIndices[meshIndex] = skinInfos.size();
+                        skinInfos.push_back(std::move(skinInfo));
+                        continue;
+                    }
+
+                    debugLog << "  DynModel mesh " << exportMesh.mesh.name
+                             << " explicit skin mapping was incomplete; falling back to the legacy full-skeleton skin."
+                             << std::endl;
+                }
+
+                if (globalFallbackSkinIndex == kInvalidNodeIndex)
+                {
+                    GlbSkinInfo skinInfo;
+                    skinInfo.jointNodeIndices.reserve(emittedSkeletonNodeCount);
+                    skinInfo.inverseBindMatrices.reserve(emittedSkeletonNodeCount);
+                    skinInfo.skeletonJointIndices.reserve(emittedSkeletonNodeCount);
+                    uint16_t jointIndex = 0;
+                    for (size_t skeletonIndex = 0; skeletonIndex < skeleton.size(); ++skeletonIndex)
+                    {
+                        if (!emittedSkeletonNodes[skeletonIndex])
+                        {
+                            continue;
+                        }
+                        if (skeletonTargetNodeIndices[skeletonIndex] == kInvalidNodeIndex)
+                        {
+                            continue;
+                        }
+                        skinInfo.jointNodeIndices.push_back(skeletonTargetNodeIndices[skeletonIndex]);
+
+                        std::array<float, 16> invBindMatrix = {};
+                        if (skeletonIndex < skeletonWorldMatricesGltfRowMajor.size() &&
+                            InvertAffineRowMajor(skeletonWorldMatricesGltfRowMajor[skeletonIndex], invBindMatrix))
+                        {
+                            skinInfo.inverseBindMatrices.push_back(invBindMatrix);
+                        }
+                        else
+                        {
+                            std::array<float, 16> rawIbm = skeleton[skeletonIndex].inverseBindTransform;
+                            std::array<float, 16> gltfIbm = makeGltfRowMajorMatrix(rawIbm);
+                            skinInfo.inverseBindMatrices.push_back(gltfIbm);
+                        }
+
+                        skinInfo.skeletonJointIndices.push_back(static_cast<uint16_t>(skeletonIndex));
+                        if (skeletonIndex < globalFallbackJointRemap.size())
+                        {
+                            globalFallbackJointRemap[skeletonIndex] = jointIndex++;
+                        }
+                    }
+                    globalFallbackSkinIndex = skinInfos.size();
+                    skinInfos.push_back(std::move(skinInfo));
+                }
+
+                meshSkinIndices[meshIndex] = globalFallbackSkinIndex;
+            }
+        }
+
         struct LodBinInfo
         {
             size_t vertByteOffset;
@@ -2585,7 +3434,7 @@ namespace DagorAssetsExtractor::Export
             LodBinInfo info;
             info.vertByteOffset = binBuffer.size();
             info.vertByteLength = mesh.vertices.size() * sizeof(PackedSkinnedVertex);
-            const std::vector<uint32_t>& meshIndices = mesh.indices;
+            std::vector<uint32_t> meshIndices = mesh.indices;
 
             std::vector<PackedSkinnedVertex> packedVertices;
 
@@ -2596,56 +3445,139 @@ namespace DagorAssetsExtractor::Export
                 for (const auto& v : mesh.vertices)
                 {
                     const auto uv = ConvertUvForGltf(v.u, v.v, v.uvTransform);
-                    std::array<float, 3> position = { v.x, v.y, v.z };
-                    std::array<float, 3> normal = { v.nx, v.ny, v.nz };
+                    std::array<float, 3> positionGltf = { v.x, v.y, -v.z };
+                    std::array<float, 3> normalGltf = { v.nx, v.ny, -v.nz };
+
+                    if (exportMesh.bakeBindPoseSkin &&
+                        exportMesh.skinJoints.size() == exportMesh.skinInverseBindMatrices.size())
+                    {
+                        std::array<float, 3> bakedPosition = { 0.0f, 0.0f, 0.0f };
+                        std::array<float, 3> bakedNormal = { 0.0f, 0.0f, 0.0f };
+                        float totalWeight = 0.0f;
+                        for (int jointSlot = 0; jointSlot < 4; ++jointSlot)
+                        {
+                            const float weight = v.jointWeights[jointSlot];
+                            const uint16_t skinJointIndex = v.jointIndices[jointSlot];
+                            if (!std::isfinite(weight) || weight <= 1e-6f ||
+                                skinJointIndex >= exportMesh.skinJoints.size())
+                            {
+                                continue;
+                            }
+
+                            const uint16_t skeletonJoint = exportMesh.skinJoints[skinJointIndex];
+                            if (skeletonJoint >= skeleton.size())
+                            {
+                                continue;
+                            }
+
+                            // Convert the source bind matrix to the same glTF-space row-major convention
+                            // used by the reconstructed skeleton world matrices.
+                            std::array<float, 16> gltfInverseBind =
+                                makeGltfRowMajorMatrix(exportMesh.skinInverseBindMatrices[skinJointIndex]);
+
+                            const std::array<float, 16> skinMatrixGltf =
+                                MultiplyAffineRowMajor(
+                                    skeletonWorldMatricesRealRowMajor[skeletonJoint],
+                                    gltfInverseBind);
+
+                            const std::array<float, 3> transformedPosition =
+                                TransformPointRowMajor(skinMatrixGltf, positionGltf);
+                            const std::array<float, 3> transformedNormal =
+                                TransformDirectionRowMajor(skinMatrixGltf, normalGltf);
+
+                            bakedPosition[0] += transformedPosition[0] * weight;
+                            bakedPosition[1] += transformedPosition[1] * weight;
+                            bakedPosition[2] += transformedPosition[2] * weight;
+                            bakedNormal[0] += transformedNormal[0] * weight;
+                            bakedNormal[1] += transformedNormal[1] * weight;
+                            bakedNormal[2] += transformedNormal[2] * weight;
+                            totalWeight += weight;
+                        }
+
+                        if (totalWeight > 1e-6f)
+                        {
+                            const float invWeight = 1.0f / totalWeight;
+                            bakedPosition[0] *= invWeight;
+                            bakedPosition[1] *= invWeight;
+                            bakedPosition[2] *= invWeight;
+                            bakedNormal[0] *= invWeight;
+                            bakedNormal[1] *= invWeight;
+                            bakedNormal[2] *= invWeight;
+
+                            positionGltf = bakedPosition;
+                            normalGltf = bakedNormal;
+                            NormalizeVec3(normalGltf);
+                        }
+                    }
 
                     if (exportMesh.bakeRigidTransform && exportMesh.parentJoint < skeleton.size())
                     {
-                        position = TransformPointRowMajor(
-                            skeleton[exportMesh.parentJoint].worldTransform,
-                            position);
-                        normal = TransformDirectionRowMajor(
-                            skeleton[exportMesh.parentJoint].worldTransform,
-                            normal);
-                        NormalizeVec3(normal);
+                        positionGltf = TransformPointRowMajor(
+                            skeletonWorldMatricesRealRowMajor[exportMesh.parentJoint],
+                            positionGltf);
+                        normalGltf = TransformDirectionRowMajor(
+                            skeletonWorldMatricesRealRowMajor[exportMesh.parentJoint],
+                            normalGltf);
+                        NormalizeVec3(normalGltf);
                     }
 
                     PackedSkinnedVertex packed{};
-                    packed.x = position[0];
-                    packed.y = position[1];
-                    packed.z = -position[2];
-                    packed.nx = -normal[0];
-                    packed.ny = -normal[1];
-                    packed.nz = normal[2];
+                    packed.x = positionGltf[0];
+                    packed.y = positionGltf[1];
+                    packed.z = positionGltf[2];
+                    packed.nx = normalGltf[0];
+                    packed.ny = normalGltf[1];
+                    packed.nz = normalGltf[2];
                     packed.u = uv[0];
                     packed.v = uv[1];
                     if (exportMesh.skinned)
                     {
-                        if (exportMesh.rigidSkinned)
+                        if (exportMesh.usesSkeletonPlacement && !mesh.useSkinning)
                         {
-                            packed.jointIndices[0] = exportMesh.parentJoint;
-                            packed.jointIndices[1] = 0;
-                            packed.jointIndices[2] = 0;
-                            packed.jointIndices[3] = 0;
+                            uint16_t jointIndex = exportMesh.parentJoint;
+                            if (jointIndex < globalFallbackJointRemap.size() &&
+                                globalFallbackJointRemap[jointIndex] != kNoJoint)
+                            {
+                                jointIndex = globalFallbackJointRemap[jointIndex];
+                            }
+                            else
+                            {
+                                jointIndex = 0;
+                            }
+                            packed.jointIndices[0] = jointIndex;
                             packed.jointWeights[0] = 1.0f;
-                            packed.jointWeights[1] = 0.0f;
-                            packed.jointWeights[2] = 0.0f;
-                            packed.jointWeights[3] = 0.0f;
+                            for (int j = 1; j < 4; ++j)
+                            {
+                                packed.jointIndices[j] = 0;
+                                packed.jointWeights[j] = 0.0f;
+                            }
                         }
                         else
                         {
                             for (int j = 0; j < 4; ++j)
                             {
                                 uint16_t jointIndex = static_cast<uint16_t>(v.jointIndices[j]);
-                                if (jointIndex >= skeleton.size())
+                                if (exportMesh.explicitSkin)
+                                {
+                                    if (jointIndex >= exportMesh.skinJoints.size())
+                                    {
+                                        jointIndex = 0;
+                                    }
+                                }
+                                else if (jointIndex < globalFallbackJointRemap.size() &&
+                                         globalFallbackJointRemap[jointIndex] != kNoJoint)
+                                {
+                                    jointIndex = globalFallbackJointRemap[jointIndex];
+                                }
+                                else
                                 {
                                     jointIndex = 0;
                                 }
                                 packed.jointIndices[j] = jointIndex;
                                 packed.jointWeights[j] = v.jointWeights[j];
                             }
+                            NormalizeJointWeights(packed);
                         }
-                        NormalizeJointWeights(packed);
                     }
                     packedVertices.push_back(packed);
 
@@ -2657,7 +3589,7 @@ namespace DagorAssetsExtractor::Export
                     info.maxZ = std::max(info.maxZ, packed.z);
                 }
 
-                RepairNormals(packedVertices, meshIndices);
+                RecomputePackedNormals(packedVertices, meshIndices);
                 const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
                 binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
             }
@@ -2699,32 +3631,38 @@ namespace DagorAssetsExtractor::Export
             while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
         }
 
-        // Add Inverse Bind Matrices to BIN buffer if skinning is enabled
-        size_t ibmByteOffset = 0;
-        size_t ibmByteLength = 0;
-        if (useSkinning)
+        struct SkinBufferInfo
         {
-            ibmByteOffset = binBuffer.size();
-            ibmByteLength = skeleton.size() * 16 * sizeof(float);
-            for (const auto& node : skeleton)
+            size_t byteOffset = 0;
+            size_t byteLength = 0;
+        };
+        std::vector<SkinBufferInfo> skinBufferInfos(skinInfos.size());
+        for (size_t skinIndex = 0; skinIndex < skinInfos.size(); ++skinIndex)
+        {
+            while (binBuffer.size() % 4 != 0)
             {
-                std::array<float, 16> gltfInverseBind = transposeMatrix(node.inverseBindTransform);
-                ConvertMatrixHandedness(gltfInverseBind);
-                const uint8_t* matrixBytes = reinterpret_cast<const uint8_t*>(gltfInverseBind.data());
-                binBuffer.insert(binBuffer.end(), matrixBytes, matrixBytes + 16 * sizeof(float));
+                binBuffer.push_back(0);
             }
-            while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
+
+            skinBufferInfos[skinIndex].byteOffset = binBuffer.size();
+            skinBufferInfos[skinIndex].byteLength =
+                skinInfos[skinIndex].inverseBindMatrices.size() * 16 * sizeof(float);
+            for (const auto& inverseBindMatrix : skinInfos[skinIndex].inverseBindMatrices)
+            {
+                std::array<float, 16> gltfInverseBind = TransposeMatrix(inverseBindMatrix);
+                const uint8_t* matrixBytes = reinterpret_cast<const uint8_t*>(gltfInverseBind.data());
+                binBuffer.insert(binBuffer.end(), matrixBytes, matrixBytes + (16 * sizeof(float)));
+            }
         }
+        while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
 
         const GlbTextureSections textureSections = PrepareMaterialTextures(materialSelection.materials, options, binBuffer, debugLog);
 
         size_t currentBufferView = exportMeshes.size() * 2;
-        size_t ibmBufferViewIndex = 0;
-        bool hasIbmBufferView = false;
-        if (useSkinning)
+        std::vector<size_t> skinBufferViewIndices(skinInfos.size(), 0);
+        for (size_t skinIndex = 0; skinIndex < skinInfos.size(); ++skinIndex)
         {
-            ibmBufferViewIndex = currentBufferView++;
-            hasIbmBufferView = true;
+            skinBufferViewIndices[skinIndex] = currentBufferView++;
         }
 
         std::vector<size_t> tangentBufferViews(exportMeshes.size(), 0);
@@ -2745,9 +3683,72 @@ namespace DagorAssetsExtractor::Export
             skeletonTargetNodeIndices,
             skeletonRestTrs,
             emitSkeletonNodes,
+            useBindWrapperAnimationNodes,
             animationBufferViewBase,
             binBuffer,
             debugLog);
+        std::vector<RigidAnimationBindingInfo> rigidAnimationBindings;
+        rigidAnimationBindings.reserve(exportMeshes.size());
+        for (size_t meshIndex = 0; meshIndex < exportMeshes.size(); ++meshIndex)
+        {
+            const DynExportMesh& exportMesh = exportMeshes[meshIndex];
+            if (!exportMesh.animateAsRigidNode || exportMesh.parentJoint >= skeleton.size())
+            {
+                continue;
+            }
+
+            rigidAnimationBindings.push_back({
+                exportMesh.mesh.name,
+                meshNodeIndex(meshIndex),
+                exportMesh.parentJoint
+            });
+        }
+        GlbAnimationSections rigidAnimationSections = PrepareRigidNodeAnimationSections(
+            animations,
+            skeleton,
+            skeletonRestTrs,
+            skeletonWorldMatricesRealRowMajor,
+            rigidAnimationBindings,
+            animationBufferViewBase + animationSections.bufferViewCount,
+            binBuffer,
+            debugLog);
+        if (!rigidAnimationSections.clips.empty())
+        {
+            animationSections.bufferViewCount += rigidAnimationSections.bufferViewCount;
+            for (GlbAnimationClipInfo& rigidClip : rigidAnimationSections.clips)
+            {
+                auto clipIt = std::find_if(
+                    animationSections.clips.begin(),
+                    animationSections.clips.end(),
+                    [&](const GlbAnimationClipInfo& clipInfo)
+                    {
+                        return clipInfo.name == rigidClip.name;
+                    });
+                if (clipIt != animationSections.clips.end())
+                {
+                    clipIt->curves.insert(
+                        clipIt->curves.end(),
+                        std::make_move_iterator(rigidClip.curves.begin()),
+                        std::make_move_iterator(rigidClip.curves.end()));
+                }
+                else
+                {
+                    animationSections.clips.push_back(std::move(rigidClip));
+                }
+            }
+        }
+
+        // Reindex all animation curves sequentially to match their final merged order in the JSON
+        size_t nextAnimBufferView = animationBufferViewBase;
+        for (GlbAnimationClipInfo& clip : animationSections.clips)
+        {
+            for (GlbAnimationCurveInfo& curve : clip.curves)
+            {
+                curve.timeBufferView = nextAnimBufferView++;
+                curve.valueBufferView = nextAnimBufferView++;
+            }
+        }
+
         std::unordered_map<size_t, GltfNodeTrs> animatedNodeInitialTransforms;
         if (!useBindWrapperAnimationNodes && !animationSections.clips.empty())
         {
@@ -2820,10 +3821,10 @@ namespace DagorAssetsExtractor::Export
                 accessorInfos[i].indices.push_back(currentAccessor++);
             }
         }
-        size_t ibmAccessorIndex = 0;
-        if (useSkinning)
+        std::vector<size_t> skinAccessorIndices(skinInfos.size(), 0);
+        for (size_t skinIndex = 0; skinIndex < skinInfos.size(); ++skinIndex)
         {
-            ibmAccessorIndex = currentAccessor++;
+            skinAccessorIndices[skinIndex] = currentAccessor++;
         }
         AllocateAnimationAccessors(animationSections, currentAccessor);
 
@@ -2861,10 +3862,6 @@ namespace DagorAssetsExtractor::Export
         }
         for (size_t i = 0; i < exportMeshes.size(); ++i)
         {
-            if (exportMeshes[i].hasParentJoint)
-            {
-                continue;
-            }
             if (!firstSceneNode) json << ", ";
             json << meshNodeIndex(i);
             firstSceneNode = false;
@@ -2883,16 +3880,6 @@ namespace DagorAssetsExtractor::Export
                 json << ",\n";
             }
             firstNode = false;
-        };
-        const auto writeNodeMatrix = [&](const std::array<float, 16>& matrix)
-        {
-            json << "      \"matrix\": [";
-            for (int m = 0; m < 16; ++m)
-            {
-                json << JsonFloat(matrix[m]);
-                if (m < 15) json << ", ";
-            }
-            json << "]";
         };
         const auto writeNodeTrs = [&](const GltfNodeTrs& trs)
         {
@@ -2915,24 +3902,20 @@ namespace DagorAssetsExtractor::Export
                 }
 
                 const auto& node = skeleton[i];
-                std::array<float, 16> gltfMatrix = makeGltfMatrix(node.localTransform);
                 if (useBindWrapperAnimationNodes)
                 {
                     writeNodeSeparator();
                     json << "    {\n";
-                    json << "      \"name\": \"" << JsonEscape(node.name + "__bind") << "\"";
-                    if (!IsIdentityMatrix(gltfMatrix))
-                    {
-                        json << ",\n";
-                        writeNodeMatrix(gltfMatrix);
-                    }
+                    json << "      \"name\": \"" << JsonEscape(skeletonExportNames[i] + "__bind") << "\"";
+                    json << ",\n";
+                    writeNodeTrs(skeletonRestTrs[i]);
                     json << ",\n";
                     json << "      \"children\": [" << skeletonTargetNodeIndices[i] << "]\n";
                     json << "    }";
 
                     writeNodeSeparator();
                     json << "    {\n";
-                    json << "      \"name\": \"" << JsonEscape(node.name) << "\"";
+                    json << "      \"name\": \"" << JsonEscape(skeletonExportNames[i]) << "\"";
 
                     std::vector<size_t> childNodes;
                     childNodes.reserve(node.childIndices.size());
@@ -2941,13 +3924,6 @@ namespace DagorAssetsExtractor::Export
                         if (childIndex < skeleton.size() && emittedSkeletonNodes[childIndex])
                         {
                             childNodes.push_back(skeletonBindNodeIndices[childIndex]);
-                        }
-                    }
-                    for (size_t meshIndex = 0; meshIndex < exportMeshes.size(); ++meshIndex)
-                    {
-                        if (exportMeshes[meshIndex].hasParentJoint && exportMeshes[meshIndex].parentJoint == i)
-                        {
-                            childNodes.push_back(meshNodeIndex(meshIndex));
                         }
                     }
 
@@ -2968,17 +3944,16 @@ namespace DagorAssetsExtractor::Export
                 {
                     writeNodeSeparator();
                     json << "    {\n";
-                    json << "      \"name\": \"" << JsonEscape(node.name) << "\"";
+                    json << "      \"name\": \"" << JsonEscape(skeletonExportNames[i]) << "\"";
+                    json << ",\n";
                     if (const auto animatedTrsIt = animatedNodeInitialTransforms.find(i);
                         animatedTrsIt != animatedNodeInitialTransforms.end())
                     {
-                        json << ",\n";
                         writeNodeTrs(animatedTrsIt->second);
                     }
-                    else if (!IsIdentityMatrix(gltfMatrix))
+                    else
                     {
-                        json << ",\n";
-                        writeNodeMatrix(gltfMatrix);
+                        writeNodeTrs(skeletonRestTrs[i]);
                     }
 
                     std::vector<size_t> childNodes;
@@ -2988,13 +3963,6 @@ namespace DagorAssetsExtractor::Export
                         if (childIndex < skeleton.size() && emittedSkeletonNodes[childIndex])
                         {
                             childNodes.push_back(skeletonBindNodeIndices[childIndex]);
-                        }
-                    }
-                    for (size_t meshIndex = 0; meshIndex < exportMeshes.size(); ++meshIndex)
-                    {
-                        if (exportMeshes[meshIndex].hasParentJoint && exportMeshes[meshIndex].parentJoint == i)
-                        {
-                            childNodes.push_back(meshNodeIndex(meshIndex));
                         }
                     }
 
@@ -3021,9 +3989,9 @@ namespace DagorAssetsExtractor::Export
             json << "    {\n";
             json << "      \"name\": \"" << JsonEscape(exportMeshes[i].mesh.name) << "\",\n";
             json << "      \"mesh\": " << i;
-            if (exportMeshes[i].skinned)
+            if (exportMeshes[i].skinned && meshSkinIndices[i] != kInvalidNodeIndex)
             {
-                json << ",\n      \"skin\": 0";
+                json << ",\n      \"skin\": " << meshSkinIndices[i];
             }
             if (exportMeshes[i].hasNodeMatrix && !IsIdentityMatrix(exportMeshes[i].nodeMatrix))
             {
@@ -3043,42 +4011,90 @@ namespace DagorAssetsExtractor::Export
 
         if (useSkinning)
         {
+            const auto findLowestCommonAncestor = [&](const std::vector<uint16_t>& skeletonJoints) -> size_t
+            {
+                if (skeletonJoints.empty())
+                {
+                    return kInvalidNodeIndex;
+                }
+
+                std::vector<size_t> ancestors;
+                size_t current = skeletonJoints.front();
+                size_t guard = 0;
+                while (current != static_cast<size_t>(DagorFormats::GeomNodeTreeNode::InvalidIndex) &&
+                       current < skeleton.size() &&
+                       guard++ < skeleton.size())
+                {
+                    ancestors.push_back(current);
+                    current = skeleton[current].parentIndex;
+                }
+
+                if (ancestors.empty())
+                {
+                    return kInvalidNodeIndex;
+                }
+
+                for (size_t jointIdx = 1; jointIdx < skeletonJoints.size(); ++jointIdx)
+                {
+                    std::vector<size_t> jointAncestors;
+                    current = skeletonJoints[jointIdx];
+                    guard = 0;
+                    while (current != static_cast<size_t>(DagorFormats::GeomNodeTreeNode::InvalidIndex) &&
+                           current < skeleton.size() &&
+                           guard++ < skeleton.size())
+                    {
+                        jointAncestors.push_back(current);
+                        current = skeleton[current].parentIndex;
+                    }
+
+                    ancestors.erase(
+                        std::remove_if(
+                            ancestors.begin(),
+                            ancestors.end(),
+                            [&](size_t candidate)
+                            {
+                                return std::find(jointAncestors.begin(), jointAncestors.end(), candidate) == jointAncestors.end();
+                            }),
+                        ancestors.end());
+                    if (ancestors.empty())
+                    {
+                        return kInvalidNodeIndex;
+                    }
+                }
+
+                return ancestors.front();
+            };
+
             json << "  \"skins\": [\n";
-            json << "    {\n";
-            std::vector<size_t> skeletonRootNodes;
-            for (size_t i = 0; i < skeleton.size(); ++i)
+            for (size_t skinIndex = 0; skinIndex < skinInfos.size(); ++skinIndex)
             {
-                if (!emittedSkeletonNodes[i])
+                const GlbSkinInfo& skinInfo = skinInfos[skinIndex];
+                json << "    {\n";
+                const size_t skeletonRoot = findLowestCommonAncestor(skinInfo.skeletonJointIndices);
+                if (skeletonRoot != kInvalidNodeIndex &&
+                    skeletonRoot < skeletonTargetNodeIndices.size() &&
+                    skeletonTargetNodeIndices[skeletonRoot] != kInvalidNodeIndex)
                 {
-                    continue;
+                    json << "      \"skeleton\": " << skeletonTargetNodeIndices[skeletonRoot] << ",\n";
                 }
-                const uint16_t parentIndex = skeleton[i].parentIndex;
-                if (parentIndex == DagorFormats::GeomNodeTreeNode::InvalidIndex ||
-                    parentIndex >= skeleton.size() ||
-                    !emittedSkeletonNodes[parentIndex])
+                json << "      \"inverseBindMatrices\": " << skinAccessorIndices[skinIndex] << ",\n";
+                json << "      \"joints\": [";
+                for (size_t jointIndex = 0; jointIndex < skinInfo.jointNodeIndices.size(); ++jointIndex)
                 {
-                    skeletonRootNodes.push_back(skeletonBindNodeIndices[i]);
+                    if (jointIndex != 0)
+                    {
+                        json << ", ";
+                    }
+                    json << skinInfo.jointNodeIndices[jointIndex];
                 }
-            }
-            if (skeletonRootNodes.size() == 1)
-            {
-                json << "      \"skeleton\": " << skeletonRootNodes.front() << ",\n";
-            }
-            json << "      \"inverseBindMatrices\": " << ibmAccessorIndex << ",\n"; // Accessor index
-            json << "      \"joints\": [";
-            bool firstJoint = true;
-            for (size_t i = 0; i < skeleton.size(); ++i)
-            {
-                if (!emittedSkeletonNodes[i])
+                json << "]\n";
+                json << "    }";
+                if (skinIndex + 1 < skinInfos.size())
                 {
-                    continue;
+                    json << ",";
                 }
-                if (!firstJoint) json << ", ";
-                json << skeletonTargetNodeIndices[i];
-                firstJoint = false;
+                json << "\n";
             }
-            json << "]\n";
-            json << "    }\n";
             json << "  ],\n";
         }
 
@@ -3176,14 +4192,13 @@ namespace DagorAssetsExtractor::Export
             json << "      \"target\": 34963\n";
             json << "    }";
         }
-        if (useSkinning)
+        for (size_t skinIndex = 0; skinIndex < skinInfos.size(); ++skinIndex)
         {
             writeBufferViewSeparator();
-            // IBM bufferView
             json << "    {\n";
             json << "      \"buffer\": 0,\n";
-            json << "      \"byteOffset\": " << ibmByteOffset << ",\n";
-            json << "      \"byteLength\": " << ibmByteLength << "\n";
+            json << "      \"byteOffset\": " << skinBufferInfos[skinIndex].byteOffset << ",\n";
+            json << "      \"byteLength\": " << skinBufferInfos[skinIndex].byteLength << "\n";
             json << "    }";
         }
         // Tangent bufferViews
@@ -3267,11 +4282,13 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
-        if (useSkinning)
+        for (size_t skinIndex = 0; skinIndex < skinInfos.size(); ++skinIndex)
         {
-            // IBM accessor
             writeAccessorSeparator();
-            json << "    { \"bufferView\": " << ibmBufferViewIndex << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": " << skeleton.size() << ", \"type\": \"MAT4\" }";
+            json << "    { \"bufferView\": " << skinBufferViewIndices[skinIndex]
+                 << ", \"byteOffset\": 0, \"componentType\": 5126, \"count\": "
+                 << skinInfos[skinIndex].inverseBindMatrices.size()
+                 << ", \"type\": \"MAT4\" }";
         }
         WriteAnimationAccessors(json, animationSections, writeAccessorSeparator);
         json << "\n";

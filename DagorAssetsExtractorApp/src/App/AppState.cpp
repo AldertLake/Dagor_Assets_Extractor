@@ -5,6 +5,7 @@
 #include "Export/TextureExporter.h"
 #include "Export/ModelExporter.h"
 #include "DagorFormats/BlkReader.h"
+#include "DagorFormats/DdsxReader.h"
 #include "DagorFormats/RendInstReader.h"
 #include "DagorFormats/DynModelReader.h"
 #include "DagorFormats/GeomNodeTreeReader.h"
@@ -57,6 +58,86 @@ namespace DagorAssetsExtractor::App
             return static_cast<char>(std::tolower(c));
         });
         return lowered;
+    }
+
+    bool ContainsAscii(std::string_view haystack, std::string_view needle)
+    {
+        return haystack.find(needle) != std::string_view::npos;
+    }
+
+    std::string DescribeResolvedTexturePack(const fs::path& path)
+    {
+        const std::string lowered = ToLowerLocal(Platform::PathToUtf8(path));
+        std::vector<std::string> tags;
+
+        if (ContainsAscii(lowered, "/content.hq/"))
+        {
+            tags.push_back("content.hq");
+        }
+        else if (ContainsAscii(lowered, "/content/"))
+        {
+            tags.push_back("content");
+        }
+
+        if (ContainsAscii(lowered, "/uhq_vehicles/"))
+        {
+            tags.push_back("uhq_vehicles");
+        }
+        if (ContainsAscii(lowered, "/hq_tex/"))
+        {
+            tags.push_back("hq_tex");
+        }
+        if (ContainsAscii(lowered, "/pkg_cockpits/"))
+        {
+            tags.push_back("pkg_cockpits");
+        }
+        if (ContainsAscii(lowered, "/patch/"))
+        {
+            tags.push_back("patch");
+        }
+
+        if (tags.empty())
+        {
+            return "unclassified";
+        }
+
+        std::ostringstream out;
+        for (size_t i = 0; i < tags.size(); ++i)
+        {
+            if (i != 0)
+            {
+                out << ",";
+            }
+            out << tags[i];
+        }
+        return out.str();
+    }
+
+    std::string BuildDdsxHeaderLogLine(const DagorFormats::DdsxHeader& header)
+    {
+        constexpr uint32_t kFlagNeedPairedBaseTex = 0x00020000u;
+        constexpr uint32_t kFlagRevMipOrder = 0x00040000u;
+        constexpr uint32_t kFlagHqPart = 0x00080000u;
+
+        std::ostringstream out;
+        out << "DDSx header: fmt=" << header.FormatName()
+            << " (" << header.d3dFormat << ")"
+            << ", size=" << header.width << "x" << header.height
+            << ", mips=" << static_cast<unsigned int>(header.mipCount)
+            << ", hqPartLevels=" << static_cast<unsigned int>(header.hqPartLevels)
+            << ", lQmip=" << static_cast<unsigned int>(header.lQmip)
+            << ", mQmip=" << static_cast<unsigned int>(header.mQmip)
+            << ", uQmip=" << static_cast<unsigned int>(header.uQmip)
+            << ", dxtShift=" << static_cast<unsigned int>(header.dxtShift)
+            << ", flags=0x" << std::uppercase << std::hex << std::setw(8) << std::setfill('0') << header.flags
+            << std::nouppercase << std::dec << std::setfill(' ')
+            << ", compression=" << header.CompressionName()
+            << ", memSz=" << header.memorySize
+            << ", packedSz=" << header.packedSize
+            << ", HQ_PART=" << (((header.flags & kFlagHqPart) != 0) ? "yes" : "no")
+            << ", NEED_PAIRED_BASETEX=" << (((header.flags & kFlagNeedPairedBaseTex) != 0) ? "yes" : "no")
+            << ", REV_MIP_ORDER=" << (((header.flags & kFlagRevMipOrder) != 0) ? "yes" : "no");
+        return out.str();
     }
 
     bool TryParseTextureSlotIndex(std::string_view slotName, size_t& slotIndex)
@@ -1612,6 +1693,141 @@ namespace DagorAssetsExtractor::App
         std::string source;
     };
 
+    struct DynModelAnimationTargets
+    {
+        std::unordered_set<std::string> skeletonNodeNames;
+        std::unordered_set<std::string> modelNodeNames;
+    };
+
+    struct AnimationCompatibilityStats
+    {
+        size_t matchedSkeletonNodes = 0;
+        size_t matchedModelNodes = 0;
+        size_t unmatchedNodes = 0;
+        size_t animatedNodeCount = 0;
+        size_t animatedClipCount = 0;
+        size_t animatedTrackCount = 0;
+    };
+
+    struct DecodedAnimationCandidate
+    {
+        AnimationCandidate candidate;
+        DagorFormats::Anim2DataInfo animInfo;
+        AnimationCompatibilityStats compatibility;
+        int finalScore = 0;
+    };
+
+    std::string NormalizeAnimNodeName(std::string_view value)
+    {
+        return ToLowerLocal(Trim(std::string(value)));
+    }
+
+    void AddAnimationTargetName(std::unordered_set<std::string>& names, std::string_view value)
+    {
+        const std::string normalized = NormalizeAnimNodeName(value);
+        if (!normalized.empty())
+        {
+            names.insert(normalized);
+        }
+    }
+
+    DynModelAnimationTargets BuildDynModelAnimationTargets(
+        const std::vector<DagorFormats::DynModelMesh>& lods,
+        const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton)
+    {
+        DynModelAnimationTargets targets;
+        targets.skeletonNodeNames.reserve(skeleton.size());
+        for (const DagorFormats::GeomNodeTreeNode& node : skeleton)
+        {
+            AddAnimationTargetName(targets.skeletonNodeNames, node.name);
+        }
+
+        for (const DagorFormats::DynModelMesh& mesh : lods)
+        {
+            AddAnimationTargetName(targets.modelNodeNames, mesh.name);
+            AddAnimationTargetName(targets.modelNodeNames, mesh.parentNodeName);
+            for (const std::string& jointName : mesh.skinJointNodeNames)
+            {
+                AddAnimationTargetName(targets.modelNodeNames, jointName);
+            }
+        }
+        return targets;
+    }
+
+    AnimationCompatibilityStats EvaluateAnimationCompatibility(
+        const DagorFormats::Anim2DataInfo& animInfo,
+        const DynModelAnimationTargets& targets)
+    {
+        AnimationCompatibilityStats stats;
+        std::unordered_set<std::string> seenNodeNames;
+        seenNodeNames.reserve(animInfo.nodeNames.size());
+
+        for (const DagorFormats::Anim2DataClipInfo& clip : animInfo.clips)
+        {
+            if (clip.nodes.empty())
+            {
+                continue;
+            }
+
+            ++stats.animatedClipCount;
+            for (const DagorFormats::Anim2DataNodeAnimation& nodeAnim : clip.nodes)
+            {
+                if (nodeAnim.nodeName.empty() || nodeAnim.times.empty())
+                {
+                    continue;
+                }
+
+                ++stats.animatedTrackCount;
+                const std::string normalized = NormalizeAnimNodeName(nodeAnim.nodeName);
+                if (normalized.empty() || !seenNodeNames.insert(normalized).second)
+                {
+                    continue;
+                }
+
+                ++stats.animatedNodeCount;
+                if (targets.skeletonNodeNames.contains(normalized))
+                {
+                    ++stats.matchedSkeletonNodes;
+                }
+                else if (targets.modelNodeNames.contains(normalized))
+                {
+                    ++stats.matchedModelNodes;
+                }
+                else
+                {
+                    ++stats.unmatchedNodes;
+                }
+            }
+        }
+
+        return stats;
+    }
+
+    int ScoreAnimationCompatibility(const AnimationCompatibilityStats& stats)
+    {
+        const size_t matchedNodes = stats.matchedSkeletonNodes + stats.matchedModelNodes;
+        int score = static_cast<int>(stats.matchedSkeletonNodes * 45);
+        score += static_cast<int>(stats.matchedModelNodes * 12);
+        score += static_cast<int>(std::min<size_t>(stats.animatedTrackCount, 64));
+        score += static_cast<int>(stats.animatedClipCount * 3);
+        score -= static_cast<int>(stats.unmatchedNodes * 14);
+
+        if (stats.animatedNodeCount > 0)
+        {
+            score += static_cast<int>((matchedNodes * 100) / stats.animatedNodeCount);
+        }
+        if (stats.matchedSkeletonNodes == 0)
+        {
+            score -= 40;
+        }
+        if (matchedNodes == 0)
+        {
+            score -= 120;
+        }
+
+        return score;
+    }
+
     void AddAnimationCandidate(
         std::vector<AnimationCandidate>& candidates,
         const fs::path& packPath,
@@ -1683,6 +1899,8 @@ namespace DagorAssetsExtractor::App
         AppState& app,
         const fs::path& packPath,
         const AssetIndex::SubAssetRecord& modelEntry,
+        const std::vector<DagorFormats::DynModelMesh>& lods,
+        const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
         const AssetIndex::DescriptorResourceLink* matchedLink,
         const std::shared_ptr<const std::vector<AssetIndex::DescriptorResourceLink>>& descriptorLinks,
         const std::shared_ptr<const std::vector<AssetIndex::ResourceRecord>>& allRecords,
@@ -1690,6 +1908,7 @@ namespace DagorAssetsExtractor::App
     {
         constexpr uint32_t kAnim2DataClassId = 0x40C586F9u;
         std::vector<AnimationCandidate> candidates;
+        const DynModelAnimationTargets animationTargets = BuildDynModelAnimationTargets(lods, skeleton);
 
         if (matchedLink && descriptorLinks)
         {
@@ -1809,12 +2028,12 @@ namespace DagorAssetsExtractor::App
             return left.entry.name < right.entry.name;
         });
 
-        if (candidates.size() > 12)
+        if (candidates.size() > 24)
         {
             manifest.decodeWarnings.push_back(
                 "Animation resolver found " + std::to_string(candidates.size()) +
-                " Anim2Data candidates; exporting the 12 highest-scored matches.");
-            candidates.resize(12);
+                " Anim2Data candidates; compatibility-scoring the 24 highest-scored name matches.");
+            candidates.resize(24);
         }
 
         AddLog(app,
@@ -1822,6 +2041,7 @@ namespace DagorAssetsExtractor::App
             "Anim2Data resolver for " + modelEntry.name +
             ": candidates=" + std::to_string(candidates.size()));
 
+        std::vector<DecodedAnimationCandidate> decodedCandidates;
         std::vector<Export::AnimationClip> resolvedClips;
         for (const AnimationCandidate& candidate : candidates)
         {
@@ -1848,54 +2068,27 @@ namespace DagorAssetsExtractor::App
                 DagorFormats::Anim2DataReader animReader(*payload);
                 animReader.Parse();
                 const DagorFormats::Anim2DataInfo& animInfo = animReader.GetInfo();
+                const AnimationCompatibilityStats compatibility =
+                    EvaluateAnimationCompatibility(animInfo, animationTargets);
+                const int compatibilityScore = ScoreAnimationCompatibility(compatibility);
 
-                size_t curveTrackCount = 0;
-                for (const DagorFormats::Anim2DataClipInfo& animClip : animInfo.clips)
-                {
-                    if (animClip.nodes.empty())
-                    {
-                        continue;
-                    }
+                DecodedAnimationCandidate decoded;
+                decoded.candidate = candidate;
+                decoded.animInfo = animInfo;
+                decoded.compatibility = compatibility;
+                decoded.finalScore = candidate.score + compatibilityScore;
+                decodedCandidates.push_back(std::move(decoded));
 
-                    Export::AnimationClip exportClip;
-                    exportClip.name = candidate.entry.name;
-                    if (!animClip.name.empty() && animInfo.clips.size() > 1)
-                    {
-                        exportClip.name += "_" + animClip.name;
-                    }
-                    exportClip.diagnostics = animClip.warnings;
-                    exportClip.diagnostics.insert(exportClip.diagnostics.end(), animInfo.decodeWarnings.begin(), animInfo.decodeWarnings.end());
-                    exportClip.nodeTracks.reserve(animClip.nodes.size());
-
-                    for (const DagorFormats::Anim2DataNodeAnimation& nodeAnim : animClip.nodes)
-                    {
-                        Export::AnimationNodeTrack track;
-                        track.nodeName = nodeAnim.nodeName;
-                        track.times = nodeAnim.times;
-                        track.translations = nodeAnim.translations;
-                        track.rotations = nodeAnim.rotations;
-                        track.scales = nodeAnim.scales;
-                        if (!track.nodeName.empty() && !track.times.empty())
-                        {
-                            exportClip.nodeTracks.push_back(std::move(track));
-                            ++curveTrackCount;
-                        }
-                    }
-
-                    if (!exportClip.nodeTracks.empty())
-                    {
-                        resolvedClips.push_back(std::move(exportClip));
-                    }
-                }
-
-                manifest.decodeWarnings.push_back(
-                    "Resolved animation " + candidate.entry.name +
-                    " from " + Platform::PathToUtf8(candidate.packPath.filename()));
                 AddLog(app,
                     LogLevel::Info,
                     "Decoded Anim2Data " + candidate.entry.name +
+                    ": finalScore=" + std::to_string(candidate.score + compatibilityScore) +
+                    ", matchedSkeletonNodes=" + std::to_string(compatibility.matchedSkeletonNodes) +
+                    ", matchedModelNodes=" + std::to_string(compatibility.matchedModelNodes) +
+                    ", unmatchedNodes=" + std::to_string(compatibility.unmatchedNodes) +
+                    ", animatedNodes=" + std::to_string(compatibility.animatedNodeCount) +
                     ": clips=" + std::to_string(animInfo.clips.size()) +
-                    ", exportNodeTracks=" + std::to_string(curveTrackCount) +
+                    ", exportNodeTracks=" + std::to_string(compatibility.animatedTrackCount) +
                     ", channels=" + std::to_string(animInfo.channels.size()) +
                     ", nodes=" + std::to_string(animInfo.nodeNames.size()) +
                     ", labels=" + std::to_string(animInfo.labels.size()));
@@ -1910,6 +2103,107 @@ namespace DagorAssetsExtractor::App
                     "Could not decode Anim2Data candidate " + candidate.entry.name + ": " + exception.what();
                 manifest.decodeWarnings.push_back(warning);
                 AddLog(app, LogLevel::Warning, warning);
+            }
+        }
+
+        std::sort(decodedCandidates.begin(), decodedCandidates.end(), [](const DecodedAnimationCandidate& left, const DecodedAnimationCandidate& right) {
+            if (left.finalScore != right.finalScore)
+            {
+                return left.finalScore > right.finalScore;
+            }
+            if (left.compatibility.matchedSkeletonNodes != right.compatibility.matchedSkeletonNodes)
+            {
+                return left.compatibility.matchedSkeletonNodes > right.compatibility.matchedSkeletonNodes;
+            }
+            return left.candidate.entry.name < right.candidate.entry.name;
+        });
+
+        std::vector<const DecodedAnimationCandidate*> selectedCandidates;
+        if (!decodedCandidates.empty())
+        {
+            const int bestScore = decodedCandidates.front().finalScore;
+            for (const DecodedAnimationCandidate& decoded : decodedCandidates)
+            {
+                const size_t matchedNodes =
+                    decoded.compatibility.matchedSkeletonNodes + decoded.compatibility.matchedModelNodes;
+                if (matchedNodes == 0)
+                {
+                    continue;
+                }
+                if (decoded.finalScore + 35 < bestScore)
+                {
+                    continue;
+                }
+
+                selectedCandidates.push_back(&decoded);
+                if (selectedCandidates.size() >= 3)
+                {
+                    break;
+                }
+            }
+
+            if (selectedCandidates.empty() &&
+                decodedCandidates.front().compatibility.matchedSkeletonNodes > 0)
+            {
+                selectedCandidates.push_back(&decodedCandidates.front());
+            }
+        }
+
+        if (!decodedCandidates.empty())
+        {
+            manifest.decodeWarnings.push_back(
+                "Animation resolver compatibility-ranked " + std::to_string(decodedCandidates.size()) +
+                " decoded Anim2Data candidates and kept " + std::to_string(selectedCandidates.size()) + ".");
+        }
+
+        for (const DecodedAnimationCandidate* decoded : selectedCandidates)
+        {
+            manifest.decodeWarnings.push_back(
+                "Resolved animation " + decoded->candidate.entry.name +
+                " from " + Platform::PathToUtf8(decoded->candidate.packPath.filename()) +
+                " (score=" + std::to_string(decoded->finalScore) +
+                ", matchedSkeletonNodes=" + std::to_string(decoded->compatibility.matchedSkeletonNodes) +
+                ", matchedModelNodes=" + std::to_string(decoded->compatibility.matchedModelNodes) + ").");
+
+            for (const DagorFormats::Anim2DataClipInfo& animClip : decoded->animInfo.clips)
+            {
+                if (animClip.nodes.empty())
+                {
+                    continue;
+                }
+
+                Export::AnimationClip exportClip;
+                exportClip.name = decoded->candidate.entry.name;
+                exportClip.additive = decoded->animInfo.additive;
+                if (!animClip.name.empty() && decoded->animInfo.clips.size() > 1)
+                {
+                    exportClip.name += "_" + animClip.name;
+                }
+                exportClip.diagnostics = animClip.warnings;
+                exportClip.diagnostics.insert(
+                    exportClip.diagnostics.end(),
+                    decoded->animInfo.decodeWarnings.begin(),
+                    decoded->animInfo.decodeWarnings.end());
+                exportClip.nodeTracks.reserve(animClip.nodes.size());
+
+                for (const DagorFormats::Anim2DataNodeAnimation& nodeAnim : animClip.nodes)
+                {
+                    Export::AnimationNodeTrack track;
+                    track.nodeName = nodeAnim.nodeName;
+                    track.times = nodeAnim.times;
+                    track.translations = nodeAnim.translations;
+                    track.rotations = nodeAnim.rotations;
+                    track.scales = nodeAnim.scales;
+                    if (!track.nodeName.empty() && !track.times.empty())
+                    {
+                        exportClip.nodeTracks.push_back(std::move(track));
+                    }
+                }
+
+                if (!exportClip.nodeTracks.empty())
+                {
+                    resolvedClips.push_back(std::move(exportClip));
+                }
             }
         }
 
@@ -2339,13 +2633,15 @@ namespace DagorAssetsExtractor::App
                     }
                 };
 
-                auto findTextureInDxpPacks = [&](const std::string& texName, fs::path& outDxpPath, std::string& outDxpEntryName) -> bool {
+                auto findTextureInDxpPacks =
+                    [&](const std::string& texName, fs::path& outDxpPath, std::string& outDxpEntryName, std::string& outResolutionSource) -> bool {
                     const std::string normTexName = normalizeTextureName(texName);
                     auto it = globalTextureDxpLookup.find(normTexName);
                     if (it != globalTextureDxpLookup.end())
                     {
                         outDxpPath = it->second.first;
                         outDxpEntryName = it->second.second;
+                        outResolutionSource = "descriptor-link-cache";
                         return true;
                     }
 
@@ -2356,6 +2652,7 @@ namespace DagorAssetsExtractor::App
                         outDxpPath = indexIt->second.first;
                         outDxpEntryName = indexIt->second.second;
                         globalTextureDxpLookup[normTexName] = { outDxpPath, outDxpEntryName };
+                        outResolutionSource = "fast-dxp-index";
                         return true;
                     }
 
@@ -2376,9 +2673,21 @@ namespace DagorAssetsExtractor::App
 
                         fs::path dxpPath;
                         std::string dxpEntryName;
-                        if (findTextureInDxpPacks(texName, dxpPath, dxpEntryName))
+                        std::string resolutionSource;
+                        if (findTextureInDxpPacks(texName, dxpPath, dxpEntryName, resolutionSource))
                         {
                             resolvedTextureExports[texName] = { dxpPath, dxpEntryName };
+                            AddExportProgressLog(
+                                app,
+                                "Resolved texture dependency: " + texName +
+                                    " -> " + Platform::PathToUtf8(dxpPath.filename()) +
+                                    " :: " + dxpEntryName +
+                                    " [" + DescribeResolvedTexturePack(dxpPath) +
+                                    ", source=" + resolutionSource + "]");
+                        }
+                        else
+                        {
+                            AddExportProgressLog(app, "Could not resolve texture dependency: " + texName);
                         }
                     }
 
@@ -2454,6 +2763,36 @@ namespace DagorAssetsExtractor::App
                         warning = "Resolved texture dependency entry " + dxpEntryName +
                             " was not found in " + Platform::PathToUtf8(dxpPath.filename());
                         return false;
+                    }
+
+                    AddExportProgressLog(
+                        app,
+                        "Preparing texture export: " + texName +
+                            " from " + Platform::PathToUtf8(dxpPath.filename()) +
+                            " :: " + dxpEntryName +
+                            " [" + DescribeResolvedTexturePack(dxpPath) + "]");
+
+                    if (it->ddsxHeader.size() >= 32)
+                    {
+                        try
+                        {
+                            DagorFormats::DdsxReader headerReader(it->ddsxHeader);
+                            headerReader.Parse();
+                            AddExportProgressLog(app, BuildDdsxHeaderLogLine(headerReader.GetHeader()));
+                        }
+                        catch (const std::exception& ex)
+                        {
+                            AddExportProgressLog(
+                                app,
+                                "DDSx header parse failed for " + texName + ": " + ex.what());
+                        }
+                    }
+                    else
+                    {
+                        AddExportProgressLog(
+                            app,
+                            "DDSx header missing or truncated for " + texName +
+                                " in " + Platform::PathToUtf8(dxpPath.filename()));
                     }
 
                     auto texResult = Export::TextureExporter::ExportTexture(dxpPath, *it, textureExportOptions);
@@ -3050,6 +3389,8 @@ namespace DagorAssetsExtractor::App
                                 app,
                                 packPath,
                                 entry,
+                                dynLods,
+                                skeleton,
                                 matchedLink,
                                 descriptorLinks,
                                 allRecords,
