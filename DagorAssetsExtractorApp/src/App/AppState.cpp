@@ -2543,7 +2543,14 @@ namespace DagorAssetsExtractor::App
                     return name;
                 };
 
-                std::unordered_map<std::string, std::pair<fs::path, std::string>> globalTextureDxpLookup;
+                struct ResolvedTextureCandidate
+                {
+                    fs::path dxpPath;
+                    std::string dxpEntryName;
+                    std::string resolutionSource;
+                };
+
+                std::unordered_map<std::string, std::vector<std::pair<fs::path, std::string>>> globalTextureDxpLookup;
                 if (descriptorLinks)
                 {
                     for (const auto& link : *descriptorLinks)
@@ -2555,14 +2562,32 @@ namespace DagorAssetsExtractor::App
                                 const std::string normalizedTextureName = normalizeTextureName(texLink.textureName);
                                 if (!normalizedTextureName.empty())
                                 {
-                                    globalTextureDxpLookup[normalizedTextureName] = { *texLink.matchedDxpPath, *texLink.matchedDxpEntryName };
+                                    auto& list = globalTextureDxpLookup[normalizedTextureName];
+                                    std::pair<fs::path, std::string> candidate = { *texLink.matchedDxpPath, *texLink.matchedDxpEntryName };
+                                    if (std::find(list.begin(), list.end(), candidate) == list.end())
+                                    {
+                                        list.push_back(candidate);
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                std::unordered_map<std::string, std::pair<fs::path, std::string>> fastDxpTextureIndex;
+                // Sort descriptor lookup candidates so HQ variants are checked first
+                for (auto& [_, list] : globalTextureDxpLookup)
+                {
+                    std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) {
+                        bool aHasHq = (a.second.find("$hq") != std::string::npos);
+                        bool bHasHq = (b.second.find("$hq") != std::string::npos);
+                        if (aHasHq != bHasHq) {
+                            return aHasHq;
+                        }
+                        return a.second < b.second;
+                    });
+                }
+
+                std::unordered_map<std::string, std::vector<std::pair<fs::path, std::string>>> fastDxpTextureIndex;
                 bool fastDxpTextureIndexBuilt = false;
 
                 auto buildFastDxpTextureIndex = [&]() {
@@ -2613,53 +2638,94 @@ namespace DagorAssetsExtractor::App
                                 std::string normName = normalizeTextureName(currentName);
                                 if (!normName.empty())
                                 {
-                                    auto existingIt = fastDxpTextureIndex.find(normName);
-                                    if (existingIt != fastDxpTextureIndex.end())
+                                    auto& list = fastDxpTextureIndex[normName];
+                                    std::pair<fs::path, std::string> candidate = { record.path, currentName };
+                                    if (std::find(list.begin(), list.end(), candidate) == list.end())
                                     {
-                                        bool newHasHq = (currentName.find("$hq") != std::string::npos);
-                                        bool oldHasHq = (existingIt->second.second.find("$hq") != std::string::npos);
-                                        if (newHasHq && !oldHasHq)
-                                        {
-                                            fastDxpTextureIndex[normName] = { record.path, currentName };
-                                        }
-                                    }
-                                    else
-                                    {
-                                        fastDxpTextureIndex[normName] = { record.path, currentName };
+                                        list.push_back(candidate);
                                     }
                                 }
                             }
                         }
                     }
+
+                    // Sort candidates so HQ variants are checked first
+                    for (auto& [_, list] : fastDxpTextureIndex)
+                    {
+                        std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) {
+                            bool aHasHq = (a.second.find("$hq") != std::string::npos);
+                            bool bHasHq = (b.second.find("$hq") != std::string::npos);
+                            if (aHasHq != bHasHq) {
+                                return aHasHq;
+                            }
+                            return a.second < b.second;
+                        });
+                    }
                 };
 
                 auto findTextureInDxpPacks =
-                    [&](const std::string& texName, fs::path& outDxpPath, std::string& outDxpEntryName, std::string& outResolutionSource) -> bool {
+                    [&](const std::string& texName) -> std::vector<ResolvedTextureCandidate> {
+                    std::vector<ResolvedTextureCandidate> results;
                     const std::string normTexName = normalizeTextureName(texName);
+
                     auto it = globalTextureDxpLookup.find(normTexName);
                     if (it != globalTextureDxpLookup.end())
                     {
-                        outDxpPath = it->second.first;
-                        outDxpEntryName = it->second.second;
-                        outResolutionSource = "descriptor-link-cache";
-                        return true;
+                        for (const auto& candidate : it->second)
+                        {
+                            results.push_back({ candidate.first, candidate.second, "descriptor-link-cache" });
+                        }
                     }
 
                     buildFastDxpTextureIndex();
                     auto indexIt = fastDxpTextureIndex.find(normTexName);
                     if (indexIt != fastDxpTextureIndex.end())
                     {
-                        outDxpPath = indexIt->second.first;
-                        outDxpEntryName = indexIt->second.second;
-                        globalTextureDxpLookup[normTexName] = { outDxpPath, outDxpEntryName };
-                        outResolutionSource = "fast-dxp-index";
-                        return true;
+                        // Cache fast-dxp-index findings into globalTextureDxpLookup
+                        auto& list = globalTextureDxpLookup[normTexName];
+                        for (const auto& candidate : indexIt->second)
+                        {
+                            if (std::find(list.begin(), list.end(), candidate) == list.end())
+                            {
+                                list.push_back(candidate);
+                            }
+                        }
+
+                        for (const auto& candidate : indexIt->second)
+                        {
+                            bool duplicate = false;
+                            for (const auto& existing : results)
+                            {
+                                if (existing.dxpPath == candidate.first && existing.dxpEntryName == candidate.second)
+                                {
+                                    duplicate = true;
+                                    break;
+                                }
+                            }
+                            if (!duplicate)
+                            {
+                                results.push_back({ candidate.first, candidate.second, "fast-dxp-index" });
+                            }
+                        }
                     }
 
-                    return false;
+                    // Sort results: `$hq` first, then by resolutionSource preference (descriptor-link-cache over fast-dxp-index)
+                    std::sort(results.begin(), results.end(), [](const auto& a, const auto& b) {
+                        bool aHasHq = (a.dxpEntryName.find("$hq") != std::string::npos);
+                        bool bHasHq = (b.dxpEntryName.find("$hq") != std::string::npos);
+                        if (aHasHq != bHasHq) {
+                            return aHasHq;
+                        }
+                        if (a.resolutionSource != b.resolutionSource) {
+                            return a.resolutionSource == "descriptor-link-cache";
+                        }
+                        return a.dxpEntryName < b.dxpEntryName;
+                    });
+
+                    return results;
                 };
 
-                std::unordered_map<std::string, std::pair<fs::path, std::string>> resolvedTextureExports;
+                std::unordered_map<std::string, std::vector<ResolvedTextureCandidate>> resolvedTextureExports;
                 if (exportTextures && !uniqueTexturesToExport.empty())
                 {
                     for (const auto& texName : uniqueTexturesToExport)
@@ -2671,19 +2737,19 @@ namespace DagorAssetsExtractor::App
                             return;
                         }
 
-                        fs::path dxpPath;
-                        std::string dxpEntryName;
-                        std::string resolutionSource;
-                        if (findTextureInDxpPacks(texName, dxpPath, dxpEntryName, resolutionSource))
+                        auto candidates = findTextureInDxpPacks(texName);
+                        if (!candidates.empty())
                         {
-                            resolvedTextureExports[texName] = { dxpPath, dxpEntryName };
+                            resolvedTextureExports[texName] = candidates;
+                            std::string candidateListStr;
+                            for (size_t cIdx = 0; cIdx < candidates.size(); ++cIdx)
+                            {
+                                if (cIdx > 0) candidateListStr += ", ";
+                                candidateListStr += Platform::PathToUtf8(candidates[cIdx].dxpPath.filename()) + "::" + candidates[cIdx].dxpEntryName;
+                            }
                             AddExportProgressLog(
                                 app,
-                                "Resolved texture dependency: " + texName +
-                                    " -> " + Platform::PathToUtf8(dxpPath.filename()) +
-                                    " :: " + dxpEntryName +
-                                    " [" + DescribeResolvedTexturePack(dxpPath) +
-                                    ", source=" + resolutionSource + "]");
+                                "Resolved texture dependency candidates for " + texName + ": [" + candidateListStr + "]");
                         }
                         else
                         {
@@ -2692,21 +2758,24 @@ namespace DagorAssetsExtractor::App
                     }
 
                     std::unordered_set<std::wstring> preloadedTexturePacks;
-                    for (const auto& [_, resolved] : resolvedTextureExports)
+                    for (const auto& [_, candidates] : resolvedTextureExports)
                     {
-                        const std::wstring packKey = resolved.first.lexically_normal().wstring();
-                        if (!preloadedTexturePacks.insert(packKey).second)
+                        for (const auto& candidate : candidates)
                         {
-                            continue;
-                        }
-
-                        auto dxpContents = app.packContentsCache.Get(resolved.first);
-                        if (!dxpContents)
-                        {
-                            auto newContents = AssetIndex::ParseDxpContents(resolved.first);
-                            if (newContents)
+                            const std::wstring packKey = candidate.dxpPath.lexically_normal().wstring();
+                            if (!preloadedTexturePacks.insert(packKey).second)
                             {
-                                app.packContentsCache.Put(resolved.first, newContents);
+                                continue;
+                            }
+
+                            auto dxpContents = app.packContentsCache.Get(candidate.dxpPath);
+                            if (!dxpContents)
+                            {
+                                auto newContents = AssetIndex::ParseDxpContents(candidate.dxpPath);
+                                if (newContents)
+                                {
+                                    app.packContentsCache.Put(candidate.dxpPath, newContents);
+                                }
                             }
                         }
                     }
@@ -2735,79 +2804,111 @@ namespace DagorAssetsExtractor::App
                         return false;
                     }
 
-                    const fs::path& dxpPath = resolvedIt->second.first;
-                    const std::string& dxpEntryName = resolvedIt->second.second;
-                    auto dxpContents = app.packContentsCache.Get(dxpPath);
-                    if (!dxpContents)
+                    const auto& candidates = resolvedIt->second;
+                    std::vector<std::string> candidateErrors;
+
+                    for (const auto& candidate : candidates)
                     {
-                        auto newContents = AssetIndex::ParseDxpContents(dxpPath);
-                        if (newContents)
+                        const fs::path& dxpPath = candidate.dxpPath;
+                        const std::string& dxpEntryName = candidate.dxpEntryName;
+                        auto dxpContents = app.packContentsCache.Get(dxpPath);
+                        if (!dxpContents)
                         {
-                            app.packContentsCache.Put(dxpPath, newContents);
-                            dxpContents = newContents;
+                            auto newContents = AssetIndex::ParseDxpContents(dxpPath);
+                            if (newContents)
+                            {
+                                app.packContentsCache.Put(dxpPath, newContents);
+                                dxpContents = newContents;
+                            }
                         }
-                    }
 
-                    if (!dxpContents || !dxpContents->error.empty())
-                    {
-                        warning = "Could not parse DXP dependency pack " +
-                            Platform::PathToUtf8(dxpPath.filename()) + " for texture " + texName;
-                        return false;
-                    }
-
-                    auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
-                        return e.name == dxpEntryName;
-                    });
-                    if (it == dxpContents->entries.end())
-                    {
-                        warning = "Resolved texture dependency entry " + dxpEntryName +
-                            " was not found in " + Platform::PathToUtf8(dxpPath.filename());
-                        return false;
-                    }
-
-                    AddExportProgressLog(
-                        app,
-                        "Preparing texture export: " + texName +
-                            " from " + Platform::PathToUtf8(dxpPath.filename()) +
-                            " :: " + dxpEntryName +
-                            " [" + DescribeResolvedTexturePack(dxpPath) + "]");
-
-                    if (it->ddsxHeader.size() >= 32)
-                    {
-                        try
+                        if (!dxpContents || !dxpContents->error.empty())
                         {
-                            DagorFormats::DdsxReader headerReader(it->ddsxHeader);
-                            headerReader.Parse();
-                            AddExportProgressLog(app, BuildDdsxHeaderLogLine(headerReader.GetHeader()));
+                            candidateErrors.push_back("Could not parse DXP dependency pack " +
+                                Platform::PathToUtf8(dxpPath.filename()) + " for texture " + texName +
+                                ": " + (dxpContents ? dxpContents->error : "unknown error"));
+                            continue;
                         }
-                        catch (const std::exception& ex)
+
+                        auto it = std::find_if(dxpContents->entries.begin(), dxpContents->entries.end(), [&](const auto& e) {
+                            return e.name == dxpEntryName;
+                        });
+                        if (it == dxpContents->entries.end())
+                        {
+                            candidateErrors.push_back("Resolved texture dependency entry " + dxpEntryName +
+                                " was not found in " + Platform::PathToUtf8(dxpPath.filename()));
+                            continue;
+                        }
+
+                        // Verify candidate has payload data. If size is 0, skip to the next candidate (e.g. fallback from HQ to standard).
+                        if (it->size == 0)
+                        {
+                            candidateErrors.push_back("Candidate entry " + dxpEntryName + " in " +
+                                Platform::PathToUtf8(dxpPath.filename()) + " has no payload data (size 0).");
+                            continue;
+                        }
+
+                        AddExportProgressLog(
+                            app,
+                            "Preparing texture export: " + texName +
+                                " from " + Platform::PathToUtf8(dxpPath.filename()) +
+                                " :: " + dxpEntryName +
+                                " [" + DescribeResolvedTexturePack(dxpPath) + ", source=" + candidate.resolutionSource + "]");
+
+                        if (it->ddsxHeader.size() >= 32)
+                        {
+                            try
+                            {
+                                DagorFormats::DdsxReader headerReader(it->ddsxHeader);
+                                headerReader.Parse();
+                                AddExportProgressLog(app, BuildDdsxHeaderLogLine(headerReader.GetHeader()));
+                            }
+                            catch (const std::exception& ex)
+                            {
+                                AddExportProgressLog(
+                                    app,
+                                    "DDSx header parse failed for " + texName + ": " + ex.what());
+                            }
+                        }
+                        else
                         {
                             AddExportProgressLog(
                                 app,
-                                "DDSx header parse failed for " + texName + ": " + ex.what());
+                                "DDSx header missing or truncated for " + texName +
+                                    " in " + Platform::PathToUtf8(dxpPath.filename()));
                         }
+
+                        auto texResult = Export::TextureExporter::ExportTexture(dxpPath, *it, textureExportOptions);
+                        if (!texResult.success)
+                        {
+                            candidateErrors.push_back("Failed to export texture entry " + dxpEntryName + " from " +
+                                Platform::PathToUtf8(dxpPath.filename()) + ": " + texResult.error);
+                            continue;
+                        }
+
+                        const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
+                        std::lock_guard<std::mutex> lock(exportedTextureMutex);
+                        exportedTexturePaths[texName] = textureFile;
+                        exportedTextureSourcePaths[texName] = texResult.outputPath;
+                        manifest.textureDependencies.push_back(textureFile);
+                        return true;
+                    }
+
+                    if (!candidateErrors.empty())
+                    {
+                        std::string combined = "Failed to export texture dependency " + texName + " (tried " +
+                            std::to_string(candidates.size()) + " candidates):";
+                        for (const auto& err : candidateErrors)
+                        {
+                            combined += "\n  - " + err;
+                        }
+                        warning = combined;
                     }
                     else
                     {
-                        AddExportProgressLog(
-                            app,
-                            "DDSx header missing or truncated for " + texName +
-                                " in " + Platform::PathToUtf8(dxpPath.filename()));
+                        warning = "Failed to find or export texture dependency: " + texName;
                     }
-
-                    auto texResult = Export::TextureExporter::ExportTexture(dxpPath, *it, textureExportOptions);
-                    if (!texResult.success)
-                    {
-                        warning = "Failed to export texture dependency " + texName + ": " + texResult.error;
-                        return false;
-                    }
-
-                    const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
-                    std::lock_guard<std::mutex> lock(exportedTextureMutex);
-                    exportedTexturePaths[texName] = textureFile;
-                    exportedTextureSourcePaths[texName] = texResult.outputPath;
-                    manifest.textureDependencies.push_back(textureFile);
-                    return true;
+                    return false;
                 };
 
                 std::vector<Export::MaterialInfo> materials;

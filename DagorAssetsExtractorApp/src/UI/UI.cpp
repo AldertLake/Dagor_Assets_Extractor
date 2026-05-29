@@ -2174,7 +2174,6 @@ namespace DagorAssetsExtractor::UI
         const std::shared_ptr<const std::vector<ResourceRecord>> recordsPtr = App::SnapshotRecords(app.scan);
         const std::vector<ResourceRecord>& records = *recordsPtr;
         const ImVec2 available = ImGui::GetContentRegionAvail();
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
         const float splitterHeight = 6.0f;
 
         if (app.bottomPanelHeight < 0.0f)

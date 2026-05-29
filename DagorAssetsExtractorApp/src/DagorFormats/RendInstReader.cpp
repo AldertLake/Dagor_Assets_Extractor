@@ -775,9 +775,9 @@ void RendInstReader::ParseRealGrpPayload() {
         if (gvd.iPackedSz == 0)
         {
             size_t numIndices = gvd.iSz / 2;
-            for (size_t i = 0; i < numIndices; i += 3)
+            for (size_t idx = 0; idx < numIndices; idx += 3)
             {
-                if (i + 2 < numIndices)
+                if (idx + 2 < numIndices)
                 {
                     uint16_t i0 = meshReader.ReadUInt16();
                     uint16_t i1 = meshReader.ReadUInt16();
@@ -788,7 +788,7 @@ void RendInstReader::ParseRealGrpPayload() {
                 }
                 else
                 {
-                    for (size_t j = i; j < numIndices; ++j)
+                    for (size_t j = idx; j < numIndices; ++j)
                         decodedIndices.push_back(meshReader.ReadUInt16());
                 }
             }
@@ -821,17 +821,17 @@ void RendInstReader::ParseRealGrpPayload() {
                 tempIndices.push_back(index);
             }
 
-            for (size_t i = 0; i < tempIndices.size(); i += 3)
+            for (size_t idx = 0; idx < tempIndices.size(); idx += 3)
             {
-                if (i + 2 < tempIndices.size())
+                if (idx + 2 < tempIndices.size())
                 {
-                    decodedIndices.push_back(tempIndices[i]);
-                    decodedIndices.push_back(tempIndices[i + 2]);
-                    decodedIndices.push_back(tempIndices[i + 1]);
+                    decodedIndices.push_back(tempIndices[idx]);
+                    decodedIndices.push_back(tempIndices[idx + 2]);
+                    decodedIndices.push_back(tempIndices[idx + 1]);
                 }
                 else
                 {
-                    for (size_t j = i; j < tempIndices.size(); ++j)
+                    for (size_t j = idx; j < tempIndices.size(); ++j)
                         decodedIndices.push_back(tempIndices[j]);
                 }
             }

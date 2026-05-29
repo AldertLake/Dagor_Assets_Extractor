@@ -55,6 +55,10 @@ namespace DagorFormats
             }
 
             std::vector<std::string> names;
+            if (expectedCount > 0)
+            {
+                names.reserve(expectedCount);
+            }
             size_t start = 2; // Dagor binary BLK name maps carry a two-byte prefix.
             for (size_t i = start; i < bytes.size(); ++i)
             {
