@@ -16,6 +16,8 @@ Dagor Assets Extractor is a small utility for extracting game assets from titles
 
 ## Build (Visual Studio)
 
+> The software use DirectXTex, Win32 API & D3D11 & for decompression use o2core_6_win64.dll meaning you can't compile on non windows systems.
+
 1. From the project root run:
 
 	GenerateProjects.bat
