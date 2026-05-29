@@ -453,9 +453,10 @@ namespace
         return FindJsonObjectInArray(json, arrayStart, objectIndex);
     }
 
-    std::array<float, 4> ReadFirstAnimationVec4ForPath(
+    std::array<float, 4> ReadAnimationVec4ForPath(
         const std::filesystem::path& glbPath,
-        const std::string& path)
+        const std::string& path,
+        size_t sampleIndex)
     {
         const std::string json = ExtractGlbJson(glbPath);
         const std::vector<uint8_t> bin = ExtractGlbBin(glbPath);
@@ -474,11 +475,14 @@ namespace
         const size_t outputAccessor = static_cast<size_t>(ParseJsonIntegerAfter(json, samplerObject, "\"output\""));
 
         const size_t accessorObject = FindJsonObjectInNamedArray(json, "accessors", outputAccessor);
+        const size_t sampleCount = static_cast<size_t>(ParseJsonIntegerAfter(json, accessorObject, "\"count\""));
+        Expect(sampleIndex < sampleCount, "Animation VEC4 sample index is out of bounds.");
         const size_t bufferView = static_cast<size_t>(ParseJsonIntegerAfter(json, accessorObject, "\"bufferView\""));
         const size_t bufferViewObject = FindJsonObjectInNamedArray(json, "bufferViews", bufferView);
         const size_t byteOffset = static_cast<size_t>(ParseJsonIntegerAfter(json, bufferViewObject, "\"byteOffset\""));
+        const size_t sampleByteOffset = byteOffset + (sampleIndex * sizeof(float) * 4);
 
-        Expect(byteOffset + (sizeof(float) * 4) <= bin.size(), "Animation VEC4 first sample is out of bounds.");
+        Expect(sampleByteOffset + (sizeof(float) * 4) <= bin.size(), "Animation VEC4 sample is out of bounds.");
         const auto readFloat = [&](size_t offset)
         {
             float value = 0.0f;
@@ -486,11 +490,109 @@ namespace
             return value;
         };
         return {
-            readFloat(byteOffset + 0),
-            readFloat(byteOffset + 4),
-            readFloat(byteOffset + 8),
-            readFloat(byteOffset + 12)
+            readFloat(sampleByteOffset + 0),
+            readFloat(sampleByteOffset + 4),
+            readFloat(sampleByteOffset + 8),
+            readFloat(sampleByteOffset + 12)
         };
+    }
+
+    std::array<float, 4> ReadFirstAnimationVec4ForPath(
+        const std::filesystem::path& glbPath,
+        const std::string& path)
+    {
+        return ReadAnimationVec4ForPath(glbPath, path, 0);
+    }
+
+    std::array<float, 3> ReadAnimationVec3ForPath(
+        const std::filesystem::path& glbPath,
+        const std::string& path,
+        size_t sampleIndex)
+    {
+        const std::string json = ExtractGlbJson(glbPath);
+        const std::vector<uint8_t> bin = ExtractGlbBin(glbPath);
+
+        const size_t pathPos = json.find("\"path\": \"" + path + "\"");
+        Expect(pathPos != std::string::npos, "GLB JSON animation path not found: " + path);
+        const size_t samplerKeyPos = json.rfind("\"sampler\"", pathPos);
+        Expect(samplerKeyPos != std::string::npos, "GLB JSON animation channel lacks sampler.");
+        const size_t samplerIndex = static_cast<size_t>(ParseJsonIntegerAfter(json, samplerKeyPos, "\"sampler\""));
+
+        const size_t samplersPos = json.find("\"samplers\"", json.rfind("\"animations\"", pathPos));
+        Expect(samplersPos != std::string::npos, "GLB JSON animation samplers array not found.");
+        const size_t samplersArrayStart = json.find('[', samplersPos);
+        Expect(samplersArrayStart != std::string::npos, "GLB JSON animation samplers array start not found.");
+        const size_t samplerObject = FindJsonObjectInArray(json, samplersArrayStart, samplerIndex);
+        const size_t outputAccessor = static_cast<size_t>(ParseJsonIntegerAfter(json, samplerObject, "\"output\""));
+
+        const size_t accessorObject = FindJsonObjectInNamedArray(json, "accessors", outputAccessor);
+        const size_t sampleCount = static_cast<size_t>(ParseJsonIntegerAfter(json, accessorObject, "\"count\""));
+        Expect(sampleIndex < sampleCount, "Animation VEC3 sample index is out of bounds.");
+        const size_t bufferView = static_cast<size_t>(ParseJsonIntegerAfter(json, accessorObject, "\"bufferView\""));
+        const size_t bufferViewObject = FindJsonObjectInNamedArray(json, "bufferViews", bufferView);
+        const size_t byteOffset = static_cast<size_t>(ParseJsonIntegerAfter(json, bufferViewObject, "\"byteOffset\""));
+        const size_t sampleByteOffset = byteOffset + (sampleIndex * sizeof(float) * 3);
+
+        Expect(sampleByteOffset + (sizeof(float) * 3) <= bin.size(), "Animation VEC3 sample is out of bounds.");
+        const auto readFloat = [&](size_t offset)
+        {
+            float value = 0.0f;
+            std::memcpy(&value, bin.data() + offset, sizeof(float));
+            return value;
+        };
+        return {
+            readFloat(sampleByteOffset + 0),
+            readFloat(sampleByteOffset + 4),
+            readFloat(sampleByteOffset + 8)
+        };
+    }
+
+    void ExpectQuatNear(
+        const std::array<float, 4>& actual,
+        const std::array<float, 4>& expected,
+        const std::string& message)
+    {
+        const float dot =
+            (actual[0] * expected[0]) +
+            (actual[1] * expected[1]) +
+            (actual[2] * expected[2]) +
+            (actual[3] * expected[3]);
+        Expect(std::fabs(std::fabs(dot) - 1.0f) <= 1e-4f, message);
+    }
+
+    std::array<float, 4> MultiplyQuaternionsForTest(
+        const std::array<float, 4>& left,
+        const std::array<float, 4>& right)
+    {
+        std::array<float, 4> result{
+            (left[3] * right[0]) + (left[0] * right[3]) + (left[1] * right[2]) - (left[2] * right[1]),
+            (left[3] * right[1]) - (left[0] * right[2]) + (left[1] * right[3]) + (left[2] * right[0]),
+            (left[3] * right[2]) + (left[0] * right[1]) - (left[1] * right[0]) + (left[2] * right[3]),
+            (left[3] * right[3]) - (left[0] * right[0]) - (left[1] * right[1]) - (left[2] * right[2])
+        };
+        const float length =
+            std::sqrt(
+                (result[0] * result[0]) +
+                (result[1] * result[1]) +
+                (result[2] * result[2]) +
+                (result[3] * result[3]));
+        Expect(length > 1e-6f, "Test quaternion multiplication produced a zero-length result.");
+        result[0] /= length;
+        result[1] /= length;
+        result[2] /= length;
+        result[3] /= length;
+        return result;
+    }
+
+    void ExpectVec3Near(
+        const std::array<float, 3>& actual,
+        const std::array<float, 3>& expected,
+        const std::string& message)
+    {
+        Expect(std::fabs(actual[0] - expected[0]) <= 1e-4f &&
+            std::fabs(actual[1] - expected[1]) <= 1e-4f &&
+            std::fabs(actual[2] - expected[2]) <= 1e-4f,
+            message);
     }
 
     float ReadLeFloat(const std::vector<uint8_t>& bytes, size_t offset)
@@ -583,6 +685,58 @@ namespace
             -1.0f, 0.0f, 0.0f, 0.0f,
              0.0f, 0.0f, 1.0f, 0.0f,
              0.0f, 0.0f, 0.0f, 1.0f
+        };
+        return node;
+    }
+
+    DagorFormats::GeomNodeTreeNode MakeScaledSkeletonNode(
+        const std::string& name, float x, float y, float z, float sx, float sy, float sz)
+    {
+        DagorFormats::GeomNodeTreeNode node;
+        node.name = name;
+        node.localTransform = {
+            sx,   0.0f, 0.0f, x,
+            0.0f, sy,   0.0f, y,
+            0.0f, 0.0f, sz,   z,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+        node.worldTransform = node.localTransform;
+        node.inverseBindTransform = {
+            1.0f/sx, 0.0f,    0.0f,    -x/sx,
+            0.0f,    1.0f/sy, 0.0f,    -y/sy,
+            0.0f,    0.0f,    1.0f/sz, -z/sz,
+            0.0f,    0.0f,    0.0f,    1.0f
+        };
+        return node;
+    }
+
+    DagorFormats::GeomNodeTreeNode MakeChildSkeletonNodeScaledParent(
+        const std::string& name,
+        uint16_t parentIndex,
+        float px, float py, float pz,
+        float sx, float sy, float sz,
+        float lx, float ly, float lz)
+    {
+        DagorFormats::GeomNodeTreeNode node;
+        node.name = name;
+        node.parentIndex = parentIndex;
+        
+        float wx = px + sx * lx;
+        float wy = py + sy * ly;
+        float wz = pz + sz * lz;
+        
+        node.worldTransform = {
+            sx,   0.0f, 0.0f, wx,
+            0.0f, sy,   0.0f, wy,
+            0.0f, 0.0f, sz,   wz,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+        
+        node.inverseBindTransform = {
+            1.0f/sx, 0.0f,    0.0f,    -wx/sx,
+            0.0f,    1.0f/sy, 0.0f,    -wy/sy,
+            0.0f,    0.0f,    1.0f/sz, -wz/sz,
+            0.0f,    0.0f,    0.0f,    1.0f
         };
         return node;
     }
@@ -985,6 +1139,61 @@ namespace
         ExpectRigidDynTriangleGeometry(glbPath, 2.0f, 0.0f, 0.0f);
     }
 
+    void RunDynModelDirectTranslationPlaceholderValidation(const std::filesystem::path& tempRoot)
+    {
+        ExportManifest manifest;
+        manifest.skipWrite = true;
+
+        const std::vector<DagorFormats::GeomNodeTreeNode> skeleton = {
+            MakeSkeletonNode("moving_gear", 2.0f, 0.0f, 0.0f)
+        };
+
+        AnimationClip clip;
+        clip.name = "direct_translation";
+
+        AnimationNodeTrack track;
+        track.nodeName = "moving_gear";
+        track.times = { 0.0f, 1.0f };
+        track.translations = {
+            { 0.0f, 0.0f, 0.0f },
+            { 4.0f, 1.0f, 0.0f }
+        };
+        clip.nodeTracks.push_back(track);
+
+        const std::filesystem::path glbPath = tempRoot / "dynmodel_direct_translation.glb";
+        Expect(
+            ModelExporter::ExportToGlb(
+                glbPath,
+                { MakeRigidDynMesh("direct_translation_mesh", std::string()) },
+                skeleton,
+                manifest,
+                {},
+                true,
+                GlbExportOptions{ .bypassAnimationRebase = false },
+                { clip }),
+            "DynModel direct translation placeholder export failed.");
+
+        VerifyGlbBufferViewsAndAccessors(glbPath);
+
+        const std::string json = ExtractGlbJson(glbPath);
+        Expect(json.find("__bind") == std::string::npos,
+            "Direct translation export should not emit bind-wrapper nodes.");
+
+        const std::array<float, 3> firstTranslation =
+            ReadAnimationVec3ForPath(glbPath, "translation", 0);
+        ExpectVec3Near(
+            firstTranslation,
+            { 2.0f, 0.0f, 0.0f },
+            "Zero translation placeholder should inherit the rest translation.");
+
+        const std::array<float, 3> movedTranslation =
+            ReadAnimationVec3ForPath(glbPath, "translation", 1);
+        ExpectVec3Near(
+            movedTranslation,
+            { 4.0f, 1.0f, 0.0f },
+            "Direct animation translation should not be offset by the rest pose.");
+    }
+
     void RunDynModelActionFirstFrameRestPoseValidation(const std::filesystem::path& tempRoot)
     {
         ExportManifest manifest;
@@ -1002,7 +1211,7 @@ namespace
         track.times = { 0.5f, 1.0f };
         track.rotations = {
             { 0.0f, 0.0f, 0.0f, 1.0f },
-            { 0.0f, 0.0f, 0.38268343f, 0.9238795f }
+            { 0.38268343f, 0.0f, 0.0f, 0.9238795f }
         };
         clip.nodeTracks.push_back(track);
 
@@ -1015,7 +1224,7 @@ namespace
                 manifest,
                 {},
                 true,
-                GlbExportOptions{},
+                GlbExportOptions{ .bypassAnimationRebase = false },
                 { clip }),
             "DynModel action first-frame validation export failed.");
 
@@ -1037,9 +1246,95 @@ namespace
             "Action first rotation sample should be restored to the non-identity rest pose.");
         ExpectNear(length, 1.0f, "Action first rotation sample should remain normalized.");
 
+        const std::array<float, 4> lastRotation =
+            ReadAnimationVec4ForPath(glbPath, "rotation", 2);
+        const std::array<float, 4> convertedLocalDelta =
+            { -0.38268343f, 0.0f, 0.0f, 0.9238795f };
+        const std::array<float, 4> expectedLastRotation =
+            MultiplyQuaternionsForTest(firstRotation, convertedLocalDelta);
+        ExpectQuatNear(
+            lastRotation,
+            expectedLastRotation,
+            "Identity-start action rotation samples should be rebased onto the rest pose in local node space.");
+
         const std::string json = ExtractGlbJson(glbPath);
         Expect(json.find("\"scale\": [-") == std::string::npos,
             "Action export should not use negative scale to repair handedness.");
+    }
+
+    void RunDynModelParentScalingAndMirroringValidation(const std::filesystem::path& tempRoot)
+    {
+        ExportManifest manifest;
+        manifest.skipWrite = true;
+
+        // Parent has scale sx=2.0, sy=2.0, sz=-2.0 (Z-mirrored and 2x scaled)
+        // Child has local translation lx=3.0, ly=1.0, lz=5.0 relative to parent.
+        const std::vector<DagorFormats::GeomNodeTreeNode> skeleton = {
+            MakeScaledSkeletonNode("scaled_parent", 0.0f, 0.0f, 0.0f, 2.0f, 2.0f, -2.0f),
+            MakeChildSkeletonNodeScaledParent("scaled_child", 0, 0.0f, 0.0f, 0.0f, 2.0f, 2.0f, -2.0f, 3.0f, 1.0f, 5.0f)
+        };
+
+        AnimationClip clip;
+        clip.name = "parent_scaled_anim";
+
+        // We animate the child:
+        // Raw local translation: (1.0, 2.0, 3.0)
+        // Raw local rotation: (0.1, 0.2, 0.3, 0.9) - needs normalization.
+        // Since parent is mirrored, the rotation converted for glTF should NOT negate X and Y components.
+        AnimationNodeTrack track;
+        track.nodeName = "scaled_child";
+        track.times = { 0.0f, 1.0f };
+        track.translations = {
+            { 1.0f, 2.0f, 3.0f },
+            { 1.0f, 2.0f, 3.0f }
+        };
+        track.rotations = {
+            { 0.1f, 0.2f, 0.3f, 0.9f },
+            { 0.1f, 0.2f, 0.3f, 0.9f }
+        };
+        clip.nodeTracks.push_back(track);
+
+        const std::filesystem::path glbPath = tempRoot / "dynmodel_parent_scaling_mirroring.glb";
+        Expect(
+            ModelExporter::ExportToGlb(
+                glbPath,
+                { MakeRigidDynMesh("piece", "scaled_child") },
+                skeleton,
+                manifest,
+                {},
+                true,
+                GlbExportOptions{ .bypassAnimationRebase = false },
+                { clip }),
+            "DynModel parent scaling/mirroring validation export failed.");
+
+        VerifyGlbBufferViewsAndAccessors(glbPath);
+
+        // Read exported translation
+        const std::array<float, 3> firstTranslation =
+            ReadAnimationVec3ForPath(glbPath, "translation", 0);
+        
+        // Raw translation is (1.0, 2.0, 3.0)
+        // Converted for glTF (Z negated) -> (1.0, 2.0, -3.0)
+        // Parent scale is (2.0, 2.0, -2.0)
+        // Scaled translation -> (2.0, 4.0, 6.0)
+        ExpectVec3Near(
+            firstTranslation,
+            { 2.0f, 4.0f, 6.0f },
+            "Child animation translation should be scaled by parent real scale.");
+
+        // Read exported rotation
+        const std::array<float, 4> firstRotation =
+            ReadAnimationVec4ForPath(glbPath, "rotation", 0);
+
+        // Since parent is mirrored, rotation conversion should bypass Z-reflection.
+        // So raw rotation (0.1, 0.2, 0.3, 0.9) is only normalized, components are NOT negated!
+        // Normalized (0.1, 0.2, 0.3, 0.9) / sqrt(0.01 + 0.04 + 0.09 + 0.81) = (0.1, 0.2, 0.3, 0.9) / sqrt(0.95)
+        float len = std::sqrt(0.95f);
+        std::array<float, 4> expectedRotation = { 0.1f / len, 0.2f / len, 0.3f / len, 0.9f / len };
+        ExpectQuatNear(
+            firstRotation,
+            expectedRotation,
+            "Child animation rotation should bypass Z-reflection when parent is mirrored.");
     }
 }
 
@@ -1057,7 +1352,9 @@ int main()
         RunDynModelRigidPlacementWithoutSkeletonValidation(tempRoot);
         RunDynModelBindRelativeAnimationValidation(tempRoot);
         RunDynModelAbsoluteAnimationValidation(tempRoot);
+        RunDynModelDirectTranslationPlaceholderValidation(tempRoot);
         RunDynModelActionFirstFrameRestPoseValidation(tempRoot);
+        RunDynModelParentScalingAndMirroringValidation(tempRoot);
         std::cout << "Validation succeeded: " << tempRoot.string() << std::endl;
         return 0;
     }

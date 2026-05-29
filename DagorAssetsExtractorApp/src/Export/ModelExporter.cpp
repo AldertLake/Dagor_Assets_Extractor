@@ -1090,11 +1090,16 @@ namespace DagorAssetsExtractor::Export
             return { value[0], value[1], -value[2] };
         }
 
-        std::array<float, 4> ConvertAnimationRotationForGltf(std::array<float, 4> value)
+        std::array<float, 4> ConvertAnimationRotationForGltf(std::array<float, 4> value, bool parentIsMirrored = false)
         {
             // Dagor mesh positions are converted with a Z reflection. For local
             // quaternions, S * R * S maps (x, y, z, w) to (-x, -y, z, w).
-            value = { -value[0], -value[1], value[2], value[3] };
+            // If the parent is mirrored in real world coordinates, the parent's Z-reflection
+            // cancels the global Z-reflection.
+            if (!parentIsMirrored)
+            {
+                value = { -value[0], -value[1], value[2], value[3] };
+            }
             const float lengthSq =
                 (value[0] * value[0]) +
                 (value[1] * value[1]) +
@@ -1235,7 +1240,7 @@ namespace DagorAssetsExtractor::Export
                 base.translation[1] + translation[1],
                 base.translation[2] + translation[2],
             };
-            result.rotation = MultiplyQuaternions(rotation, base.rotation);
+            result.rotation = MultiplyQuaternions(base.rotation, rotation);
             result.scale = {
                 base.scale[0] * scale[0],
                 base.scale[1] * scale[1],
@@ -1275,35 +1280,7 @@ namespace DagorAssetsExtractor::Export
             const float handedness = DotVec3(CrossVec3(xAxis, yAxis), zAxis);
             if (std::isfinite(handedness) && handedness < 0.0f)
             {
-                size_t negativeAxis = 2;
-                if (trs.scale[0] >= trs.scale[1] && trs.scale[0] >= trs.scale[2])
-                {
-                    negativeAxis = 0;
-                }
-                else if (trs.scale[1] >= trs.scale[2])
-                {
-                    negativeAxis = 1;
-                }
-
-                trs.scale[negativeAxis] = -trs.scale[negativeAxis];
-                if (negativeAxis == 0)
-                {
-                    xAxis[0] = -xAxis[0];
-                    xAxis[1] = -xAxis[1];
-                    xAxis[2] = -xAxis[2];
-                }
-                else if (negativeAxis == 1)
-                {
-                    yAxis[0] = -yAxis[0];
-                    yAxis[1] = -yAxis[1];
-                    yAxis[2] = -yAxis[2];
-                }
-                else
-                {
-                    zAxis[0] = -zAxis[0];
-                    zAxis[1] = -zAxis[1];
-                    zAxis[2] = -zAxis[2];
-                }
+                trs.scale[2] = -trs.scale[2];
             }
 
             if (!NormalizeVec3(xAxis))
@@ -1388,51 +1365,59 @@ namespace DagorAssetsExtractor::Export
             std::vector<std::array<float, 3>> scales;
         };
 
-        void RebasePreparedTrackToRest(
-            PreparedAnimationNodeTrack& prepared,
-            const GltfNodeTrs& restTrs)
+        void RestoreZeroTranslationPlaceholders(
+            std::vector<std::array<float, 3>>& translations,
+            const GltfNodeTrs& restTrs,
+            std::ostream& debugLog)
         {
-            if (prepared.times.empty())
+            size_t replacedCount = 0;
+            for (std::array<float, 3>& translation : translations)
+            {
+                if (IsIdentityTranslation(translation))
+                {
+                    translation = restTrs.translation;
+                    replacedCount++;
+                }
+            }
+            if (replacedCount > 0)
+            {
+                debugLog << "    [RestoreZeroTranslationPlaceholders] Replaced " << replacedCount 
+                         << " identity translations with rest/inherited translation: [" 
+                         << restTrs.translation[0] << ", " << restTrs.translation[1] << ", " << restTrs.translation[2] << "]" << std::endl;
+            }
+        }
+
+        void RebaseIdentityRotationPlaceholders(
+            std::vector<std::array<float, 4>>& rotations,
+            const GltfNodeTrs& restTrs,
+            std::ostream& debugLog)
+        {
+            if (rotations.empty() ||
+                IsIdentityRotation(restTrs.rotation) ||
+                !IsIdentityRotation(rotations.front()))
             {
                 return;
             }
 
-            const std::array<float, 3> firstTranslation =
-                prepared.translations.empty()
-                    ? restTrs.translation
-                    : prepared.translations.front();
-            const std::array<float, 4> firstRotation =
-                prepared.rotations.empty()
-                    ? restTrs.rotation
-                    : prepared.rotations.front();
-            const std::array<float, 3> firstScale =
-                prepared.scales.empty()
-                    ? restTrs.scale
-                    : prepared.scales.front();
-            const std::array<float, 4> invFirstRotation = InverseQuaternion(firstRotation);
+            debugLog << "    [RebaseIdentityRotationPlaceholders] First rotation is identity; rebasing rotation track using rest rotation: ["
+                     << restTrs.rotation[0] << ", " << restTrs.rotation[1] << ", " << restTrs.rotation[2] << ", " << restTrs.rotation[3] << "]" << std::endl;
 
-            for (std::array<float, 3>& translation : prepared.translations)
+            const std::array<float, 4> invFirstRotation = InverseQuaternion(rotations.front());
+            for (std::array<float, 4>& rotation : rotations)
             {
-                translation = {
-                    restTrs.translation[0] + (translation[0] - firstTranslation[0]),
-                    restTrs.translation[1] + (translation[1] - firstTranslation[1]),
-                    restTrs.translation[2] + (translation[2] - firstTranslation[2]),
-                };
+                const std::array<float, 4> delta =
+                    MultiplyQuaternions(invFirstRotation, rotation);
+                rotation = MultiplyQuaternions(restTrs.rotation, delta);
             }
+            rotations.front() = restTrs.rotation;
+        }
 
-            for (std::array<float, 4>& rotation : prepared.rotations)
+        void AlignPreparedTrackStart(
+            PreparedAnimationNodeTrack& prepared)
+        {
+            if (prepared.times.empty())
             {
-                const std::array<float, 4> delta = MultiplyQuaternions(rotation, invFirstRotation);
-                rotation = MultiplyQuaternions(delta, restTrs.rotation);
-            }
-
-            for (std::array<float, 3>& scale : prepared.scales)
-            {
-                scale = {
-                    std::fabs(firstScale[0]) > 1e-6f ? restTrs.scale[0] * (scale[0] / firstScale[0]) : restTrs.scale[0],
-                    std::fabs(firstScale[1]) > 1e-6f ? restTrs.scale[1] * (scale[1] / firstScale[1]) : restTrs.scale[1],
-                    std::fabs(firstScale[2]) > 1e-6f ? restTrs.scale[2] * (scale[2] / firstScale[2]) : restTrs.scale[2],
-                };
+                return;
             }
 
             constexpr float kFirstSampleEpsilon = 1e-5f;
@@ -1441,32 +1426,20 @@ namespace DagorAssetsExtractor::Export
                 prepared.times.insert(prepared.times.begin(), 0.0f);
                 if (!prepared.translations.empty())
                 {
-                    prepared.translations.insert(prepared.translations.begin(), restTrs.translation);
+                    prepared.translations.insert(prepared.translations.begin(), prepared.translations.front());
                 }
                 if (!prepared.rotations.empty())
                 {
-                    prepared.rotations.insert(prepared.rotations.begin(), restTrs.rotation);
+                    prepared.rotations.insert(prepared.rotations.begin(), prepared.rotations.front());
                 }
                 if (!prepared.scales.empty())
                 {
-                    prepared.scales.insert(prepared.scales.begin(), restTrs.scale);
+                    prepared.scales.insert(prepared.scales.begin(), prepared.scales.front());
                 }
                 return;
             }
 
             prepared.times.front() = 0.0f;
-            if (!prepared.translations.empty())
-            {
-                prepared.translations.front() = restTrs.translation;
-            }
-            if (!prepared.rotations.empty())
-            {
-                prepared.rotations.front() = restTrs.rotation;
-            }
-            if (!prepared.scales.empty())
-            {
-                prepared.scales.front() = restTrs.scale;
-            }
         }
 
         std::array<float, 3> LerpVec3(
@@ -1548,26 +1521,59 @@ namespace DagorAssetsExtractor::Export
             const AnimationClip& clip,
             const AnimationNodeTrack& track,
             const GltfNodeTrs& restTrs,
-            const GltfNodeTrs& firstSampleRestTrs,
-            bool restoreZeroTranslationPlaceholders = true)
+            const GltfNodeTrs& targetRestTrs,
+            std::ostream& debugLog,
+            const std::array<float, 3>& parentScale = { 1.0f, 1.0f, 1.0f },
+            bool restoreZeroTranslationPlaceholders = true,
+            bool bypassAnimationRebase = false)
         {
+            debugLog << "  [PrepareAnimationTrackForSampling] Node: " << track.nodeName 
+                     << " Clip: " << clip.name << " samples: " << track.times.size() << std::endl;
             PreparedAnimationNodeTrack prepared;
             prepared.times = track.times;
+            
             prepared.translations.reserve(track.translations.size());
             for (const std::array<float, 3>& translation : track.translations)
             {
-                prepared.translations.push_back(ConvertAnimationTranslationForGltf(translation));
+                std::array<float, 3> converted = ConvertAnimationTranslationForGltf(translation);
+                converted[0] *= parentScale[0];
+                converted[1] *= parentScale[1];
+                converted[2] *= parentScale[2];
+                prepared.translations.push_back(converted);
             }
 
+            const bool parentIsMirrored = (parentScale[2] < 0.0f);
             prepared.rotations.reserve(track.rotations.size());
             for (const std::array<float, 4>& rotation : track.rotations)
             {
-                prepared.rotations.push_back(ConvertAnimationRotationForGltf(rotation));
+                prepared.rotations.push_back(ConvertAnimationRotationForGltf(rotation, parentIsMirrored));
             }
 
             prepared.scales = track.scales;
 
             const size_t sampleCount = prepared.times.size();
+            debugLog << "    Raw keyframe counts: trans=" << track.translations.size() 
+                     << " rot=" << track.rotations.size() 
+                     << " scale=" << track.scales.size() << std::endl;
+            
+            if (sampleCount > 0)
+            {
+                if (!prepared.translations.empty())
+                {
+                    debugLog << "    First frame raw translation: [" << track.translations.front()[0] << ", " << track.translations.front()[1] << ", " << track.translations.front()[2] << "]"
+                             << " -> converted: [" << prepared.translations.front()[0] << ", " << prepared.translations.front()[1] << ", " << prepared.translations.front()[2] << "]" << std::endl;
+                    debugLog << "    Rest translation: [" << restTrs.translation[0] << ", " << restTrs.translation[1] << ", " << restTrs.translation[2] << "]"
+                             << " targetRest: [" << targetRestTrs.translation[0] << ", " << targetRestTrs.translation[1] << ", " << targetRestTrs.translation[2] << "]" << std::endl;
+                }
+                if (!prepared.rotations.empty())
+                {
+                    debugLog << "    First frame raw rotation: [" << track.rotations.front()[0] << ", " << track.rotations.front()[1] << ", " << track.rotations.front()[2] << ", " << track.rotations.front()[3] << "]"
+                             << " -> converted: [" << prepared.rotations.front()[0] << ", " << prepared.rotations.front()[1] << ", " << prepared.rotations.front()[2] << ", " << prepared.rotations.front()[3] << "]" << std::endl;
+                    debugLog << "    Rest rotation: [" << restTrs.rotation[0] << ", " << restTrs.rotation[1] << ", " << restTrs.rotation[2] << ", " << restTrs.rotation[3] << "]"
+                             << " targetRest: [" << targetRestTrs.rotation[0] << ", " << targetRestTrs.rotation[1] << ", " << targetRestTrs.rotation[2] << ", " << targetRestTrs.rotation[3] << "]" << std::endl;
+                }
+            }
+
             const auto expandVec3 = [sampleCount](std::vector<std::array<float, 3>>& values, const std::array<float, 3>& fallback)
             {
                 if (sampleCount == 0)
@@ -1601,6 +1607,7 @@ namespace DagorAssetsExtractor::Export
 
             if (clip.additive)
             {
+                debugLog << "    Clip is additive. Combining track values with rest pose." << std::endl;
                 if (sampleCount > 0)
                 {
                     expandVec3(prepared.translations, { 0.0f, 0.0f, 0.0f });
@@ -1620,20 +1627,17 @@ namespace DagorAssetsExtractor::Export
                     }
                 }
             }
-            else if (restoreZeroTranslationPlaceholders &&
-                     !prepared.translations.empty() &&
-                     !IsIdentityTranslation(restTrs.translation))
+            else if (restoreZeroTranslationPlaceholders && !bypassAnimationRebase)
             {
-                for (std::array<float, 3>& translation : prepared.translations)
+                if (!prepared.translations.empty() &&
+                    !IsIdentityTranslation(restTrs.translation))
                 {
-                    if (IsIdentityTranslation(translation))
-                    {
-                        translation = restTrs.translation;
-                    }
+                    RestoreZeroTranslationPlaceholders(prepared.translations, restTrs, debugLog);
                 }
+                RebaseIdentityRotationPlaceholders(prepared.rotations, restTrs, debugLog);
             }
 
-            RebasePreparedTrackToRest(prepared, firstSampleRestTrs);
+            AlignPreparedTrackStart(prepared);
             return prepared;
         }
 
@@ -1723,27 +1727,55 @@ namespace DagorAssetsExtractor::Export
             const std::vector<AnimationClip>& animations,
             const std::unordered_map<std::string, size_t>& skeletonNodeLookup,
             const std::vector<GltfNodeTrs>& restTrs,
+            const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
+            const std::vector<std::array<float, 3>>& skeletonWorldScalesReal,
             std::ostream& debugLog)
         {
             size_t restLikeSamples = 0;
             size_t defaultLikeSamples = 0;
 
+            debugLog << "  [DetectAnimationBindingMode] Probing animation tracks relative to rest pose:" << std::endl;
             for (const AnimationClip& clip : animations)
             {
+                debugLog << "    Probing clip: " << clip.name << " with " << clip.nodeTracks.size() << " node tracks." << std::endl;
                 for (const AnimationNodeTrack& track : clip.nodeTracks)
                 {
                     const auto nodeIt = skeletonNodeLookup.find(track.nodeName);
                     if (nodeIt == skeletonNodeLookup.end() || nodeIt->second >= restTrs.size())
                     {
+                        debugLog << "      Track node '" << track.nodeName << "' not found in skeleton." << std::endl;
                         continue;
                     }
 
-                    const GltfNodeTrs& rest = restTrs[nodeIt->second];
+                    const size_t skeletonNodeIndex = nodeIt->second;
+                    const GltfNodeTrs& rest = restTrs[skeletonNodeIndex];
+                    
+                    std::array<float, 3> parentScale = { 1.0f, 1.0f, 1.0f };
+                    if (skeletonNodeIndex < skeleton.size())
+                    {
+                        const uint16_t parentIndex = skeleton[skeletonNodeIndex].parentIndex;
+                        if (parentIndex != DagorFormats::GeomNodeTreeNode::InvalidIndex && parentIndex < skeletonWorldScalesReal.size())
+                        {
+                            parentScale = skeletonWorldScalesReal[parentIndex];
+                        }
+                    }
+                    const bool parentIsMirrored = (parentScale[2] < 0.0f);
+
+                    debugLog << "      Node '" << track.nodeName << "' (skeleton index " << skeletonNodeIndex << "):" << std::endl;
+                    debugLog << "        Rest pose: translation=[" << rest.translation[0] << ", " << rest.translation[1] << ", " << rest.translation[2] << "], "
+                             << "rotation=[" << rest.rotation[0] << ", " << rest.rotation[1] << ", " << rest.rotation[2] << ", " << rest.rotation[3] << "], "
+                             << "scale=[" << rest.scale[0] << ", " << rest.scale[1] << ", " << rest.scale[2] << "]" << std::endl;
 
                     if (!track.translations.empty() && !IsIdentityTranslation(rest.translation))
                     {
-                        const std::array<float, 3> firstTranslation =
+                        std::array<float, 3> firstTranslation =
                             ConvertAnimationTranslationForGltf(track.translations.front());
+                        firstTranslation[0] *= parentScale[0];
+                        firstTranslation[1] *= parentScale[1];
+                        firstTranslation[2] *= parentScale[2];
+                        debugLog << "        Track translation (front): raw=[" 
+                                 << track.translations.front()[0] << ", " << track.translations.front()[1] << ", " << track.translations.front()[2] << "], "
+                                 << "converted=[" << firstTranslation[0] << ", " << firstTranslation[1] << ", " << firstTranslation[2] << "]" << std::endl;
                         if (NearlyEqualVec3(firstTranslation, rest.translation))
                         {
                             ++restLikeSamples;
@@ -1757,7 +1789,10 @@ namespace DagorAssetsExtractor::Export
                     if (!track.rotations.empty() && !IsIdentityRotation(rest.rotation))
                     {
                         const std::array<float, 4> firstRotation =
-                            ConvertAnimationRotationForGltf(track.rotations.front());
+                            ConvertAnimationRotationForGltf(track.rotations.front(), parentIsMirrored);
+                        debugLog << "        Track rotation (front): raw=[" 
+                                 << track.rotations.front()[0] << ", " << track.rotations.front()[1] << ", " << track.rotations.front()[2] << ", " << track.rotations.front()[3] << "], "
+                                 << "converted=[" << firstRotation[0] << ", " << firstRotation[1] << ", " << firstRotation[2] << ", " << firstRotation[3] << "]" << std::endl;
                         if (NearlyEqualQuat(firstRotation, rest.rotation))
                         {
                             ++restLikeSamples;
@@ -1770,6 +1805,8 @@ namespace DagorAssetsExtractor::Export
 
                     if (!track.scales.empty() && !IsIdentityScale(rest.scale))
                     {
+                        debugLog << "        Track scale (front): raw=[" 
+                                 << track.scales.front()[0] << ", " << track.scales.front()[1] << ", " << track.scales.front()[2] << "]" << std::endl;
                         if (NearlyEqualVec3(track.scales.front(), rest.scale))
                         {
                             ++restLikeSamples;
@@ -1782,16 +1819,16 @@ namespace DagorAssetsExtractor::Export
                 }
             }
 
-            debugLog << "  Animation binding mode probe: restLikeSamples=" << restLikeSamples
+            debugLog << "  Animation binding mode probe summary: restLikeSamples=" << restLikeSamples
                      << ", defaultLikeSamples=" << defaultLikeSamples << std::endl;
 
             if (defaultLikeSamples >= 6 && defaultLikeSamples > (restLikeSamples * 2))
             {
-                debugLog << "  Animation binding mode: bind-relative delta wrapper." << std::endl;
+                debugLog << "  Animation binding mode decision: bind-relative delta wrapper." << std::endl;
                 return AnimationBindingMode::BindRelativeDelta;
             }
 
-            debugLog << "  Animation binding mode: absolute local transforms." << std::endl;
+            debugLog << "  Animation binding mode decision: absolute local transforms." << std::endl;
             return AnimationBindingMode::AbsoluteLocal;
         }
 
@@ -1874,8 +1911,11 @@ namespace DagorAssetsExtractor::Export
             const std::vector<bool>& emittedSkeletonNodes,
             const std::vector<size_t>& skeletonTargetNodeIndices,
             const std::vector<GltfNodeTrs>& skeletonRestTrs,
+            const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
+            const std::vector<std::array<float, 3>>& skeletonWorldScalesReal,
             bool emitSkeletonNodes,
             bool useBindWrapperAnimationNodes,
+            bool bypassAnimationRebase,
             size_t bufferViewBase,
             std::vector<uint8_t>& binBuffer,
             std::ostream& debugLog)
@@ -1891,18 +1931,20 @@ namespace DagorAssetsExtractor::Export
                 return sections;
             }
 
+            debugLog << "  [PrepareAnimationSections] Preparing skinned animation sections for " << animations.size() << " clips:" << std::endl;
             size_t nextBufferView = bufferViewBase;
             for (const AnimationClip& clip : animations)
             {
                 GlbAnimationClipInfo clipInfo;
                 clipInfo.name = clip.name.empty() ? "animation" : clip.name;
+                debugLog << "    Clip: " << clipInfo.name << " nodeTracks: " << clip.nodeTracks.size() << std::endl;
 
                 for (const AnimationNodeTrack& track : clip.nodeTracks)
                 {
                     const auto nodeIt = skeletonNodeLookup.find(track.nodeName);
                     if (nodeIt == skeletonNodeLookup.end())
                     {
-                        debugLog << "  Animation clip " << clipInfo.name
+                        debugLog << "      Animation clip " << clipInfo.name
                                  << " skipped node '" << track.nodeName
                                  << "': no matching skeleton node." << std::endl;
                         continue;
@@ -1914,7 +1956,7 @@ namespace DagorAssetsExtractor::Export
                         skeletonNode >= skeletonTargetNodeIndices.size() ||
                         skeletonTargetNodeIndices[skeletonNode] == std::numeric_limits<size_t>::max())
                     {
-                        debugLog << "  Animation clip " << clipInfo.name
+                        debugLog << "      Animation clip " << clipInfo.name
                                  << " skipped node '" << track.nodeName
                                  << "': skeleton node was not emitted." << std::endl;
                         continue;
@@ -1933,13 +1975,26 @@ namespace DagorAssetsExtractor::Export
                         return NearlyEqualQuat(left, right);
                     };
 
+                    std::array<float, 3> parentScale = { 1.0f, 1.0f, 1.0f };
+                    if (skeletonNode < skeleton.size())
+                    {
+                        const uint16_t parentIndex = skeleton[skeletonNode].parentIndex;
+                        if (parentIndex != DagorFormats::GeomNodeTreeNode::InvalidIndex && parentIndex < skeletonWorldScalesReal.size())
+                        {
+                            parentScale = skeletonWorldScalesReal[parentIndex];
+                        }
+                    }
+
                     const PreparedAnimationNodeTrack preparedTrack =
                         PrepareAnimationTrackForSampling(
                             clip,
                             track,
                             restTrs,
                             targetRestTrs,
-                            false);
+                            debugLog,
+                            parentScale,
+                            !useBindWrapperAnimationNodes,
+                            bypassAnimationRebase);
                     const std::vector<std::array<float, 3>>& preparedTranslations = preparedTrack.translations;
                     const std::vector<std::array<float, 4>>& preparedRotations = preparedTrack.rotations;
                     const std::vector<std::array<float, 3>>& preparedScales = preparedTrack.scales;
@@ -1967,9 +2022,14 @@ namespace DagorAssetsExtractor::Export
                         !preparedScales.empty() &&
                         CurveIsConstant(preparedScales, targetRestTrs.scale, compareVec3);
 
+                    debugLog << "      Curve status for '" << track.nodeName << "' -> targetNode " << targetNodeIndex << ":" << std::endl;
+                    debugLog << "        translation: skip=" << skipTranslationCurve << " (redundant=" << redundantTranslationCurve << ")" << std::endl;
+                    debugLog << "        rotation:    skip=" << skipRotationCurve    << " (redundant=" << redundantRotationCurve << ")" << std::endl;
+                    debugLog << "        scale:       skip=" << skipScaleCurve       << " (redundant=" << redundantScaleCurve << ") [hardcoded skip = true]" << std::endl;
+
                     if (skipTranslationCurve || redundantTranslationCurve)
                     {
-                        debugLog << "  Animation clip " << clipInfo.name
+                        debugLog << "      Animation clip " << clipInfo.name
                                  << " skipped translation curve for node '" << track.nodeName
                                  << "' because it does not move away from the bind pose." << std::endl;
                     }
@@ -1988,7 +2048,7 @@ namespace DagorAssetsExtractor::Export
 
                     if (skipRotationCurve || redundantRotationCurve)
                     {
-                        debugLog << "  Animation clip " << clipInfo.name
+                        debugLog << "      Animation clip " << clipInfo.name
                                  << " skipped rotation curve for node '" << track.nodeName
                                  << "' because it does not move away from the bind pose." << std::endl;
                     }
@@ -2007,7 +2067,7 @@ namespace DagorAssetsExtractor::Export
 
                     if (skipScaleCurve || redundantScaleCurve)
                     {
-                        debugLog << "  Animation clip " << clipInfo.name
+                        debugLog << "      Animation clip " << clipInfo.name
                                  << " skipped scale curve for node '" << track.nodeName
                                  << "' because it does not move away from the bind pose." << std::endl;
                     }
@@ -2050,6 +2110,7 @@ namespace DagorAssetsExtractor::Export
             const std::vector<DagorFormats::GeomNodeTreeNode>& skeleton,
             const std::vector<GltfNodeTrs>& skeletonLocalTrsGltf,
             const std::vector<std::array<float, 16>>& skeletonWorldMatricesRealRowMajor,
+            const std::vector<std::array<float, 3>>& skeletonWorldScalesReal,
             const std::vector<RigidAnimationBindingInfo>& rigidBindings,
             size_t bufferViewBase,
             std::vector<uint8_t>& binBuffer,
@@ -2061,11 +2122,13 @@ namespace DagorAssetsExtractor::Export
                 return sections;
             }
 
+            debugLog << "  [PrepareRigidNodeAnimationSections] Preparing rigid animation sections for " << animations.size() << " clips:" << std::endl;
             size_t nextBufferView = bufferViewBase;
             for (const AnimationClip& clip : animations)
             {
                 GlbAnimationClipInfo clipInfo;
                 clipInfo.name = clip.name.empty() ? "animation" : clip.name;
+                debugLog << "    Clip: " << clipInfo.name << " nodeTracks: " << clip.nodeTracks.size() << std::endl;
 
                 std::vector<const AnimationNodeTrack*> tracksByNode(skeleton.size(), nullptr);
                 std::vector<PreparedAnimationNodeTrack> preparedTracks(skeleton.size());
@@ -2081,6 +2144,7 @@ namespace DagorAssetsExtractor::Export
                         });
                     if (nodeIt == skeleton.end())
                     {
+                        debugLog << "      Track node '" << track.nodeName << "' not found in skeleton; skipped in rigid prep." << std::endl;
                         continue;
                     }
 
@@ -2088,7 +2152,18 @@ namespace DagorAssetsExtractor::Export
                     if (skeletonNodeIndex >= skeletonLocalTrsGltf.size() ||
                         !HasValidAnimationTimes(track.times))
                     {
+                        debugLog << "      Track node '" << track.nodeName << "' has invalid times or invalid skeleton index." << std::endl;
                         continue;
+                    }
+
+                    std::array<float, 3> parentScale = { 1.0f, 1.0f, 1.0f };
+                    if (skeletonNodeIndex < skeleton.size())
+                    {
+                        const uint16_t parentIndex = skeleton[skeletonNodeIndex].parentIndex;
+                        if (parentIndex != DagorFormats::GeomNodeTreeNode::InvalidIndex && parentIndex < skeletonWorldScalesReal.size())
+                        {
+                            parentScale = skeletonWorldScalesReal[parentIndex];
+                        }
                     }
 
                     tracksByNode[skeletonNodeIndex] = &track;
@@ -2097,7 +2172,8 @@ namespace DagorAssetsExtractor::Export
                         track,
                         skeletonLocalTrsGltf[skeletonNodeIndex],
                         skeletonLocalTrsGltf[skeletonNodeIndex],
-                        false);
+                        debugLog,
+                        parentScale);
                     hasPreparedTrack[skeletonNodeIndex] = true;
                 }
 
@@ -3013,12 +3089,14 @@ namespace DagorAssetsExtractor::Export
             }
         }
 
+        std::vector<std::array<float, 3>> skeletonWorldScalesReal(skeleton.size());
         std::vector<std::array<float, 16>> skeletonWorldMatricesRealRowMajor(skeleton.size());
         std::vector<std::array<float, 16>> skeletonWorldMatricesGltfRowMajor(skeleton.size());
         for (size_t i = 0; i < skeleton.size(); ++i)
         {
             std::array<float, 16> gltfWorldMatrix = makeGltfColumnMajorMatrix(skeleton[i].worldTransform);
             GltfNodeTrs worldTrs = DecomposeGltfMatrix(gltfWorldMatrix);
+            skeletonWorldScalesReal[i] = worldTrs.scale;
             skeletonWorldMatricesRealRowMajor[i] = ComposeRowMajorMatrixFromTrs(worldTrs);
             worldTrs.scale = { 1.0f, 1.0f, 1.0f };
             skeletonWorldMatricesGltfRowMajor[i] = ComposeRowMajorMatrixFromTrs(worldTrs);
@@ -3052,7 +3130,7 @@ namespace DagorAssetsExtractor::Export
         }
 
         const AnimationBindingMode animationBindingMode =
-            DetectAnimationBindingMode(animations, skeletonNodeLookup, skeletonRestTrs, debugLog);
+            DetectAnimationBindingMode(animations, skeletonNodeLookup, skeletonRestTrs, skeleton, skeletonWorldScalesReal, debugLog);
         const bool useBindWrapperAnimationNodes =
             emitSkeletonNodes &&
             !animations.empty() &&
@@ -3727,8 +3805,11 @@ namespace DagorAssetsExtractor::Export
             emittedSkeletonNodes,
             skeletonTargetNodeIndices,
             skeletonRestTrs,
+            skeleton,
+            skeletonWorldScalesReal,
             emitSkeletonNodes,
             useBindWrapperAnimationNodes,
+            options.bypassAnimationRebase,
             animationBufferViewBase,
             binBuffer,
             debugLog);
@@ -3753,6 +3834,7 @@ namespace DagorAssetsExtractor::Export
             skeleton,
             skeletonRestTrs,
             skeletonWorldMatricesRealRowMajor,
+            skeletonWorldScalesReal,
             rigidAnimationBindings,
             animationBufferViewBase + animationSections.bufferViewCount,
             binBuffer,

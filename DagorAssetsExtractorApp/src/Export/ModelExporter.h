@@ -28,6 +28,7 @@ namespace DagorAssetsExtractor::Export
     struct GlbExportOptions
     {
         bool embedTexturesInGlb = true;
+        bool bypassAnimationRebase = false;
     };
 
     struct AnimationNodeTrack
