@@ -1,4 +1,5 @@
 #include "Export/TextureExporter.h"
+#include "Export/MaterialTextureResolver.h"
 #include "DagorIO/BinaryReader.h"
 #include "Platform/Platform.h"
 #include "Export/ExportManifest.h"
@@ -32,6 +33,7 @@ namespace DagorAssetsExtractor::Export
     constexpr uint32_t DDPF_FOURCC = 0x00000004;
     constexpr uint32_t DDPF_ALPHAPIXELS = 0x00000001;
     constexpr uint32_t DDPF_RGB = 0x00000040;
+    constexpr uint32_t DDPF_LUMINANCE = 0x00020000;
 
     constexpr uint32_t DDSD_CAPS = 0x00000001;
     constexpr uint32_t DDSD_HEIGHT = 0x00000002;
@@ -837,6 +839,7 @@ namespace DagorAssetsExtractor::Export
             case 83: case 84: // BC5
             case 95: case 96: // BC6H
             case 98: case 99: // BC7
+            case 540492610:   // BC7 FourCC
                 blockBytes = 16;
                 return true;
 
@@ -849,11 +852,13 @@ namespace DagorAssetsExtractor::Export
         {
             switch (d3dFormat)
             {
+            case 21:          // D3DFMT_A8R8G8B8
             case 28: case 29: // R8G8B8A8
             case 87: case 91: // B8G8R8A8
                 bytesPerPixel = 4;
                 return true;
 
+            case 50: // D3DFMT_L8
             case 61: // R8
                 bytesPerPixel = 1;
                 return true;
@@ -1140,6 +1145,7 @@ namespace DagorAssetsExtractor::Export
                 return true;
             }
 
+            case 21:
             case 87:
             case 91:
                 image.format = RasterPixelFormat::Bgra8;
@@ -1147,6 +1153,7 @@ namespace DagorAssetsExtractor::Export
                 image.pixels.assign(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(topMipBytes));
                 return true;
 
+            case 50:
             case 61:
                 image.format = RasterPixelFormat::Gray8;
                 image.stride = header.width;
@@ -1373,6 +1380,80 @@ namespace DagorAssetsExtractor::Export
 
             error = "Unsupported readable image export format: " + std::string(normalizedFormat);
             return false;
+        }
+
+        bool SplitNormalMapIfNeeded(
+            RasterImage& image,
+            std::string_view entryName,
+            const std::filesystem::path& outputPath,
+            std::string_view normalizedFormat,
+            const TextureExportOptions& options,
+            TextureExportResult& result,
+            std::string& error)
+        {
+            if (!options.splitPackedNormalMap)
+            {
+                return true;
+            }
+
+            if (!LooksLikePackedNormalMap(entryName))
+            {
+                return true;
+            }
+
+            if (image.format != RasterPixelFormat::Bgra8)
+            {
+                return true;
+            }
+
+            RasterImage mrImage;
+            mrImage.width = image.width;
+            mrImage.height = image.height;
+            mrImage.stride = image.stride;
+            mrImage.format = RasterPixelFormat::Bgra8;
+            mrImage.pixels.resize(image.pixels.size());
+
+            for (size_t i = 0; i < image.pixels.size(); i += 4)
+            {
+                uint8_t origB = image.pixels[i + 0]; // Metallic
+                uint8_t origG = image.pixels[i + 1]; // Normal Y
+                uint8_t origR = image.pixels[i + 2]; // Roughness
+                uint8_t origA = image.pixels[i + 3]; // Normal X
+
+                float x = (static_cast<float>(origA) / 255.0f) * 2.0f - 1.0f;
+                float y = (static_cast<float>(origG) / 255.0f) * 2.0f - 1.0f;
+                float zSq = 1.0f - x * x - y * y;
+                float z = (zSq > 0.0f) ? std::sqrt(zSq) : 0.0f;
+
+                uint8_t normalX = origA;
+                uint8_t normalY = origG;
+                uint8_t normalZ = static_cast<uint8_t>(std::clamp(std::round((z + 1.0f) * 0.5f * 255.0f), 0.0f, 255.0f));
+
+                image.pixels[i + 0] = normalZ; // B
+                image.pixels[i + 1] = normalY; // G
+                image.pixels[i + 2] = normalX; // R
+                image.pixels[i + 3] = 255;     // A
+
+                mrImage.pixels[i + 0] = static_cast<uint8_t>(255 - origB); // B (Metallic = 255 - Insulator)
+                mrImage.pixels[i + 1] = static_cast<uint8_t>(255 - origR); // G (Roughness = 255 - Smoothness)
+                mrImage.pixels[i + 2] = 255;                               // R (Occlusion)
+                mrImage.pixels[i + 3] = 255;                               // A
+            }
+
+            std::filesystem::path mrOutputPath = outputPath;
+            std::string stem = mrOutputPath.stem().string();
+            std::string ext = mrOutputPath.extension().string();
+            mrOutputPath.replace_filename(stem + "_metalrough" + ext);
+
+            std::string mrError;
+            if (!WriteReadableImage(mrOutputPath, mrImage, normalizedFormat, mrError))
+            {
+                error = "Failed to write split metallic-roughness image: " + mrError;
+                return false;
+            }
+
+            result.warnings.push_back("Split packed normal map channels: normal (RGB) and metallic-roughness (ORM)");
+            return true;
         }
 
         bool DecodeRasterWithDirectXTex(
@@ -1621,6 +1702,10 @@ namespace DagorAssetsExtractor::Export
         // RGBA8 can be mapped to legacy pixel format - no DX10 needed
         case 28: case 29: return false; // R8G8B8A8_UNORM / SRGB
 
+        // Legacy uncompressed formats - no DX10 needed
+        case 21: return false; // D3DFMT_A8R8G8B8
+        case 50: return false; // D3DFMT_L8
+
         // Everything else needs DX10
         default: return true;
         }
@@ -1636,6 +1721,9 @@ namespace DagorAssetsExtractor::Export
         case 894720068: return 77;  // DXT5 -> DXGI_FORMAT_BC3_UNORM
         case 826889281: return 80;  // ATI1 -> DXGI_FORMAT_BC4_UNORM
         case 843666497: return 83;  // ATI2 -> DXGI_FORMAT_BC5_UNORM
+        case 540492610: return 98;  // BC7 FourCC -> DXGI_FORMAT_BC7_UNORM
+        case 21:        return 87;  // D3DFMT_A8R8G8B8 -> DXGI_FORMAT_B8G8R8A8_UNORM
+        case 50:        return 61;  // D3DFMT_L8 -> DXGI_FORMAT_R8_UNORM
         default:                    return d3dFormat; // Already a DXGI format code
         }
     }
@@ -1896,6 +1984,14 @@ namespace DagorAssetsExtractor::Export
                     manifest.sourceResource = entry.name;
                     manifest.assetType = "Texture (" + normalizedFormat + ")";
                     manifest.outputFiles.push_back(Platform::PathToUtf8(outputPath.filename()));
+                    if (options.splitPackedNormalMap && LooksLikePackedNormalMap(entry.name))
+                    {
+                        std::filesystem::path mrPath = outputPath;
+                        std::string stem = mrPath.stem().string();
+                        std::string ext = mrPath.extension().string();
+                        mrPath.replace_filename(stem + "_metalrough" + ext);
+                        manifest.outputFiles.push_back(Platform::PathToUtf8(mrPath.filename()));
+                    }
                     manifest.appVersion = "0.1.0-alpha";
                     manifest.formatDecoderVersion = "DdsxReader v1.0";
                     manifest.skipWrite = !options.exportJsonManifest;
@@ -1916,6 +2012,7 @@ namespace DagorAssetsExtractor::Export
                 RasterImage image;
                 std::string readableError;
                 if (DecodeTopMipToRaster(exportHeader, payload, image, readableError) &&
+                    SplitNormalMapIfNeeded(image, entry.name, outputPath, normalizedFormat, options, result, readableError) &&
                     WriteReadableImage(outputPath, image, normalizedFormat, readableError))
                 {
                     finalizeReadableSuccess();
@@ -1927,6 +2024,7 @@ namespace DagorAssetsExtractor::Export
                 RasterImage directXTexImage;
                 if (BuildDdsBuffer(exportHeader, payload, ddsData, directXTexError) &&
                     DecodeRasterWithDirectXTex(ddsData, directXTexImage, directXTexError) &&
+                    SplitNormalMapIfNeeded(directXTexImage, entry.name, outputPath, normalizedFormat, options, result, directXTexError) &&
                     WriteReadableImage(outputPath, directXTexImage, normalizedFormat, directXTexError))
                 {
                     result.warnings.push_back("Readable export transcoded via DirectXTex.");
@@ -2157,6 +2255,23 @@ namespace DagorAssetsExtractor::Export
                     dds.ddspf.gBitMask = 0x0000FF00;
                     dds.ddspf.bBitMask = 0x00FF0000;
                     dds.ddspf.aBitMask = 0xFF000000;
+                    break;
+                }
+                if (header.d3dFormat == 21)
+                {
+                    dds.ddspf.flags = DDPF_RGB | DDPF_ALPHAPIXELS;
+                    dds.ddspf.rgbBitCount = 32;
+                    dds.ddspf.rBitMask = 0x00FF0000;
+                    dds.ddspf.gBitMask = 0x0000FF00;
+                    dds.ddspf.bBitMask = 0x000000FF;
+                    dds.ddspf.aBitMask = 0xFF000000;
+                    break;
+                }
+                if (header.d3dFormat == 50)
+                {
+                    dds.ddspf.flags = DDPF_LUMINANCE;
+                    dds.ddspf.rgbBitCount = 8;
+                    dds.ddspf.rBitMask = 0x000000FF;
                     break;
                 }
                 error = "Unsupported D3D format for DDS passthrough: " + std::to_string(header.d3dFormat);

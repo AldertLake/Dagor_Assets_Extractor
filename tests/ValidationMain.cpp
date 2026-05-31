@@ -813,6 +813,14 @@ namespace
         ormMaterial.textureSlots[1] = "tank_orm";
         const ResolvedMaterialTextures ormResolved = DagorAssetsExtractor::Export::ResolveMaterialTextures(ormMaterial);
         Expect(ormResolved.metallicRoughnessTextureName == "tank_orm", "Packed ORM texture was not recognized.");
+        Expect(ormResolved.occlusionTextureName == "tank_orm", "Packed ORM texture was not mapped to occlusion slot.");
+
+        Expect(DagorAssetsExtractor::Export::LooksLikePackedOrm("tank_orm"), "LooksLikePackedOrm failed for tank_orm");
+        Expect(DagorAssetsExtractor::Export::LooksLikePackedOrm("plane_rma"), "LooksLikePackedOrm failed for plane_rma");
+        Expect(!DagorAssetsExtractor::Export::LooksLikePackedOrm("plane_normal"), "LooksLikePackedOrm matched plane_normal wrongly");
+        Expect(DagorAssetsExtractor::Export::LooksLikePackedNormalMap("f_16c_n"), "LooksLikePackedNormalMap failed for f_16c_n");
+        Expect(DagorAssetsExtractor::Export::LooksLikePackedNormalMap("f_16c_n$hq"), "LooksLikePackedNormalMap failed for f_16c_n$hq");
+        Expect(!DagorAssetsExtractor::Export::LooksLikePackedNormalMap("tank_orm"), "LooksLikePackedNormalMap matched tank_orm wrongly");
 
         Expect(
             DagorAssetsExtractor::Export::ClassifyDescriptorBinding("dynamic_vehicle", "t3", "tank_ao") ==
@@ -869,6 +877,55 @@ namespace
         Expect(json.find("orm.png") != std::string::npos, "GLB JSON is missing the metallic-roughness image URI.");
         Expect(json.find("ao.png") != std::string::npos, "GLB JSON is missing the occlusion image URI.");
         VerifyGlbBufferViewsAndAccessors(glbPath);
+    }
+
+
+    void RunStep3PackedNormalMapValidation(const std::filesystem::path& tempRoot)
+    {
+        std::vector<uint8_t> payload(16 * 4);
+        for (size_t i = 0; i < 16; ++i)
+        {
+            size_t idx = i * 4;
+            payload[idx + 0] = 128; // R
+            payload[idx + 1] = 64;  // G
+            payload[idx + 2] = 192; // B
+            payload[idx + 3] = 100; // A
+        }
+
+        const std::filesystem::path packPath = tempRoot / "packed_normal_validation.pack";
+        WriteFileBytes(packPath, payload);
+
+        SubAssetRecord entry;
+        entry.name = "test_normal_n";
+        entry.offset = 0;
+        entry.size = static_cast<uint32_t>(payload.size());
+        entry.ddsxHeader = BuildDdsxHeader(
+            28u, // R8G8B8A8
+            4,
+            4,
+            1,
+            32u,
+            0u,
+            static_cast<uint32_t>(payload.size()),
+            0u);
+
+        TextureExportOptions options;
+        options.outputDir = tempRoot / "exports";
+        options.format = "PNG";
+        options.preserveOriginalDDS = false;
+        options.overwrite = true;
+        options.exportJsonManifest = false;
+        options.splitPackedNormalMap = true;
+
+        const TextureExportResult result = TextureExporter::ExportTexture(packPath, entry, options);
+        Expect(result.success, "Packed normal map split export failed: " + result.error);
+
+        const std::filesystem::path normalPath = result.outputPath;
+        const std::filesystem::path mrPath = options.outputDir / "test_normal_n_metalrough.png";
+
+        Expect(std::filesystem::exists(normalPath), "Reconstructed normal map PNG does not exist.");
+        Expect(std::filesystem::exists(mrPath), "Extracted metallic-roughness PNG does not exist.");
+        Expect(WarningContains(result, "Split packed normal map channels"), "Expected split warning in result.");
     }
 
     void RunVromfsValidation()
@@ -1346,6 +1403,7 @@ int main()
         RunStep2Validation(tempRoot);
         RunStep3ResolverValidation();
         RunStep3GlbValidation(tempRoot);
+        RunStep3PackedNormalMapValidation(tempRoot);
         RunVromfsValidation();
         RunJobSystemValidation();
         RunDynModelRigidSkinValidation(tempRoot);

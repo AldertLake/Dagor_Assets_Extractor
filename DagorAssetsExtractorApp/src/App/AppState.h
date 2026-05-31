@@ -29,7 +29,7 @@ namespace DagorAssetsExtractor::App
         std::filesystem::path gameRoot;
         std::filesystem::path exportRoot;
         std::string textureExportFormat = "DDS";
-        std::string modelExportFormat = "GLB";
+        int staticModelMaxLods = 1;
         bool exportTexturesWithModels = true;
         bool embedTexturesInGlb = true;
         bool exportJsonManifest = false;

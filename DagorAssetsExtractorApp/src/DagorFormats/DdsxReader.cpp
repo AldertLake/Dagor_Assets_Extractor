@@ -34,6 +34,8 @@ const char* DdsxHeader::FormatName() const
     case 894720068:  return "DXT5 (BC3)";     // MAKEFOURCC('D','X','T','5')
     case 826889281:  return "ATI1 (BC4)";     // MAKEFOURCC('A','T','I','1')
     case 843666497:  return "ATI2 (BC5)";     // MAKEFOURCC('A','T','I','2')
+    case 21:         return "A8R8G8B8";       // D3DFMT_A8R8G8B8
+    case 50:         return "L8";             // D3DFMT_L8
 
     // DXGI_FORMAT values (newer Dagor)
     case 71:         return "BC1_UNORM";
@@ -50,6 +52,7 @@ const char* DdsxHeader::FormatName() const
     case 96:         return "BC6H_SF16";
     case 98:         return "BC7_UNORM";
     case 99:         return "BC7_UNORM_SRGB";
+    case 540492610:  return "BC7 (BC7 )";     // MAKEFOURCC('B','C','7',' ')
     case 28:         return "R8G8B8A8_UNORM";
     case 29:         return "R8G8B8A8_UNORM_SRGB";
     case 87:         return "B8G8R8A8_UNORM";

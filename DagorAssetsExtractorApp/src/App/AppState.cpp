@@ -738,7 +738,7 @@ namespace DagorAssetsExtractor::App
         return key == "gameRoot"
             || key == "exportRoot"
             || key == "textureExportFormat"
-            || key == "modelExportFormat"
+            || key == "staticModelMaxLods"
             || key == "exportTexturesWithModels"
             || key == "embedTexturesInGlb"
             || key == "exportJsonManifest"
@@ -768,9 +768,9 @@ namespace DagorAssetsExtractor::App
         {
             settings.textureExportFormat = value;
         }
-        else if (key == "modelExportFormat")
+        else if (key == "staticModelMaxLods")
         {
-            settings.modelExportFormat = value;
+            settings.staticModelMaxLods = static_cast<int>(ParseSize(value, settings.staticModelMaxLods));
         }
         else if (key == "exportTexturesWithModels")
         {
@@ -878,7 +878,7 @@ namespace DagorAssetsExtractor::App
         stream << "gameRoot=" << Platform::PathToUtf8(settings.gameRoot) << '\n';
         stream << "exportRoot=" << Platform::PathToUtf8(settings.exportRoot) << '\n';
         stream << "textureExportFormat=" << settings.textureExportFormat << '\n';
-        stream << "modelExportFormat=" << settings.modelExportFormat << '\n';
+        stream << "staticModelMaxLods=" << settings.staticModelMaxLods << '\n';
         stream << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
         stream << "embedTexturesInGlb=" << (settings.embedTexturesInGlb ? "true" : "false") << '\n';
         stream << "exportJsonManifest=" << (settings.exportJsonManifest ? "true" : "false") << '\n';
@@ -2282,7 +2282,7 @@ namespace DagorAssetsExtractor::App
         std::replace(safeName.begin(), safeName.end(), ':', '_');
 
         std::filesystem::path exportRoot = app.settings.exportRoot / safeName;
-        std::string format = app.settings.modelExportFormat;
+        std::string format = "GLB";
         bool globalExportTextures = app.settings.exportTexturesWithModels;
         bool exportJsonManifest = app.settings.exportJsonManifest;
         
@@ -2290,7 +2290,7 @@ namespace DagorAssetsExtractor::App
         auto allRecords = SnapshotRecords(app.scan);
         auto baseTextureExportOptions = GetTextureExportOptions(app);
         baseTextureExportOptions.outputDir = exportRoot / "Textures";
-        const bool exportGlb = AssetIndex::ToLowerAscii(format) == "glb";
+        const bool exportGlb = true;
         Export::GlbExportOptions glbOptions;
         glbOptions.embedTexturesInGlb = app.settings.embedTexturesInGlb;
 
@@ -2317,17 +2317,17 @@ namespace DagorAssetsExtractor::App
             ? (dynModelIncludeTexturesOverride.value_or(globalExportTextures))
             : globalExportTextures;
 
-        uint64_t totalSteps = 1; // 1 step for model itself
+        uint64_t initialTotalSteps = 1; // 1 step for model itself
         if (matchedLinkOnMain && exportTexturesOnMain)
         {
-            totalSteps += matchedLinkOnMain->textureLinks.size();
+            initialTotalSteps += matchedLinkOnMain->textureLinks.size();
         }
 
-        BeginExportProgress(app, "Exporting " + entry.name, "Preparing export...", totalSteps);
+        BeginExportProgress(app, "Exporting " + entry.name, "Preparing export...", initialTotalSteps);
         SetExportProgressOutputDir(app, Platform::PathToUtf8(exportRoot));
         AddExportProgressLog(app, "Starting model export for: " + entry.name);
 
-        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, glbOptions, dynModelIncludeTexturesOverride, dynModelIncludeSkeletonRigOverride, dynModelIncludeAnimationsOverride, totalSteps]() {
+        app.backgroundJobs.Start("ExportModel_" + entry.name, [&app, packPath, entry, exportRoot, format, globalExportTextures, exportJsonManifest, descriptorLinks, allRecords, baseTextureExportOptions, exportGlb, glbOptions, dynModelIncludeTexturesOverride, dynModelIncludeSkeletonRigOverride, dynModelIncludeAnimationsOverride, initialTotalSteps]() {
             struct ExportProgressGuard
             {
                 AppState& guardApp;
@@ -2338,7 +2338,7 @@ namespace DagorAssetsExtractor::App
 
             try
             {
-                UpdateExportProgress(app, currentStep, totalSteps, "Opening pack file...", entry.name);
+                UpdateExportProgress(app, currentStep, initialTotalSteps, "Opening pack file...", entry.name);
                 AddExportProgressLog(app, "Opening GRP pack file: " + Platform::PathToUtf8(packPath.filename()));
                 std::ifstream file(packPath, std::ios::binary);
                 if (!file)
@@ -2380,6 +2380,9 @@ namespace DagorAssetsExtractor::App
                                         (entry.grpClassId == kRendInstClassId ||
                                          entry.grpClassId == 0 && HasRendInstMagic(payload));
 
+                std::string currentFormat = "GLB";
+                const bool currentExportGlb = true;
+
                 if (isDynModel && !dynModelIncludeTexturesOverride.has_value())
                 {
                     AddLog(app,
@@ -2399,10 +2402,11 @@ namespace DagorAssetsExtractor::App
                     ? (dynModelIncludeAnimationsOverride.value_or(false) && includeSkeletonRig)
                     : false;
                 auto textureExportOptions = baseTextureExportOptions;
-                if (exportGlb && exportTextures)
+                if (currentExportGlb && exportTextures)
                 {
                     textureExportOptions.format = "PNG";
                     textureExportOptions.preserveOriginalDDS = false;
+                    textureExportOptions.splitPackedNormalMap = true;
                     AddLog(app,
                         LogLevel::Info,
                         "GLB material texture export for " + entry.name +
@@ -2753,7 +2757,10 @@ namespace DagorAssetsExtractor::App
                         }
                         else
                         {
-                            AddExportProgressLog(app, "Could not resolve texture dependency: " + texName);
+                            const std::string warnMsg = "Could not resolve texture dependency: " + texName + " in any DXP packs.";
+                            AddLog(app, LogLevel::Warning, warnMsg);
+                            AddExportProgressLog(app, "Warning: " + warnMsg);
+                            manifest.decodeWarnings.push_back(warnMsg);
                         }
                     }
 
@@ -3045,6 +3052,40 @@ namespace DagorAssetsExtractor::App
                         {
                             assignedTextureCount++;
                         }
+
+                        // If no metallicRoughness is found, but a normal map is present, assign the split _metalrough texture
+                        if (resolvedTextures.metallicRoughnessTextureName.empty() && !resolvedTextures.normalTextureName.empty())
+                        {
+                            if (!materials[matIdx].normalTexturePath.empty())
+                            {
+                                std::string mrPath = materials[matIdx].normalTexturePath;
+                                size_t dotPos = mrPath.find_last_of('.');
+                                if (dotPos != std::string::npos)
+                                {
+                                    mrPath.insert(dotPos, "_metalrough");
+                                }
+                                else
+                                {
+                                    mrPath += "_metalrough";
+                                }
+
+                                fs::path mrSourcePath = materials[matIdx].normalTextureSourcePath;
+                                std::string stem = mrSourcePath.stem().string();
+                                std::string ext = mrSourcePath.extension().string();
+                                mrSourcePath.replace_filename(stem + "_metalrough" + ext);
+
+                                materials[matIdx].metallicRoughnessTexturePath = mrPath;
+                                materials[matIdx].metallicRoughnessTextureSourcePath = mrSourcePath;
+                                assignedTextureCount++;
+
+                                if (materials[matIdx].occlusionTexturePath.empty())
+                                {
+                                    materials[matIdx].occlusionTexturePath = mrPath;
+                                    materials[matIdx].occlusionTextureSourcePath = mrSourcePath;
+                                    assignedTextureCount++;
+                                }
+                            }
+                        }
                     }
 
                     AddLog(app,
@@ -3132,6 +3173,18 @@ namespace DagorAssetsExtractor::App
                                         materials[binding.materialIndex].metallicRoughnessTextureSourcePath = srcIt->second;
                                     }
                                     assignedTextureCount++;
+
+                                    // If this is an ORM texture, also assign it to the occlusion slot
+                                    if (Export::LooksLikePackedOrm(texName) &&
+                                        materials[binding.materialIndex].occlusionTexturePath.empty())
+                                    {
+                                        materials[binding.materialIndex].occlusionTexturePath = pathIt->second;
+                                        if (srcIt != exportedTextureSourcePaths.end())
+                                        {
+                                            materials[binding.materialIndex].occlusionTextureSourcePath = srcIt->second;
+                                        }
+                                        assignedTextureCount++;
+                                    }
                                 }
                                 else if (semantic == Export::MaterialTextureSemantic::Occlusion &&
                                          materials[binding.materialIndex].occlusionTexturePath.empty())
@@ -3161,6 +3214,40 @@ namespace DagorAssetsExtractor::App
                             materials.front().diffuseTextureSourcePath = srcIt->second;
                         }
                         assignedTextureCount = 1;
+                    }
+
+                    // For descriptor-linked materials, if metallicRoughness is missing but normal map is present, assign the split _metalrough texture
+                    for (size_t m = 0; m < materials.size(); ++m)
+                    {
+                        if (materials[m].metallicRoughnessTexturePath.empty() && !materials[m].normalTexturePath.empty())
+                        {
+                            std::string mrPath = materials[m].normalTexturePath;
+                            size_t dotPos = mrPath.find_last_of('.');
+                            if (dotPos != std::string::npos)
+                            {
+                                mrPath.insert(dotPos, "_metalrough");
+                            }
+                            else
+                            {
+                                mrPath += "_metalrough";
+                            }
+
+                            fs::path mrSourcePath = materials[m].normalTextureSourcePath;
+                            std::string stem = mrSourcePath.stem().string();
+                            std::string ext = mrSourcePath.extension().string();
+                            mrSourcePath.replace_filename(stem + "_metalrough" + ext);
+
+                            materials[m].metallicRoughnessTexturePath = mrPath;
+                            materials[m].metallicRoughnessTextureSourcePath = mrSourcePath;
+                            assignedTextureCount++;
+
+                            if (materials[m].occlusionTexturePath.empty())
+                            {
+                                materials[m].occlusionTexturePath = mrPath;
+                                materials[m].occlusionTextureSourcePath = mrSourcePath;
+                                assignedTextureCount++;
+                            }
+                        }
                     }
 
                     AddLog(app,
@@ -3198,23 +3285,17 @@ namespace DagorAssetsExtractor::App
                     manifest.assetType = "RendInst Static Model";
                     manifest.formatDecoderVersion = "RendInstReader v1.0";
 
-                    if (format == "GLB" || format == "glb")
+                    std::vector<DagorFormats::RendInstMesh> exportLods = reader.GetLods();
+                    int maxLods = std::max(1, app.settings.staticModelMaxLods);
+                    if (exportLods.size() > static_cast<size_t>(maxLods))
                     {
-                        outPath = exportRoot / (safeName + ".glb");
-                        manifest.outputFiles.push_back(outPath.filename().string());
-                        AddExportProgressLog(app, "Writing GLB static model...");
-                        success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, reader.GetLods(), manifest, materials, glbOptions);
+                        exportLods.resize(maxLods);
                     }
-                    else
-                    {
-                        outPath = exportRoot / (safeName + ".obj");
-                        manifest.outputFiles.push_back(outPath.filename().string());
-                        AddExportProgressLog(app, "Writing OBJ static model...");
-                        if (!reader.GetLods().empty())
-                        {
-                            success = DagorAssetsExtractor::Export::ModelExporter::ExportToObj(outPath, reader.GetLods()[0], manifest);
-                        }
-                    }
+
+                    outPath = exportRoot / (safeName + ".glb");
+                    manifest.outputFiles.push_back(outPath.filename().string());
+                    AddExportProgressLog(app, "Writing GLB static model...");
+                    success = DagorAssetsExtractor::Export::ModelExporter::ExportToGlb(outPath, exportLods, manifest, materials, glbOptions);
                 }
                 else if (isDynModel)
                 {
@@ -3322,8 +3403,6 @@ namespace DagorAssetsExtractor::App
                     std::vector<DagorFormats::GeomNodeTreeNode> skeleton;
                     std::string skeletonName;
                     {
-                        constexpr uint32_t kGeomNodeTreeClassId = 0x56F81B6Du;
-
                         auto loadSkeletonEntry = [&](const fs::path& skeletonPackPath,
                                                      const AssetIndex::SubAssetRecord& skeletonEntry,
                                                      const std::string& sourceDescription) -> bool
@@ -3399,6 +3478,7 @@ namespace DagorAssetsExtractor::App
                             for (const std::string& candidate : skeletonCandidates)
                             {
                                 auto it = std::find_if(samePackContents->entries.begin(), samePackContents->entries.end(), [&](const auto& e) {
+                                    constexpr uint32_t kGeomNodeTreeClassId = 0x56F81B6Du;
                                     return e.name == candidate && (e.grpClassId == kGeomNodeTreeClassId || e.grpClassId == 0);
                                 });
 

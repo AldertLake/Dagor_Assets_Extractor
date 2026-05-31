@@ -1929,21 +1929,28 @@ namespace DagorAssetsExtractor::UI
             }
         }
 
-        static const char* textureFormats[] = { "DDS", "PNG", "TGA" };
-        const std::string textureFormat = AssetIndex::ToLowerAscii(app.settings.textureExportFormat);
-        int textureFormatIndex = 0;
-        if (textureFormat == "png")
-        {
-            textureFormatIndex = 1;
-        }
-        else if (textureFormat == "tga")
-        {
-            textureFormatIndex = 2;
-        }
+        // Force texture format to PNG, since GLB is the only supported format and requires PNG textures.
+        app.settings.textureExportFormat = "PNG";
 
+        static const char* textureFormats[] = { "DDS", "PNG", "TGA" };
+        int textureFormatIndex = 1; // "PNG"
+
+        ImGui::BeginDisabled(true);
         if (ImGui::Combo("Texture Format", &textureFormatIndex, textureFormats, IM_ARRAYSIZE(textureFormats)))
         {
             app.settings.textureExportFormat = textureFormats[textureFormatIndex];
+        }
+        ImGui::EndDisabled();
+
+        int maxLods = app.settings.staticModelMaxLods;
+        if (ImGui::InputInt("Max RendInst LODs", &maxLods))
+        {
+            maxLods = std::clamp(maxLods, 1, 16);
+            app.settings.staticModelMaxLods = maxLods;
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Sets the maximum number of Levels of Detail (LODs) to export for static models (RendInst).");
         }
 
         ImGui::Checkbox("Export textures with models", &app.settings.exportTexturesWithModels);

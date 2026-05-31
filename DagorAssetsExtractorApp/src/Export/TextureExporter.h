@@ -20,6 +20,7 @@ namespace DagorAssetsExtractor::Export
         bool overwrite = true;
         bool useOodleFromGameFolder = true;
         bool exportJsonManifest = false;
+        bool splitPackedNormalMap = false;
     };
 
     struct TextureExportResult

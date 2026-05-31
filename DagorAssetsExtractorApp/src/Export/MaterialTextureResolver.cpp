@@ -48,52 +48,6 @@ namespace DagorAssetsExtractor::Export
             return true;
         }
 
-        std::string NormalizeTextureSemanticName(std::string_view value)
-        {
-            size_t start = 0;
-            const size_t slash = value.find_last_of("/\\");
-            if (slash != std::string_view::npos)
-            {
-                start = slash + 1;
-            }
-
-            size_t end = value.size();
-            const size_t dot = value.find_last_of('.');
-            if (dot != std::string_view::npos && dot > start)
-            {
-                end = dot;
-            }
-
-            std::string normalized;
-            normalized.reserve(end - start);
-            bool previousUnderscore = false;
-            for (size_t i = start; i < end; ++i)
-            {
-                const unsigned char c = static_cast<unsigned char>(value[i]);
-                if (std::isalnum(c) != 0)
-                {
-                    normalized.push_back(static_cast<char>(std::tolower(c)));
-                    previousUnderscore = false;
-                }
-                else if (!previousUnderscore)
-                {
-                    normalized.push_back('_');
-                    previousUnderscore = true;
-                }
-            }
-
-            while (!normalized.empty() && normalized.front() == '_')
-            {
-                normalized.erase(normalized.begin());
-            }
-
-            while (!normalized.empty() && normalized.back() == '_')
-            {
-                normalized.pop_back();
-            }
-
-            return normalized;
-        }
 
         std::vector<std::string_view> SplitTokens(std::string_view normalized)
         {
@@ -320,6 +274,11 @@ namespace DagorAssetsExtractor::Export
             { "t1" },
             TextureNameLooksLikeMetallicRoughness);
 
+        if (resolved.occlusionTextureName.empty() && LooksLikePackedOrm(resolved.metallicRoughnessTextureName))
+        {
+            resolved.occlusionTextureName = resolved.metallicRoughnessTextureName;
+        }
+
         return resolved;
     }
 
@@ -350,5 +309,79 @@ namespace DagorAssetsExtractor::Export
         }
 
         return MaterialTextureSemantic::Unknown;
+    }
+
+    std::string NormalizeTextureSemanticName(std::string_view value)
+    {
+        size_t start = 0;
+        const size_t slash = value.find_last_of("/\\");
+        if (slash != std::string_view::npos)
+        {
+            start = slash + 1;
+        }
+
+        size_t end = value.size();
+        const size_t dot = value.find_last_of('.');
+        if (dot != std::string_view::npos && dot > start)
+        {
+            end = dot;
+        }
+
+        std::string normalized;
+        normalized.reserve(end - start);
+        bool previousUnderscore = false;
+        for (size_t i = start; i < end; ++i)
+        {
+            const unsigned char c = static_cast<unsigned char>(value[i]);
+            if (std::isalnum(c) != 0)
+            {
+                normalized.push_back(static_cast<char>(std::tolower(c)));
+                previousUnderscore = false;
+            }
+            else if (!previousUnderscore)
+            {
+                normalized.push_back('_');
+                previousUnderscore = true;
+            }
+        }
+
+        while (!normalized.empty() && normalized.front() == '_')
+        {
+            normalized.erase(normalized.begin());
+        }
+
+        while (!normalized.empty() && normalized.back() == '_')
+        {
+            normalized.pop_back();
+        }
+
+        return normalized;
+    }
+
+    bool LooksLikePackedOrm(std::string_view textureName)
+    {
+        const std::string normalized = NormalizeTextureSemanticName(textureName);
+        return HasAnyToken(normalized, { "orm", "rma", "mra", "mrao", "arm" });
+    }
+
+    bool LooksLikePackedNormalMap(std::string_view textureName)
+    {
+        const std::string normalized = NormalizeTextureSemanticName(textureName);
+        if (normalized.empty())
+        {
+            return false;
+        }
+
+        if (normalized.size() >= 2 && normalized.compare(normalized.size() - 2, 2, "_n") == 0)
+        {
+            return true;
+        }
+
+        if (normalized.find("_n_") != std::string::npos)
+        {
+            return true;
+        }
+
+        return false;
     }
 }

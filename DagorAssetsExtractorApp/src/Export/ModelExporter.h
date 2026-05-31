@@ -69,11 +69,5 @@ namespace DagorAssetsExtractor::Export
             bool includeSkeletonRig = true,
             const GlbExportOptions& options = GlbExportOptions{},
             const std::vector<AnimationClip>& animations = {});
-
-        // Export a single LOD to OBJ format
-        static bool ExportToObj(
-            const std::filesystem::path& path,
-            const DagorFormats::RendInstMesh& mesh,
-            const ExportManifest& manifest);
     };
 }

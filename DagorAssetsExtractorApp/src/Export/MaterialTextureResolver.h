@@ -30,4 +30,9 @@ namespace DagorAssetsExtractor::Export
         std::string_view shaderClass,
         std::string_view slotName,
         std::string_view textureName);
+
+    std::string NormalizeTextureSemanticName(std::string_view value);
+    bool LooksLikePackedOrm(std::string_view textureName);
+    bool LooksLikePackedNormalMap(std::string_view textureName);
 }
+

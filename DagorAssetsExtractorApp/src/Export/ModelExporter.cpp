@@ -2584,11 +2584,7 @@ namespace DagorAssetsExtractor::Export
             info.vertByteOffset = binBuffer.size();
             info.vertByteLength = mesh.vertices.size() * sizeof(PackedStaticVertex);
 
-            std::vector<uint32_t> flippedIndices = mesh.indices;
-            for (size_t i = 0; i + 2 < flippedIndices.size(); i += 3)
-            {
-                std::swap(flippedIndices[i + 1], flippedIndices[i + 2]);
-            }
+            std::vector<uint32_t> meshIndices = mesh.indices;
 
             std::vector<PackedStaticVertex> packedVertices;
             if (!mesh.vertices.empty())
@@ -2617,7 +2613,7 @@ namespace DagorAssetsExtractor::Export
                     info.maxZ = std::max(info.maxZ, packed.z);
                 }
 
-                RepairNormals(packedVertices, flippedIndices);
+                RecomputePackedNormals(packedVertices, meshIndices);
                 const uint8_t* vertBytes = reinterpret_cast<const uint8_t*>(packedVertices.data());
                 binBuffer.insert(binBuffer.end(), vertBytes, vertBytes + info.vertByteLength);
             }
@@ -2635,15 +2631,15 @@ namespace DagorAssetsExtractor::Export
             info.indexByteOffset = binBuffer.size();
             info.indexByteLength = mesh.indices.size() * sizeof(uint32_t);
 
-            if (!flippedIndices.empty())
+            if (!meshIndices.empty())
             {
-                const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(flippedIndices.data());
+                const uint8_t* indexBytes = reinterpret_cast<const uint8_t*>(meshIndices.data());
                 binBuffer.insert(binBuffer.end(), indexBytes, indexBytes + info.indexByteLength);
             }
 
             if (meshWritesTexcoords[meshIdx])
             {
-                std::vector<Tangent4> computedTangents = ComputeTangents(packedVertices, flippedIndices);
+                std::vector<Tangent4> computedTangents = ComputeTangents(packedVertices, meshIndices);
                 if (!computedTangents.empty())
                 {
                     info.hasTangent = true;
@@ -4456,80 +4452,6 @@ namespace DagorAssetsExtractor::Export
 
         out.close();
 
-        std::filesystem::path manifestPath = path;
-        manifestPath.replace_extension(".export-manifest.json");
-        manifest.WriteToFile(manifestPath);
-
-        return true;
-    }
-
-    bool ModelExporter::ExportToObj(
-        const std::filesystem::path& path,
-        const DagorFormats::RendInstMesh& mesh,
-        const ExportManifest& manifest)
-    {
-        if (mesh.vertices.empty() || mesh.indices.empty())
-        {
-            return false;
-        }
-
-        std::ofstream out(path);
-        if (!out)
-        {
-            return false;
-        }
-
-        // Write header
-        out << "# Exported from DagorAssetsExtractor\n";
-        out << "# Resource: " << manifest.sourceResource << "\n";
-        out << "# Source Pack: " << manifest.sourcePack << "\n\n";
-
-        out << "g " << mesh.name << "\n\n";
-
-        // Vertices: positions (v x y z)
-        for (const auto& v : mesh.vertices)
-        {
-            out << std::fixed << std::setprecision(6) 
-                << "v " << v.x << " " << v.y << " " << v.z << "\n";
-        }
-        out << "\n";
-
-        // Texture coordinates (vt u v). glTF UV space has origin at top-left, OBJ typically uses bottom-left. 
-        // We invert V to fit standard texture viewers.
-        for (const auto& v : mesh.vertices)
-        {
-            out << std::fixed << std::setprecision(6) 
-                << "vt " << v.u << " " << (1.0f - v.v) << "\n";
-        }
-        out << "\n";
-
-        // Normals (vn nx ny nz)
-        for (const auto& v : mesh.vertices)
-        {
-            out << std::fixed << std::setprecision(6) 
-                << "vn " << v.nx << " " << v.ny << " " << v.nz << "\n";
-        }
-        out << "\n";
-
-        // Faces (f v/vt/vn v/vt/vn v/vt/vn)
-        // OBJ indices are 1-based.
-        for (size_t i = 0; i < mesh.indices.size(); i += 3)
-        {
-            if (i + 2 < mesh.indices.size())
-            {
-                uint32_t i0 = mesh.indices[i] + 1;
-                uint32_t i1 = mesh.indices[i + 1] + 1;
-                uint32_t i2 = mesh.indices[i + 2] + 1;
-
-                out << "f " << i0 << "/" << i0 << "/" << i0 << " "
-                    << i1 << "/" << i1 << "/" << i1 << " "
-                    << i2 << "/" << i2 << "/" << i2 << "\n";
-            }
-        }
-
-        out.close();
-
-        // Write Manifest file beside OBJ
         std::filesystem::path manifestPath = path;
         manifestPath.replace_extension(".export-manifest.json");
         manifest.WriteToFile(manifestPath);

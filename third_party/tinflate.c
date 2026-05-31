@@ -78,16 +78,16 @@ static void tinf_build_fixed_trees(struct tinf_tree *lt, struct tinf_tree *dt)
 	lt->counts[9] = 112;
 
 	for (i = 0; i < 24; ++i) {
-		lt->symbols[i] = 256 + i;
+		lt->symbols[i] = (unsigned short)(256 + i);
 	}
 	for (i = 0; i < 144; ++i) {
-		lt->symbols[24 + i] = i;
+		lt->symbols[24 + i] = (unsigned short)i;
 	}
 	for (i = 0; i < 8; ++i) {
-		lt->symbols[24 + 144 + i] = 280 + i;
+		lt->symbols[24 + 144 + i] = (unsigned short)(280 + i);
 	}
 	for (i = 0; i < 112; ++i) {
-		lt->symbols[24 + 144 + 8 + i] = 144 + i;
+		lt->symbols[24 + 144 + 8 + i] = (unsigned short)(144 + i);
 	}
 
 	lt->max_sym = 285;
@@ -100,7 +100,7 @@ static void tinf_build_fixed_trees(struct tinf_tree *lt, struct tinf_tree *dt)
 	dt->counts[5] = 32;
 
 	for (i = 0; i < 32; ++i) {
-		dt->symbols[i] = i;
+		dt->symbols[i] = (unsigned short)i;
 	}
 
 	dt->max_sym = 29;
@@ -141,7 +141,7 @@ static int tinf_build_tree(struct tinf_tree *t, const unsigned char *lengths,
 		}
 		available = 2 * (available - used);
 
-		offs[i] = num_codes;
+		offs[i] = (unsigned short)num_codes;
 		num_codes += used;
 	}
 
@@ -157,7 +157,7 @@ static int tinf_build_tree(struct tinf_tree *t, const unsigned char *lengths,
 	/* Fill in symbols sorted by code */
 	for (i = 0; i < num; ++i) {
 		if (lengths[i]) {
-			t->symbols[offs[lengths[i]]++] = i;
+			t->symbols[offs[lengths[i]]++] = (unsigned short)i;
 		}
 	}
 
@@ -167,7 +167,7 @@ static int tinf_build_tree(struct tinf_tree *t, const unsigned char *lengths,
 	 */
 	if (num_codes == 1) {
 		t->counts[1] = 2;
-		t->symbols[1] = t->max_sym + 1;
+		t->symbols[1] = (unsigned short)(t->max_sym + 1);
 	}
 
 	return TINF_OK;
@@ -306,7 +306,7 @@ static int tinf_decode_trees(struct tinf_data *d, struct tinf_tree *lt,
 		/* Get 3 bits code length (0-7) */
 		unsigned int clen = tinf_getbits(d, 3);
 
-		lengths[clcidx[i]] = clen;
+		lengths[clcidx[i]] = (unsigned char)clen;
 	}
 
 	/* Build code length tree (in literal/length tree to save space) */
@@ -359,7 +359,7 @@ static int tinf_decode_trees(struct tinf_data *d, struct tinf_tree *lt,
 		}
 
 		while (length--) {
-			lengths[num++] = sym;
+			lengths[num++] = (unsigned char)sym;
 		}
 	}
 
@@ -428,7 +428,7 @@ static int tinf_inflate_block_data(struct tinf_data *d, struct tinf_tree *lt,
 			if (d->dest == d->dest_end) {
 				return TINF_BUF_ERROR;
 			}
-			*d->dest++ = sym;
+			*d->dest++ = (unsigned char)sym;
 		}
 		else {
 			int length, dist, offs;
