@@ -2554,6 +2554,13 @@ namespace DagorAssetsExtractor::App
                     std::string resolutionSource;
                 };
 
+                auto getTextureQualityRank = [](std::string_view entryName) -> int {
+                    if (entryName.find("$hq") != std::string_view::npos) return 3;
+                    if (entryName.find("$tq") != std::string_view::npos || 
+                        entryName.find("$lq") != std::string_view::npos) return 1;
+                    return 2; // Standard/Base Quality
+                };
+
                 std::unordered_map<std::string, std::vector<std::pair<fs::path, std::string>>> globalTextureDxpLookup;
                 if (descriptorLinks)
                 {
@@ -2578,14 +2585,14 @@ namespace DagorAssetsExtractor::App
                     }
                 }
 
-                // Sort descriptor lookup candidates so HQ variants are checked first
+                // Sort descriptor lookup candidates so HQ variants are checked first, and low-quality last
                 for (auto& [_, list] : globalTextureDxpLookup)
                 {
-                    std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) {
-                        bool aHasHq = (a.second.find("$hq") != std::string::npos);
-                        bool bHasHq = (b.second.find("$hq") != std::string::npos);
-                        if (aHasHq != bHasHq) {
-                            return aHasHq;
+                    std::sort(list.begin(), list.end(), [&](const auto& a, const auto& b) {
+                        int aRank = getTextureQualityRank(a.second);
+                        int bRank = getTextureQualityRank(b.second);
+                        if (aRank != bRank) {
+                            return aRank > bRank;
                         }
                         return a.second < b.second;
                     });
@@ -2653,14 +2660,14 @@ namespace DagorAssetsExtractor::App
                         }
                     }
 
-                    // Sort candidates so HQ variants are checked first
+                    // Sort candidates so HQ variants are checked first, and low-quality last
                     for (auto& [_, list] : fastDxpTextureIndex)
                     {
-                        std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) {
-                            bool aHasHq = (a.second.find("$hq") != std::string::npos);
-                            bool bHasHq = (b.second.find("$hq") != std::string::npos);
-                            if (aHasHq != bHasHq) {
-                                return aHasHq;
+                        std::sort(list.begin(), list.end(), [&](const auto& a, const auto& b) {
+                            int aRank = getTextureQualityRank(a.second);
+                            int bRank = getTextureQualityRank(b.second);
+                            if (aRank != bRank) {
+                                return aRank > bRank;
                             }
                             return a.second < b.second;
                         });
@@ -2713,12 +2720,12 @@ namespace DagorAssetsExtractor::App
                         }
                     }
 
-                    // Sort results: `$hq` first, then by resolutionSource preference (descriptor-link-cache over fast-dxp-index)
-                    std::sort(results.begin(), results.end(), [](const auto& a, const auto& b) {
-                        bool aHasHq = (a.dxpEntryName.find("$hq") != std::string::npos);
-                        bool bHasHq = (b.dxpEntryName.find("$hq") != std::string::npos);
-                        if (aHasHq != bHasHq) {
-                            return aHasHq;
+                    // Sort results: quality rank descending first, then by resolutionSource preference (descriptor-link-cache over fast-dxp-index)
+                    std::sort(results.begin(), results.end(), [&](const auto& a, const auto& b) {
+                        int aRank = getTextureQualityRank(a.dxpEntryName);
+                        int bRank = getTextureQualityRank(b.dxpEntryName);
+                        if (aRank != bRank) {
+                            return aRank > bRank;
                         }
                         if (a.resolutionSource != b.resolutionSource) {
                             return a.resolutionSource == "descriptor-link-cache";
@@ -2895,6 +2902,15 @@ namespace DagorAssetsExtractor::App
 
                         const std::string textureFile = MakeExportRelativeUri(exportRoot, texResult.outputPath);
                         std::lock_guard<std::mutex> lock(exportedTextureMutex);
+                        if (!candidateErrors.empty())
+                        {
+                            std::string combined = "Some earlier candidates failed for " + texName + ":";
+                            for (const auto& err : candidateErrors)
+                            {
+                                combined += "\n  - " + err;
+                            }
+                            AddLog(app, LogLevel::Warning, combined);
+                        }
                         exportedTexturePaths[texName] = textureFile;
                         exportedTextureSourcePaths[texName] = texResult.outputPath;
                         manifest.textureDependencies.push_back(textureFile);
