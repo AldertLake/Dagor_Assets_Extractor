@@ -2244,10 +2244,13 @@ namespace DagorAssetsExtractor::App
             app.texturePreview.entryOffset = entry.offset;
             app.texturePreview.sourceWidth = entry.texWidth;
             app.texturePreview.sourceHeight = entry.texHeight;
+            app.texturePreview.sourceSize = entry.size;
             app.texturePreview.mipCount = entry.texMips;
             app.texturePreview.format = entry.texFormat;
             app.texturePreview.compression = entry.texCompression;
+            app.texturePreview.srgb = false;
             app.texturePreview.loading = true;
+            app.texturePreview.windowOpen = true;
             app.texturePreview.error.clear();
             app.texturePreview.warnings.clear();
             app.texturePreview.pendingImage.reset();
@@ -2283,6 +2286,7 @@ namespace DagorAssetsExtractor::App
             app.texturePreview.loading = false;
             app.texturePreview.error = std::move(result.error);
             app.texturePreview.warnings = std::move(result.warnings);
+            app.texturePreview.srgb = result.srgb;
             app.texturePreview.pendingImage.reset();
 
             if (!result.success)
@@ -2313,13 +2317,16 @@ namespace DagorAssetsExtractor::App
         app.texturePreview.entryOffset = 0;
         app.texturePreview.sourceWidth = 0;
         app.texturePreview.sourceHeight = 0;
+        app.texturePreview.sourceSize = 0;
         app.texturePreview.mipCount = 0;
         app.texturePreview.format.clear();
         app.texturePreview.compression.clear();
+        app.texturePreview.srgb = false;
         app.texturePreview.loading = false;
         app.texturePreview.error.clear();
         app.texturePreview.warnings.clear();
         app.texturePreview.pendingImage.reset();
+        app.texturePreview.windowOpen = false;
     }
 
     TexturePreviewSnapshot SnapshotTexturePreview(AppState& app)
@@ -2332,9 +2339,11 @@ namespace DagorAssetsExtractor::App
         snapshot.entryOffset = app.texturePreview.entryOffset;
         snapshot.sourceWidth = app.texturePreview.sourceWidth;
         snapshot.sourceHeight = app.texturePreview.sourceHeight;
+        snapshot.sourceSize = app.texturePreview.sourceSize;
         snapshot.mipCount = app.texturePreview.mipCount;
         snapshot.format = app.texturePreview.format;
         snapshot.compression = app.texturePreview.compression;
+        snapshot.srgb = app.texturePreview.srgb;
         snapshot.loading = app.texturePreview.loading;
         snapshot.error = app.texturePreview.error;
         snapshot.warnings = app.texturePreview.warnings;
@@ -2357,6 +2366,443 @@ namespace DagorAssetsExtractor::App
             app.texturePreview.error = std::move(error);
         }
     }
+
+    void RequestModelPreview(
+        AppState& app,
+        const std::filesystem::path& packPath,
+        const AssetIndex::SubAssetRecord& entry)
+    {
+        uint64_t generation = 0;
+        {
+            std::lock_guard<std::mutex> lock(app.modelPreview.mutex);
+            generation = ++app.modelPreview.generation;
+            app.modelPreview.packPath = packPath;
+            app.modelPreview.entryName = entry.name;
+            app.modelPreview.loading = true;
+            app.modelPreview.popupOpen = true;
+            app.modelPreview.error.clear();
+            app.modelPreview.pendingData.reset();
+        }
+
+        app.backgroundJobs.Start("PreviewModel_" + entry.name, [&app, packPath, entry, generation]() {
+            auto data = std::make_shared<ModelPreviewData>();
+            data->generation = generation;
+            data->packPath = packPath;
+            data->entryName = entry.name;
+            data->grpClassId = entry.grpClassId;
+            data->fileSize = entry.size;
+
+            try
+            {
+                std::ifstream file(packPath, std::ios::binary);
+                if (!file)
+                {
+                    throw std::runtime_error("Could not open pack file: " + Platform::PathToUtf8(packPath));
+                }
+
+                file.seekg(static_cast<std::streamoff>(entry.offset), std::ios::beg);
+                std::vector<uint8_t> payload(entry.size);
+                if (!file.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size())))
+                {
+                    throw std::runtime_error("Could not read sub-asset payload.");
+                }
+
+                constexpr uint32_t kDynModelClassId = 0xB4B7D9C4u;
+
+                const bool isDynModel = (entry.grpClassId == kDynModelClassId) ||
+                                        (entry.grpClassId == 0 && entry.size > 8 && payload[0] == 'D' && payload[1] == 'Y' && payload[2] == 'N');
+
+                if (isDynModel)
+                {
+                    DagorFormats::DynModelReader reader(payload);
+                    reader.Parse();
+                    const auto& lods = reader.GetLods();
+                    if (lods.empty())
+                    {
+                        throw std::runtime_error("No LOD meshes found in DynModel.");
+                    }
+
+                    // Try to load skeleton to bake transforms and resolve exploded parts
+                    std::vector<DagorFormats::GeomNodeTreeNode> skeleton;
+                    std::string skeletonName = entry.name + "_skeleton";
+
+                    auto loadSkeleton = [&](const std::filesystem::path& skelPackPath, const AssetIndex::SubAssetRecord& skelEntry) -> bool
+                    {
+                        try
+                        {
+                            std::ifstream skelFile(skelPackPath, std::ios::binary);
+                            if (skelFile)
+                            {
+                                skelFile.seekg(static_cast<std::streamoff>(skelEntry.offset), std::ios::beg);
+                                std::vector<uint8_t> skelPayload(skelEntry.size);
+                                if (skelFile.read(reinterpret_cast<char*>(skelPayload.data()), skelPayload.size()))
+                                {
+                                    DagorFormats::GeomNodeTreeReader skelReader(skelPayload);
+                                    skelReader.Parse();
+                                    skeleton = skelReader.GetNodes();
+                                    return true;
+                                }
+                            }
+                        }
+                        catch (...) {}
+                        return false;
+                    };
+
+                    // Try same pack first
+                    auto samePackContents = app.packContentsCache.Get(packPath);
+                    if (!samePackContents)
+                    {
+                        auto newContents = AssetIndex::ParseGrpContents(packPath);
+                        if (newContents)
+                        {
+                            app.packContentsCache.Put(packPath, newContents);
+                            samePackContents = newContents;
+                        }
+                    }
+
+                    bool foundSkel = false;
+                    if (samePackContents)
+                    {
+                        for (const auto& e : samePackContents->entries)
+                        {
+                            constexpr uint32_t kGeomNodeTreeClassId = 0x56F81B6Du;
+                            if (e.name == skeletonName && (e.grpClassId == kGeomNodeTreeClassId || e.grpClassId == 0))
+                            {
+                                if (loadSkeleton(packPath, e))
+                                {
+                                    foundSkel = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Try other packs from lastRecords
+                    if (!foundSkel)
+                    {
+                        auto allRecords = app.lastRecords;
+                        if (allRecords)
+                        {
+                            for (const auto& record : *allRecords)
+                            {
+                                if (record.type == AssetIndex::AssetType::Grp)
+                                {
+                                    auto grpContents = app.packContentsCache.Get(record.path);
+                                    if (!grpContents)
+                                    {
+                                        auto newContents = AssetIndex::ParseGrpContents(record.path);
+                                        if (newContents)
+                                        {
+                                            app.packContentsCache.Put(record.path, newContents);
+                                            grpContents = newContents;
+                                        }
+                                    }
+                                    if (grpContents)
+                                    {
+                                        for (const auto& e : grpContents->entries)
+                                        {
+                                            constexpr uint32_t kGeomNodeTreeClassId = 0x56F81B6Du;
+                                            if (e.name == skeletonName && (e.grpClassId == kGeomNodeTreeClassId || e.grpClassId == 0))
+                                            {
+                                                if (loadSkeleton(record.path, e))
+                                                {
+                                                    foundSkel = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (foundSkel) break;
+                            }
+                        }
+                    }
+
+                    // Helper matrix math functions for baking
+                    auto TransformPointRowMajor = [](const std::array<float, 16>& matrix, const std::array<float, 3>& point) -> std::array<float, 3> {
+                        return {
+                            (matrix[0] * point[0]) + (matrix[1] * point[1]) + (matrix[2] * point[2]) + matrix[3],
+                            (matrix[4] * point[0]) + (matrix[5] * point[1]) + (matrix[6] * point[2]) + matrix[7],
+                            (matrix[8] * point[0]) + (matrix[9] * point[1]) + (matrix[10] * point[2]) + matrix[11]
+                        };
+                    };
+
+                    auto TransformDirectionRowMajor = [](const std::array<float, 16>& matrix, const std::array<float, 3>& direction) -> std::array<float, 3> {
+                        return {
+                            (matrix[0] * direction[0]) + (matrix[1] * direction[1]) + (matrix[2] * direction[2]),
+                            (matrix[4] * direction[0]) + (matrix[5] * direction[1]) + (matrix[6] * direction[2]),
+                            (matrix[8] * direction[0]) + (matrix[9] * direction[1]) + (matrix[10] * direction[2])
+                        };
+                    };
+
+                    auto MultiplyAffineRowMajor = [](const std::array<float, 16>& left, const std::array<float, 16>& right) -> std::array<float, 16> {
+                        std::array<float, 16> result = {};
+                        result[0] = (left[0] * right[0]) + (left[1] * right[4]) + (left[2] * right[8]);
+                        result[1] = (left[0] * right[1]) + (left[1] * right[5]) + (left[2] * right[9]);
+                        result[2] = (left[0] * right[2]) + (left[1] * right[6]) + (left[2] * right[10]);
+                        result[3] = (left[0] * right[3]) + (left[1] * right[7]) + (left[2] * right[11]) + left[3];
+
+                        result[4] = (left[4] * right[0]) + (left[5] * right[4]) + (left[6] * right[8]);
+                        result[5] = (left[4] * right[1]) + (left[5] * right[5]) + (left[6] * right[9]);
+                        result[6] = (left[4] * right[2]) + (left[5] * right[6]) + (left[6] * right[10]);
+                        result[7] = (left[4] * right[3]) + (left[5] * right[7]) + (left[6] * right[11]) + left[7];
+
+                        result[8] = (left[8] * right[0]) + (left[9] * right[4]) + (left[10] * right[8]);
+                        result[9] = (left[8] * right[1]) + (left[9] * right[5]) + (left[10] * right[9]);
+                        result[10] = (left[8] * right[2]) + (left[9] * right[6]) + (left[10] * right[10]);
+                        result[11] = (left[8] * right[3]) + (left[9] * right[7]) + (left[10] * right[11]) + left[11];
+
+                        result[15] = 1.0f;
+                        return result;
+                    };
+
+                    auto NormalizeVec3 = [](std::array<float, 3>& value) {
+                        float length = std::sqrt((value[0] * value[0]) + (value[1] * value[1]) + (value[2] * value[2]));
+                        if (std::isfinite(length) && length > 1e-6f)
+                        {
+                            float invL = 1.0f / length;
+                            value[0] *= invL;
+                            value[1] *= invL;
+                            value[2] *= invL;
+                            return true;
+                        }
+                        value = { 0.0f, 0.0f, 0.0f };
+                        return false;
+                    };
+
+                    auto hasOnlyRootWeights = [](const DagorFormats::DynModelMesh& mesh) -> bool {
+                        return std::all_of(mesh.vertices.begin(), mesh.vertices.end(), [](const DagorFormats::SkinnedVertex& vertex) {
+                            return vertex.jointIndices[0] == 0 &&
+                                   vertex.jointIndices[1] == 0 &&
+                                   vertex.jointIndices[2] == 0 &&
+                                   vertex.jointIndices[3] == 0 &&
+                                   std::fabs(vertex.jointWeights[0] - 1.0f) <= 1e-5f &&
+                                   std::fabs(vertex.jointWeights[1]) <= 1e-5f &&
+                                   std::fabs(vertex.jointWeights[2]) <= 1e-5f &&
+                                   std::fabs(vertex.jointWeights[3]) <= 1e-5f;
+                        });
+                    };
+
+                    std::unordered_map<std::string, size_t> skeletonNodeLookup;
+                    if (!skeleton.empty())
+                    {
+                        for (size_t i = 0; i < skeleton.size(); ++i)
+                        {
+                            skeletonNodeLookup[skeleton[i].name] = i;
+                        }
+                    }
+
+                    data->subMeshCount = 0;
+                    uint32_t vertexOffset = 0;
+                    for (const auto& mesh : lods)
+                    {
+                        data->subMeshCount += static_cast<uint32_t>(mesh.primitives.size());
+                        size_t startSize = data->vertices.size();
+                        data->vertices.resize(startSize + mesh.vertices.size());
+
+                        uint16_t parentJoint = 0xFFFFu;
+                        if (!skeleton.empty() && !mesh.parentNodeName.empty())
+                        {
+                            auto it = skeletonNodeLookup.find(mesh.parentNodeName);
+                            if (it != skeletonNodeLookup.end())
+                            {
+                                parentJoint = static_cast<uint16_t>(it->second);
+                            }
+                        }
+
+                        const bool hasPlaceholderWeights = mesh.useSkinning && hasOnlyRootWeights(mesh);
+                        const bool hasExplicitSkin = mesh.useSkinning && !mesh.skinJointNodeNames.empty() &&
+                                                    mesh.skinJointNodeNames.size() == mesh.skinInverseBindTransforms.size();
+
+                        const bool bakeBindPoseSkin = !skeleton.empty() && hasExplicitSkin && !hasPlaceholderWeights;
+                        const bool bakeRigidTransform = !skeleton.empty() && parentJoint != 0xFFFFu && (!mesh.useSkinning || hasPlaceholderWeights);
+
+                        for (size_t i = 0; i < mesh.vertices.size(); ++i)
+                        {
+                            const auto& v = mesh.vertices[i];
+                            std::array<float, 3> pos = { v.x, v.y, v.z };
+                            std::array<float, 3> norm = { v.nx, v.ny, v.nz };
+
+                            if (bakeBindPoseSkin)
+                            {
+                                std::array<float, 3> bakedPosition = { 0.0f, 0.0f, 0.0f };
+                                std::array<float, 3> bakedNormal = { 0.0f, 0.0f, 0.0f };
+                                float totalWeight = 0.0f;
+
+                                for (int jointSlot = 0; jointSlot < 4; ++jointSlot)
+                                {
+                                    const float weight = v.jointWeights[jointSlot];
+                                    const uint16_t skinJointIndex = v.jointIndices[jointSlot];
+                                    if (!std::isfinite(weight) || weight <= 1e-6f ||
+                                        skinJointIndex >= mesh.skinJointNodeNames.size())
+                                    {
+                                        continue;
+                                    }
+
+                                    const std::string& jointName = mesh.skinJointNodeNames[skinJointIndex];
+                                    auto jointIt = skeletonNodeLookup.find(jointName);
+                                    if (jointIt == skeletonNodeLookup.end())
+                                    {
+                                        continue;
+                                    }
+
+                                    const size_t skeletonJoint = jointIt->second;
+                                    const std::array<float, 16>& worldM = skeleton[skeletonJoint].worldTransform;
+                                    const std::array<float, 16>& invBM = mesh.skinInverseBindTransforms[skinJointIndex];
+
+                                    std::array<float, 16> skinM = MultiplyAffineRowMajor(worldM, invBM);
+
+                                    std::array<float, 3> transPos = TransformPointRowMajor(skinM, pos);
+                                    std::array<float, 3> transNorm = TransformDirectionRowMajor(skinM, norm);
+
+                                    bakedPosition[0] += transPos[0] * weight;
+                                    bakedPosition[1] += transPos[1] * weight;
+                                    bakedPosition[2] += transPos[2] * weight;
+
+                                    bakedNormal[0] += transNorm[0] * weight;
+                                    bakedNormal[1] += transNorm[1] * weight;
+                                    bakedNormal[2] += transNorm[2] * weight;
+
+                                    totalWeight += weight;
+                                }
+
+                                if (totalWeight > 1e-6f)
+                                {
+                                    const float invWeight = 1.0f / totalWeight;
+                                    pos[0] = bakedPosition[0] * invWeight;
+                                    pos[1] = bakedPosition[1] * invWeight;
+                                    pos[2] = bakedPosition[2] * invWeight;
+                                    norm[0] = bakedNormal[0] * invWeight;
+                                    norm[1] = bakedNormal[1] * invWeight;
+                                    norm[2] = bakedNormal[2] * invWeight;
+                                    NormalizeVec3(norm);
+                                }
+                            }
+                            else if (bakeRigidTransform)
+                            {
+                                const std::array<float, 16>& worldM = skeleton[parentJoint].worldTransform;
+                                pos = TransformPointRowMajor(worldM, pos);
+                                norm = TransformDirectionRowMajor(worldM, norm);
+                                NormalizeVec3(norm);
+                            }
+
+                            data->vertices[startSize + i].pos[0] = pos[0];
+                            data->vertices[startSize + i].pos[1] = pos[1];
+                            data->vertices[startSize + i].pos[2] = pos[2];
+                            data->vertices[startSize + i].normal[0] = norm[0];
+                            data->vertices[startSize + i].normal[1] = norm[1];
+                            data->vertices[startSize + i].normal[2] = norm[2];
+                        }
+                        for (const auto& idx : mesh.indices)
+                        {
+                            data->indices.push_back(idx + vertexOffset);
+                        }
+                        vertexOffset = static_cast<uint32_t>(data->vertices.size());
+                    }
+                }
+                else
+                {
+                    DagorFormats::RendInstReader reader(payload);
+                    reader.Parse();
+                    const auto& lods = reader.GetLods();
+                    if (lods.empty())
+                    {
+                        throw std::runtime_error("No LOD meshes found in RendInst.");
+                    }
+
+                    const auto& lod0 = lods[0];
+                    data->subMeshCount = static_cast<uint32_t>(lod0.primitives.size());
+                    data->vertices.resize(lod0.vertices.size());
+                    for (size_t i = 0; i < lod0.vertices.size(); ++i)
+                    {
+                        data->vertices[i].pos[0] = lod0.vertices[i].x;
+                        data->vertices[i].pos[1] = lod0.vertices[i].y;
+                        data->vertices[i].pos[2] = lod0.vertices[i].z;
+                        data->vertices[i].normal[0] = lod0.vertices[i].nx;
+                        data->vertices[i].normal[1] = lod0.vertices[i].ny;
+                        data->vertices[i].normal[2] = lod0.vertices[i].nz;
+                    }
+                    data->indices = lod0.indices;
+                }
+
+                // Compute bounding box
+                float minX = 1e30f, minY = 1e30f, minZ = 1e30f;
+                float maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f;
+                if (!data->vertices.empty())
+                {
+                    for (const auto& v : data->vertices)
+                    {
+                        minX = std::min(minX, v.pos[0]);
+                        minY = std::min(minY, v.pos[1]);
+                        minZ = std::min(minZ, v.pos[2]);
+                        maxX = std::max(maxX, v.pos[0]);
+                        maxY = std::max(maxY, v.pos[1]);
+                        maxZ = std::max(maxZ, v.pos[2]);
+                    }
+                    data->bboxMin[0] = minX; data->bboxMin[1] = minY; data->bboxMin[2] = minZ;
+                    data->bboxMax[0] = maxX; data->bboxMax[1] = maxY; data->bboxMax[2] = maxZ;
+                }
+                else
+                {
+                    data->bboxMin[0] = data->bboxMin[1] = data->bboxMin[2] = 0.0f;
+                    data->bboxMax[0] = data->bboxMax[1] = data->bboxMax[2] = 0.0f;
+                }
+
+                std::lock_guard<std::mutex> lock(app.modelPreview.mutex);
+                if (app.modelPreview.generation == generation)
+                {
+                    app.modelPreview.loading = false;
+                    app.modelPreview.pendingData = std::move(data);
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                std::lock_guard<std::mutex> lock(app.modelPreview.mutex);
+                if (app.modelPreview.generation == generation)
+                {
+                    app.modelPreview.loading = false;
+                    app.modelPreview.error = ex.what();
+                }
+            }
+        });
+    }
+
+    void ClearModelPreview(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.modelPreview.mutex);
+        ++app.modelPreview.generation;
+        app.modelPreview.packPath.clear();
+        app.modelPreview.entryName.clear();
+        app.modelPreview.loading = false;
+        app.modelPreview.error.clear();
+        app.modelPreview.pendingData.reset();
+
+        app.modelPreview.vertexCount = 0;
+        app.modelPreview.indexCount = 0;
+        app.modelPreview.grpClassId = 0;
+        app.modelPreview.subMeshCount = 0;
+        app.modelPreview.fileSize = 0;
+        app.modelPreview.bboxMin[0] = app.modelPreview.bboxMin[1] = app.modelPreview.bboxMin[2] = 0.0f;
+        app.modelPreview.bboxMax[0] = app.modelPreview.bboxMax[1] = app.modelPreview.bboxMax[2] = 0.0f;
+    }
+
+    std::shared_ptr<ModelPreviewData> TakePendingModelPreview(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.modelPreview.mutex);
+        auto data = std::move(app.modelPreview.pendingData);
+        app.modelPreview.pendingData.reset();
+        return data;
+    }
+
+    void SetModelPreviewUploadError(AppState& app, uint64_t generation, std::string error)
+    {
+        std::lock_guard<std::mutex> lock(app.modelPreview.mutex);
+        if (app.modelPreview.generation == generation)
+        {
+            app.modelPreview.error = std::move(error);
+        }
+    }
+
 
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)
     {

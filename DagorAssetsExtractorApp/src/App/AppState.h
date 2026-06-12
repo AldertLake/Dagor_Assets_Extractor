@@ -174,9 +174,11 @@ namespace DagorAssetsExtractor::App
         uint32_t entryOffset = 0;
         uint32_t sourceWidth = 0;
         uint32_t sourceHeight = 0;
+        uint32_t sourceSize = 0;
         uint8_t mipCount = 0;
         std::string format;
         std::string compression;
+        bool srgb = false;
         bool loading = false;
         std::string error;
         std::vector<std::string> warnings;
@@ -191,19 +193,92 @@ namespace DagorAssetsExtractor::App
         uint32_t entryOffset = 0;
         uint32_t sourceWidth = 0;
         uint32_t sourceHeight = 0;
+        uint32_t sourceSize = 0;
         uint8_t mipCount = 0;
         std::string format;
         std::string compression;
+        bool srgb = false;
         bool loading = false;
         std::string error;
         std::vector<std::string> warnings;
         std::shared_ptr<TexturePreviewImage> pendingImage;
 
         // Main-thread-only viewer preferences.
+        bool windowOpen = false;
         bool fitToWindow = true;
         bool checkerboard = true;
         float zoom = 1.0f;
     };
+
+    struct ModelPreviewVertex
+    {
+        float pos[3];
+        float normal[3];
+    };
+
+    struct ModelPreviewData
+    {
+        uint64_t generation = 0;
+        std::filesystem::path packPath;
+        std::string entryName;
+        std::vector<ModelPreviewVertex> vertices;
+        std::vector<uint32_t> indices;
+        float bboxMin[3] = { 0.0f, 0.0f, 0.0f };
+        float bboxMax[3] = { 0.0f, 0.0f, 0.0f };
+        uint32_t grpClassId = 0;
+        uint32_t subMeshCount = 0;
+        size_t fileSize = 0;
+    };
+
+    struct ModelPreviewLighting
+    {
+        float lightYaw = 45.0f;
+        float lightPitch = 45.0f;
+        float keyColor[3] = { 1.00f, 0.96f, 0.90f };
+        float fillColor[3] = { 0.60f, 0.72f, 0.85f };
+        float ambientColor[3] = { 0.18f, 0.20f, 0.23f };
+        float baseColor[3] = { 0.62f, 0.66f, 0.72f };
+        float specIntensity = 0.45f;
+        float specPower = 32.0f;
+        float backgroundColor[3] = { 0.12f, 0.13f, 0.15f };
+    };
+
+    struct ModelPreviewState
+    {
+        std::mutex mutex;
+        uint64_t generation = 0;
+        std::filesystem::path packPath;
+        std::string entryName;
+        bool loading = false;
+        bool popupOpen = false;
+        std::string error;
+        std::shared_ptr<ModelPreviewData> pendingData;
+
+        // Current loaded model stats
+        uint32_t vertexCount = 0;
+        uint32_t indexCount = 0;
+        uint32_t grpClassId = 0;
+        uint32_t subMeshCount = 0;
+        size_t fileSize = 0;
+        float bboxMin[3] = { 0.0f, 0.0f, 0.0f };
+        float bboxMax[3] = { 0.0f, 0.0f, 0.0f };
+
+        // Camera control preferences.
+        float yaw = 45.0f;
+        float pitch = 30.0f;
+        float zoom = 5.0f;
+        float panX = 0.0f;
+        float panY = 0.0f;
+        bool wireframe = false;
+
+        // Performance statistics
+        float renderLatencyMs = 0.0f;
+        float frameTimes[90] = {};
+        float latencyTimes[90] = {};
+        int statOffset = 0;
+        ModelPreviewLighting lighting;
+    };
+
 
     struct AppState
     {
@@ -263,6 +338,7 @@ namespace DagorAssetsExtractor::App
         ProgressJobState progressJob;
         ExportProgressState exportProgress;
         TexturePreviewState texturePreview;
+        ModelPreviewState modelPreview;
         std::optional<PendingDynModelExport> pendingDynModelExport;
         Jobs::JobSystem backgroundJobs;
     };
@@ -296,6 +372,12 @@ namespace DagorAssetsExtractor::App
     TexturePreviewSnapshot SnapshotTexturePreview(AppState& app);
     std::shared_ptr<TexturePreviewImage> TakePendingTexturePreview(AppState& app);
     void SetTexturePreviewUploadError(AppState& app, uint64_t generation, std::string error);
+
+    void RequestModelPreview(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
+    void ClearModelPreview(AppState& app);
+    std::shared_ptr<ModelPreviewData> TakePendingModelPreview(AppState& app);
+    void SetModelPreviewUploadError(AppState& app, uint64_t generation, std::string error);
+
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel);

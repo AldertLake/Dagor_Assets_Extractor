@@ -4,6 +4,7 @@
 #include "App/AppState.h"
 #include "Platform/Platform.h"
 #include "UI/UI.h"
+#include "UI/ModelRenderer.h"
 
 #include "imgui.h"
 #include "backends/imgui_impl_dx11.h"
@@ -274,6 +275,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(GDevice, GDeviceContext);
     DagorAssetsExtractor::UI::InitializeUiAssets(GDevice);
+    DagorAssetsExtractor::UI::InitializeModelRenderer(GDevice, GDeviceContext);
 
     AppState app;
     app.hwnd = hwnd;
@@ -380,6 +382,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         }
     }
 
+    DagorAssetsExtractor::UI::ShutdownModelRenderer();
     DagorAssetsExtractor::UI::ShutdownUiAssets();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

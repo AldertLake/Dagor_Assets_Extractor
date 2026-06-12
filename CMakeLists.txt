@@ -31,6 +31,8 @@ list(REMOVE_ITEM DAGOR_CORE_SOURCES
     "${APP_SRC_DIR}/UI/UI.h"
     "${APP_SRC_DIR}/UI/UiAssets.cpp"
     "${APP_SRC_DIR}/UI/UiAssets.h"
+    "${APP_SRC_DIR}/UI/ModelRenderer.cpp"
+    "${APP_SRC_DIR}/UI/ModelRenderer.h"
 )
 
 set(DAGOR_UI_SOURCES
@@ -38,6 +40,8 @@ set(DAGOR_UI_SOURCES
     "${APP_SRC_DIR}/UI/UI.h"
     "${APP_SRC_DIR}/UI/UiAssets.cpp"
     "${APP_SRC_DIR}/UI/UiAssets.h"
+    "${APP_SRC_DIR}/UI/ModelRenderer.cpp"
+    "${APP_SRC_DIR}/UI/ModelRenderer.h"
 )
 
 set(DAGOR_IMGUI_SOURCES
