@@ -31,6 +31,8 @@ namespace DagorAssetsExtractor::UI
 
         std::array<OwnedUiIcon, kIconCount> g_ownedIcons;
         std::array<UiIcon, kIconCount> g_publicIcons;
+        ComPtr<ID3D11ShaderResourceView> g_texturePreviewView;
+        UiTexture g_texturePreview;
         ID3D11Device* g_device = nullptr;
 
         size_t ToIndex(UiIconId id)
@@ -54,12 +56,15 @@ namespace DagorAssetsExtractor::UI
         }
 
         bool CreateTextureFromBgra(
-            const std::vector<uint8_t>& pixels,
+            const uint8_t* pixels,
             uint32_t width,
             uint32_t height,
+            uint32_t stride,
+            bool srgb,
             ComPtr<ID3D11ShaderResourceView>& outView)
         {
-            if (g_device == nullptr || width == 0 || height == 0 || pixels.empty())
+            if (g_device == nullptr || pixels == nullptr || width == 0 || height == 0 ||
+                stride < width * 4u)
             {
                 return false;
             }
@@ -69,14 +74,16 @@ namespace DagorAssetsExtractor::UI
             textureDesc.Height = height;
             textureDesc.MipLevels = 1;
             textureDesc.ArraySize = 1;
-            textureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            textureDesc.Format = srgb
+                ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+                : DXGI_FORMAT_B8G8R8A8_UNORM;
             textureDesc.SampleDesc.Count = 1;
             textureDesc.Usage = D3D11_USAGE_IMMUTABLE;
             textureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
             D3D11_SUBRESOURCE_DATA subresource = {};
-            subresource.pSysMem = pixels.data();
-            subresource.SysMemPitch = width * 4;
+            subresource.pSysMem = pixels;
+            subresource.SysMemPitch = stride;
 
             ComPtr<ID3D11Texture2D> texture;
             if (FAILED(g_device->CreateTexture2D(&textureDesc, &subresource, &texture)))
@@ -90,6 +97,21 @@ namespace DagorAssetsExtractor::UI
             }
 
             return true;
+        }
+
+        bool CreateTextureFromBgra(
+            const std::vector<uint8_t>& pixels,
+            uint32_t width,
+            uint32_t height,
+            ComPtr<ID3D11ShaderResourceView>& outView)
+        {
+            return CreateTextureFromBgra(
+                pixels.data(),
+                width,
+                height,
+                width * 4u,
+                false,
+                outView);
         }
 
         bool LoadPngTexture(const fs::path& path, ComPtr<ID3D11ShaderResourceView>& outView)
@@ -231,6 +253,7 @@ namespace DagorAssetsExtractor::UI
 
     void ShutdownUiAssets()
     {
+        ClearTexturePreview();
         ClearIcons();
         g_device = nullptr;
     }
@@ -250,5 +273,36 @@ namespace DagorAssetsExtractor::UI
         }
 
         return &g_publicIcons[ToIndex(UiIconId::Invalid)];
+    }
+
+    bool UpdateTexturePreview(
+        const uint8_t* bgraPixels,
+        uint32_t width,
+        uint32_t height,
+        uint32_t stride,
+        bool srgb)
+    {
+        ComPtr<ID3D11ShaderResourceView> view;
+        if (!CreateTextureFromBgra(bgraPixels, width, height, stride, srgb, view))
+        {
+            return false;
+        }
+
+        g_texturePreviewView = std::move(view);
+        g_texturePreview.view = g_texturePreviewView.Get();
+        g_texturePreview.width = width;
+        g_texturePreview.height = height;
+        return true;
+    }
+
+    void ClearTexturePreview()
+    {
+        g_texturePreviewView.Reset();
+        g_texturePreview = {};
+    }
+
+    const UiTexture* GetTexturePreview()
+    {
+        return g_texturePreview.view != nullptr ? &g_texturePreview : nullptr;
     }
 }

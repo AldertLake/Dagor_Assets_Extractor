@@ -153,6 +153,58 @@ namespace DagorAssetsExtractor::App
         bool openRequested = false;
     };
 
+    struct TexturePreviewImage
+    {
+        uint64_t generation = 0;
+        std::filesystem::path packPath;
+        std::string entryName;
+        uint32_t entryOffset = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t stride = 0;
+        bool srgb = false;
+        std::vector<uint8_t> bgraPixels;
+    };
+
+    struct TexturePreviewSnapshot
+    {
+        uint64_t generation = 0;
+        std::filesystem::path packPath;
+        std::string entryName;
+        uint32_t entryOffset = 0;
+        uint32_t sourceWidth = 0;
+        uint32_t sourceHeight = 0;
+        uint8_t mipCount = 0;
+        std::string format;
+        std::string compression;
+        bool loading = false;
+        std::string error;
+        std::vector<std::string> warnings;
+    };
+
+    struct TexturePreviewState
+    {
+        std::mutex mutex;
+        uint64_t generation = 0;
+        std::filesystem::path packPath;
+        std::string entryName;
+        uint32_t entryOffset = 0;
+        uint32_t sourceWidth = 0;
+        uint32_t sourceHeight = 0;
+        uint8_t mipCount = 0;
+        std::string format;
+        std::string compression;
+        bool loading = false;
+        std::string error;
+        std::vector<std::string> warnings;
+        std::shared_ptr<TexturePreviewImage> pendingImage;
+
+        // Main-thread-only viewer preferences.
+        bool fitToWindow = true;
+        bool checkerboard = true;
+        float zoom = 1.0f;
+    };
+
     struct AppState
     {
         void* hwnd = nullptr; // Using void* to avoid Windows.h include here
@@ -210,6 +262,7 @@ namespace DagorAssetsExtractor::App
         DescriptorResourceLinkState descriptorLinks;
         ProgressJobState progressJob;
         ExportProgressState exportProgress;
+        TexturePreviewState texturePreview;
         std::optional<PendingDynModelExport> pendingDynModelExport;
         Jobs::JobSystem backgroundJobs;
     };
@@ -238,6 +291,11 @@ namespace DagorAssetsExtractor::App
     void JoinFinishedScan(AppState& app);
     void ClearResourceIndex(AppState& app, std::string status);
     void RequestPackContents(AppState& app, const std::filesystem::path& packPath, AssetIndex::AssetType type);
+    void RequestTexturePreview(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
+    void ClearTexturePreview(AppState& app);
+    TexturePreviewSnapshot SnapshotTexturePreview(AppState& app);
+    std::shared_ptr<TexturePreviewImage> TakePendingTexturePreview(AppState& app);
+    void SetTexturePreviewUploadError(AppState& app, uint64_t generation, std::string error);
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel);

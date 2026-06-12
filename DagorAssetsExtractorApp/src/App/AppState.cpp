@@ -1179,6 +1179,7 @@ namespace DagorAssetsExtractor::App
         app.scan.completed.store(false);
         app.scan.failed.store(false);
         app.packContentsCache.Clear();
+        ClearTexturePreview(app);
 
         {
             std::lock_guard<std::mutex> lock(app.blkLinks.mutex);
@@ -1526,6 +1527,15 @@ namespace DagorAssetsExtractor::App
         options.overwrite = true;
         options.useOodleFromGameFolder = false;
         options.exportJsonManifest = app.settings.exportJsonManifest;
+        return options;
+    }
+
+    Export::TexturePreviewOptions GetTexturePreviewOptions(const AppState& app)
+    {
+        Export::TexturePreviewOptions options;
+        options.gameRoot = app.settings.gameRoot;
+        options.oodleDllPath = DagorIO::Decompressor::FindBundledOodleDll();
+        options.useOodleFromGameFolder = false;
         return options;
     }
 
@@ -2216,6 +2226,136 @@ namespace DagorAssetsExtractor::App
         }
 
         return resolvedClips;
+    }
+
+    void RequestTexturePreview(
+        AppState& app,
+        const std::filesystem::path& packPath,
+        const AssetIndex::SubAssetRecord& entry)
+    {
+        constexpr uint64_t MaxDecodedPreviewBytes = 256ull * 1024ull * 1024ull;
+
+        uint64_t generation = 0;
+        {
+            std::lock_guard<std::mutex> lock(app.texturePreview.mutex);
+            generation = ++app.texturePreview.generation;
+            app.texturePreview.packPath = packPath;
+            app.texturePreview.entryName = entry.name;
+            app.texturePreview.entryOffset = entry.offset;
+            app.texturePreview.sourceWidth = entry.texWidth;
+            app.texturePreview.sourceHeight = entry.texHeight;
+            app.texturePreview.mipCount = entry.texMips;
+            app.texturePreview.format = entry.texFormat;
+            app.texturePreview.compression = entry.texCompression;
+            app.texturePreview.loading = true;
+            app.texturePreview.error.clear();
+            app.texturePreview.warnings.clear();
+            app.texturePreview.pendingImage.reset();
+        }
+
+        const uint64_t decodedBytes =
+            static_cast<uint64_t>(entry.texWidth) *
+            static_cast<uint64_t>(entry.texHeight) * 4ull;
+        if (decodedBytes == 0 || decodedBytes > MaxDecodedPreviewBytes)
+        {
+            std::lock_guard<std::mutex> lock(app.texturePreview.mutex);
+            if (app.texturePreview.generation == generation)
+            {
+                app.texturePreview.loading = false;
+                app.texturePreview.error = decodedBytes == 0
+                    ? "Texture dimensions are unavailable; reload the DXP contents."
+                    : "Texture exceeds the 256 MB decoded preview limit.";
+            }
+            return;
+        }
+
+        const Export::TexturePreviewOptions options = GetTexturePreviewOptions(app);
+        app.backgroundJobs.Start("PreviewTexture_" + entry.name, [&app, packPath, entry, options, generation]() {
+            Export::TexturePreviewResult result =
+                Export::TextureExporter::DecodePreview(packPath, entry, options);
+
+            std::lock_guard<std::mutex> lock(app.texturePreview.mutex);
+            if (app.texturePreview.generation != generation)
+            {
+                return;
+            }
+
+            app.texturePreview.loading = false;
+            app.texturePreview.error = std::move(result.error);
+            app.texturePreview.warnings = std::move(result.warnings);
+            app.texturePreview.pendingImage.reset();
+
+            if (!result.success)
+            {
+                return;
+            }
+
+            auto image = std::make_shared<TexturePreviewImage>();
+            image->generation = generation;
+            image->packPath = packPath;
+            image->entryName = entry.name;
+            image->entryOffset = entry.offset;
+            image->width = result.width;
+            image->height = result.height;
+            image->stride = result.stride;
+            image->srgb = result.srgb;
+            image->bgraPixels = std::move(result.bgraPixels);
+            app.texturePreview.pendingImage = std::move(image);
+        });
+    }
+
+    void ClearTexturePreview(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.texturePreview.mutex);
+        ++app.texturePreview.generation;
+        app.texturePreview.packPath.clear();
+        app.texturePreview.entryName.clear();
+        app.texturePreview.entryOffset = 0;
+        app.texturePreview.sourceWidth = 0;
+        app.texturePreview.sourceHeight = 0;
+        app.texturePreview.mipCount = 0;
+        app.texturePreview.format.clear();
+        app.texturePreview.compression.clear();
+        app.texturePreview.loading = false;
+        app.texturePreview.error.clear();
+        app.texturePreview.warnings.clear();
+        app.texturePreview.pendingImage.reset();
+    }
+
+    TexturePreviewSnapshot SnapshotTexturePreview(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.texturePreview.mutex);
+        TexturePreviewSnapshot snapshot;
+        snapshot.generation = app.texturePreview.generation;
+        snapshot.packPath = app.texturePreview.packPath;
+        snapshot.entryName = app.texturePreview.entryName;
+        snapshot.entryOffset = app.texturePreview.entryOffset;
+        snapshot.sourceWidth = app.texturePreview.sourceWidth;
+        snapshot.sourceHeight = app.texturePreview.sourceHeight;
+        snapshot.mipCount = app.texturePreview.mipCount;
+        snapshot.format = app.texturePreview.format;
+        snapshot.compression = app.texturePreview.compression;
+        snapshot.loading = app.texturePreview.loading;
+        snapshot.error = app.texturePreview.error;
+        snapshot.warnings = app.texturePreview.warnings;
+        return snapshot;
+    }
+
+    std::shared_ptr<TexturePreviewImage> TakePendingTexturePreview(AppState& app)
+    {
+        std::lock_guard<std::mutex> lock(app.texturePreview.mutex);
+        std::shared_ptr<TexturePreviewImage> image = std::move(app.texturePreview.pendingImage);
+        app.texturePreview.pendingImage.reset();
+        return image;
+    }
+
+    void SetTexturePreviewUploadError(AppState& app, uint64_t generation, std::string error)
+    {
+        std::lock_guard<std::mutex> lock(app.texturePreview.mutex);
+        if (app.texturePreview.generation == generation)
+        {
+            app.texturePreview.error = std::move(error);
+        }
     }
 
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry)

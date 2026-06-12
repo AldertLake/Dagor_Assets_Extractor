@@ -1085,6 +1085,281 @@ namespace DagorAssetsExtractor::Export
             return out.str();
         }
 
+        enum class TexturePreparationFailure
+        {
+            None,
+            OodleUnavailable,
+            OodleDecompressionFailed,
+        };
+
+        struct PreparedTexturePayload
+        {
+            DagorFormats::DdsxHeader header;
+            std::vector<uint8_t> payload;
+            std::vector<uint8_t> rawPackPayload;
+            std::vector<std::string> warnings;
+            std::string error;
+            size_t packPayloadSize = 0;
+            TexturePreparationFailure failure = TexturePreparationFailure::None;
+        };
+
+        bool PrepareTexturePayload(
+            const std::filesystem::path& packPath,
+            const AssetIndex::SubAssetRecord& entry,
+            const std::filesystem::path& gameRootPath,
+            const std::filesystem::path& oodleDllPathValue,
+            bool useOodleFromGameFolder,
+            PreparedTexturePayload& prepared)
+        {
+            if (entry.ddsxHeader.size() < 32)
+            {
+                prepared.error = "Missing DDSx header metadata for DXP entry. Reload the DXP contents before exporting.";
+                return false;
+            }
+
+            std::ifstream file(packPath, std::ios::binary | std::ios::ate);
+            if (!file)
+            {
+                prepared.error = "Could not open pack file: " + Platform::PathToUtf8(packPath);
+                return false;
+            }
+
+            const std::streampos endPos = file.tellg();
+            if (endPos < 0)
+            {
+                prepared.error = "Could not determine pack file size.";
+                return false;
+            }
+
+            const uintmax_t fileSize = static_cast<uintmax_t>(endPos);
+            const uintmax_t entryOffset = entry.offset;
+            const uintmax_t entrySize = entry.size;
+
+            if (entrySize == 0)
+            {
+                prepared.error = "DXP entry has no payload data.";
+                return false;
+            }
+
+            if (entryOffset > fileSize || entrySize > fileSize - entryOffset)
+            {
+                prepared.error = "DXP entry payload is outside the pack file bounds.";
+                return false;
+            }
+
+            DagorFormats::DdsxReader reader(entry.ddsxHeader);
+            reader.Parse();
+            prepared.header = reader.GetHeader();
+
+            file.seekg(static_cast<std::streamoff>(entry.offset), std::ios::beg);
+            prepared.rawPackPayload.resize(entry.size);
+            if (!file.read(
+                    reinterpret_cast<char*>(prepared.rawPackPayload.data()),
+                    static_cast<std::streamsize>(prepared.rawPackPayload.size())))
+            {
+                prepared.error = "Could not read DDSx payload data from pack.";
+                return false;
+            }
+            prepared.packPayloadSize = prepared.rawPackPayload.size();
+
+            if (prepared.header.IsCompressed())
+            {
+                if (prepared.header.memorySize == 0)
+                {
+                    prepared.error = "Compressed DDSx entry is missing decompressed payload size. " +
+                        BuildDdsxDiagnostic(prepared.header, prepared.packPayloadSize);
+                    return false;
+                }
+
+                if (prepared.header.packedSize != 0 &&
+                    prepared.header.packedSize != prepared.rawPackPayload.size())
+                {
+                    prepared.warnings.push_back(
+                        "DXP table payload size (" + std::to_string(prepared.rawPackPayload.size()) +
+                        ") differs from DDSx packed size (" + std::to_string(prepared.header.packedSize) + ").");
+                }
+
+                const std::span<const uint8_t> compressedData(
+                    prepared.rawPackPayload.data(),
+                    prepared.rawPackPayload.size());
+                const std::string gameRoot = useOodleFromGameFolder
+                    ? Platform::PathToUtf8(gameRootPath)
+                    : std::string();
+                const std::string oodleDllPath = Platform::PathToUtf8(oodleDllPathValue);
+
+                try
+                {
+                    if (prepared.header.compressionType == 1)
+                    {
+                        prepared.payload = DagorIO::Decompressor::DecompressZlib(
+                            compressedData,
+                            prepared.header.memorySize);
+                    }
+                    else if (prepared.header.compressionType == 2)
+                    {
+                        prepared.payload = DagorIO::Decompressor::DecompressZstd(
+                            compressedData,
+                            prepared.header.memorySize);
+                    }
+                    else if (prepared.header.compressionType == 3)
+                    {
+                        const std::filesystem::path oodlePath =
+                            DagorIO::Decompressor::FindOodleDll(gameRoot, oodleDllPath);
+                        if (oodlePath.empty())
+                        {
+                            prepared.failure = TexturePreparationFailure::OodleUnavailable;
+                            prepared.error =
+                                "Oodle decompression required but oo2core_6_win64.dll was not found. Checked: " +
+                                DagorIO::Decompressor::OodleSearchDescription(gameRoot, oodleDllPath) + ". " +
+                                BuildDdsxDiagnostic(prepared.header, prepared.packPayloadSize);
+                            return false;
+                        }
+                        prepared.payload = DagorIO::Decompressor::DecompressOodle(
+                            compressedData,
+                            prepared.header.memorySize,
+                            gameRoot,
+                            oodleDllPath);
+                    }
+                    else if (prepared.header.compressionType == 4)
+                    {
+                        prepared.payload = DagorIO::Decompressor::DecompressLzma(
+                            compressedData,
+                            prepared.header.memorySize);
+                    }
+                    else
+                    {
+                        prepared.error =
+                            "Unsupported DDSx compression: " +
+                            std::string(prepared.header.CompressionName()) +
+                            " (normalized type " + std::to_string(prepared.header.compressionType) + "). " +
+                            BuildDdsxDiagnostic(prepared.header, prepared.packPayloadSize);
+                        return false;
+                    }
+                }
+                catch (const std::exception& ex)
+                {
+                    if (prepared.header.compressionType == 3)
+                    {
+                        prepared.failure = TexturePreparationFailure::OodleDecompressionFailed;
+                        prepared.error = std::string("Oodle decompression failed: ") + ex.what() + ". " +
+                            BuildDdsxDiagnostic(prepared.header, prepared.packPayloadSize);
+                        return false;
+                    }
+
+                    prepared.error = std::string("DDSx decompression failed: ") + ex.what() + ". " +
+                        BuildDdsxDiagnostic(prepared.header, prepared.packPayloadSize);
+                    return false;
+                }
+
+                prepared.warnings.push_back(
+                    "Decompressed from " + std::string(prepared.header.CompressionName()) +
+                    " (" + std::to_string(prepared.rawPackPayload.size()) +
+                    " -> " + std::to_string(prepared.payload.size()) + " bytes)");
+                std::vector<uint8_t>().swap(prepared.rawPackPayload);
+            }
+            else
+            {
+                prepared.payload = std::move(prepared.rawPackPayload);
+            }
+
+            uint32_t actualMips = 0;
+            size_t accumulatedMipSize = 0;
+            std::vector<size_t> mipSizes;
+            if (CalculateDdsMipSizes(prepared.header, mipSizes))
+            {
+                for (const size_t mipSize : mipSizes)
+                {
+                    if (accumulatedMipSize + mipSize <= prepared.payload.size())
+                    {
+                        accumulatedMipSize += mipSize;
+                        ++actualMips;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (actualMips > 0 &&
+                actualMips < std::max<uint32_t>(1, prepared.header.mipCount))
+            {
+                prepared.warnings.push_back(
+                    "DDS payload size (" + std::to_string(prepared.payload.size()) +
+                    " bytes) is smaller than expected for " +
+                    std::to_string(prepared.header.mipCount) +
+                    " mip(s). Clamping mip count to " + std::to_string(actualMips) +
+                    " based on available data.");
+                prepared.header.mipCount = static_cast<uint8_t>(actualMips);
+            }
+
+            std::string mipOrderWarning;
+            std::string mipOrderError;
+            if (!NormalizeMipOrderIfNeeded(
+                    prepared.header,
+                    prepared.payload,
+                    mipOrderWarning,
+                    mipOrderError))
+            {
+                prepared.error = mipOrderError + " " +
+                    BuildDdsxDiagnostic(prepared.header, prepared.packPayloadSize);
+                return false;
+            }
+            if (!mipOrderWarning.empty())
+            {
+                prepared.warnings.push_back(std::move(mipOrderWarning));
+            }
+
+            size_t expectedPayloadSize = 0;
+            if (CalculateDdsPayloadSize(prepared.header, expectedPayloadSize))
+            {
+                if (prepared.payload.size() < expectedPayloadSize)
+                {
+                    prepared.error =
+                        "DDS payload is too small for " + std::string(prepared.header.FormatName()) +
+                        " " + std::to_string(prepared.header.width) + "x" +
+                        std::to_string(prepared.header.height) + " with " +
+                        std::to_string(std::max<uint32_t>(1, prepared.header.mipCount)) +
+                        " mip(s): expected at least " + std::to_string(expectedPayloadSize) +
+                        " bytes, got " + std::to_string(prepared.payload.size()) + ". " +
+                        BuildDdsxDiagnostic(prepared.header, prepared.packPayloadSize);
+                    return false;
+                }
+
+                if (prepared.payload.size() != expectedPayloadSize)
+                {
+                    prepared.warnings.push_back(
+                        "DDS payload size (" + std::to_string(prepared.payload.size()) +
+                        ") differs from expected mip data size (" +
+                        std::to_string(expectedPayloadSize) + ").");
+                }
+            }
+            else
+            {
+                prepared.warnings.push_back(
+                    "Could not validate DDS payload size for format code " +
+                    std::to_string(prepared.header.d3dFormat) + ".");
+            }
+
+            return true;
+        }
+
+        bool IsSrgbTextureFormat(uint32_t d3dFormat)
+        {
+            switch (d3dFormat)
+            {
+            case 29: // R8G8B8A8_UNORM_SRGB
+            case 72: // BC1_UNORM_SRGB
+            case 75: // BC2_UNORM_SRGB
+            case 78: // BC3_UNORM_SRGB
+            case 91: // B8G8R8A8_UNORM_SRGB
+            case 99: // BC7_UNORM_SRGB
+                return true;
+            default:
+                return false;
+            }
+        }
+
         bool DecodeTopMipToRaster(
             const DagorFormats::DdsxHeader& header,
             const std::vector<uint8_t>& payload,
@@ -1595,6 +1870,73 @@ namespace DagorAssetsExtractor::Export
             return true;
         }
 
+        bool NormalizeRasterToTightBgra(RasterImage& image, std::string& error)
+        {
+            if (image.width == 0 || image.height == 0)
+            {
+                error = "Decoded preview has invalid dimensions.";
+                return false;
+            }
+
+            const uint64_t tightStride64 = static_cast<uint64_t>(image.width) * 4ull;
+            const uint64_t totalBytes64 = tightStride64 * static_cast<uint64_t>(image.height);
+            if (tightStride64 > std::numeric_limits<uint32_t>::max() ||
+                totalBytes64 > std::numeric_limits<size_t>::max())
+            {
+                error = "Decoded preview is too large.";
+                return false;
+            }
+
+            const uint32_t tightStride = static_cast<uint32_t>(tightStride64);
+            std::vector<uint8_t> tightPixels(static_cast<size_t>(totalBytes64));
+
+            if (image.format == RasterPixelFormat::Gray8)
+            {
+                if (image.stride < image.width ||
+                    image.pixels.size() < static_cast<size_t>(image.stride) * image.height)
+                {
+                    error = "Decoded grayscale preview has an invalid row pitch.";
+                    return false;
+                }
+
+                for (uint32_t y = 0; y < image.height; ++y)
+                {
+                    const uint8_t* src = image.pixels.data() + static_cast<size_t>(y) * image.stride;
+                    uint8_t* dst = tightPixels.data() + static_cast<size_t>(y) * tightStride;
+                    for (uint32_t x = 0; x < image.width; ++x)
+                    {
+                        const uint8_t value = src[x];
+                        const size_t dstOffset = static_cast<size_t>(x) * 4;
+                        dst[dstOffset + 0] = value;
+                        dst[dstOffset + 1] = value;
+                        dst[dstOffset + 2] = value;
+                        dst[dstOffset + 3] = 255;
+                    }
+                }
+            }
+            else
+            {
+                if (image.stride < tightStride ||
+                    image.pixels.size() < static_cast<size_t>(image.stride) * image.height)
+                {
+                    error = "Decoded BGRA preview has an invalid row pitch.";
+                    return false;
+                }
+
+                for (uint32_t y = 0; y < image.height; ++y)
+                {
+                    const uint8_t* src = image.pixels.data() + static_cast<size_t>(y) * image.stride;
+                    uint8_t* dst = tightPixels.data() + static_cast<size_t>(y) * tightStride;
+                    std::memcpy(dst, src, tightStride);
+                }
+            }
+
+            image.stride = tightStride;
+            image.format = RasterPixelFormat::Bgra8;
+            image.pixels = std::move(tightPixels);
+            return true;
+        }
+
         bool WriteRawDdsx(
             const std::filesystem::path& outputPath,
             std::span<const uint8_t> header,
@@ -1747,198 +2089,39 @@ namespace DagorAssetsExtractor::Export
             return result;
         }
 
-        std::ifstream file(packPath, std::ios::binary | std::ios::ate);
-        if (!file)
-        {
-            result.error = "Could not open pack file: " + Platform::PathToUtf8(packPath);
-            return result;
-        }
-
-        const std::streampos endPos = file.tellg();
-        if (endPos < 0)
-        {
-            result.error = "Could not determine pack file size.";
-            return result;
-        }
-
-        const uintmax_t fileSize = static_cast<uintmax_t>(endPos);
-        const uintmax_t entryOffset = entry.offset;
-        const uintmax_t entrySize = entry.size;
-
-        if (entrySize == 0)
-        {
-            result.error = "DXP entry has no payload data.";
-            return result;
-        }
-
-        if (entryOffset > fileSize || entrySize > fileSize - entryOffset)
-        {
-            result.error = "DXP entry payload is outside the pack file bounds.";
-            return result;
-        }
-
         try
         {
-            DagorFormats::DdsxReader reader(entry.ddsxHeader);
-            reader.Parse();
-            const auto& header = reader.GetHeader();
-
-            file.seekg(static_cast<std::streamoff>(entry.offset), std::ios::beg);
-            std::vector<uint8_t> packPayload(entry.size);
-            if (!file.read(reinterpret_cast<char*>(packPayload.data()), static_cast<std::streamsize>(packPayload.size())))
+            PreparedTexturePayload prepared;
+            if (!PrepareTexturePayload(
+                    packPath,
+                    entry,
+                    options.gameRoot,
+                    options.oodleDllPath,
+                    options.useOodleFromGameFolder,
+                    prepared))
             {
-                result.error = "Could not read DDSx payload data from pack.";
+                result.warnings = std::move(prepared.warnings);
+                if (prepared.failure == TexturePreparationFailure::OodleUnavailable ||
+                    prepared.failure == TexturePreparationFailure::OodleDecompressionFailed)
+                {
+                    ExportRawDdsxFallback(
+                        result,
+                        packPath,
+                        entry,
+                        options,
+                        prepared.header,
+                        prepared.rawPackPayload,
+                        prepared.error);
+                    return result;
+                }
+
+                result.error = std::move(prepared.error);
                 return result;
             }
 
-            std::vector<uint8_t> payload;
-            if (header.IsCompressed())
-            {
-                if (header.memorySize == 0)
-                {
-                    result.error = "Compressed DDSx entry is missing decompressed payload size. " +
-                        BuildDdsxDiagnostic(header, packPayload.size());
-                    return result;
-                }
-
-                if (header.packedSize != 0 && header.packedSize != packPayload.size())
-                {
-                    result.warnings.push_back("DXP table payload size (" + std::to_string(packPayload.size()) +
-                        ") differs from DDSx packed size (" + std::to_string(header.packedSize) + ").");
-                }
-
-                std::span<const uint8_t> compressedData(packPayload.data(), packPayload.size());
-                std::string gameRoot = options.useOodleFromGameFolder
-                    ? Platform::PathToUtf8(options.gameRoot)
-                    : std::string();
-                std::string oodleDllPath = Platform::PathToUtf8(options.oodleDllPath);
-
-                try
-                {
-                    if (header.compressionType == 1) // zlib
-                    {
-                        payload = DagorIO::Decompressor::DecompressZlib(compressedData, header.memorySize);
-                    }
-                    else if (header.compressionType == 2) // zstd
-                    {
-                        payload = DagorIO::Decompressor::DecompressZstd(compressedData, header.memorySize);
-                    }
-                    else if (header.compressionType == 3) // Oodle
-                    {
-                        const std::filesystem::path oodlePath = DagorIO::Decompressor::FindOodleDll(gameRoot, oodleDllPath);
-                        if (oodlePath.empty())
-                        {
-                            const std::string reason =
-                                "Oodle decompression required but oo2core_6_win64.dll was not found. Checked: " +
-                                DagorIO::Decompressor::OodleSearchDescription(gameRoot, oodleDllPath) + ". " +
-                                BuildDdsxDiagnostic(header, packPayload.size());
-                            ExportRawDdsxFallback(result, packPath, entry, options, header, packPayload, reason);
-                            return result;
-                        }
-                        payload = DagorIO::Decompressor::DecompressOodle(compressedData, header.memorySize, gameRoot, oodleDllPath);
-                    }
-                    else if (header.compressionType == 4) // LZMA/7zip
-                    {
-                        payload = DagorIO::Decompressor::DecompressLzma(compressedData, header.memorySize);
-                    }
-                    else
-                    {
-                        result.error = "Unsupported DDSx compression: " + std::string(header.CompressionName()) +
-                            " (normalized type " + std::to_string(header.compressionType) + "). " +
-                            BuildDdsxDiagnostic(header, packPayload.size());
-                        return result;
-                    }
-                }
-                catch (const std::exception& ex)
-                {
-                    if (header.compressionType == 3)
-                    {
-                        const std::string reason = std::string("Oodle decompression failed: ") + ex.what() + ". " +
-                            BuildDdsxDiagnostic(header, packPayload.size());
-                        ExportRawDdsxFallback(result, packPath, entry, options, header, packPayload, reason);
-                        return result;
-                    }
-
-                    result.error = std::string("DDSx decompression failed: ") + ex.what() + ". " +
-                        BuildDdsxDiagnostic(header, packPayload.size());
-                    return result;
-                }
-
-                result.warnings.push_back("Decompressed from " + std::string(header.CompressionName()) +
-                    " (" + std::to_string(packPayload.size()) + " -> " + std::to_string(payload.size()) + " bytes)");
-            }
-            else
-            {
-                payload = std::move(packPayload);
-            }
-
-            // Determine how many mips actually fit in the decompressed payload
-            uint32_t actualMips = 0;
-            size_t accumulatedMipSize = 0;
-            std::vector<size_t> mipSizes;
-            if (CalculateDdsMipSizes(header, mipSizes))
-            {
-                for (size_t i = 0; i < mipSizes.size(); ++i)
-                {
-                    if (accumulatedMipSize + mipSizes[i] <= payload.size())
-                    {
-                        accumulatedMipSize += mipSizes[i];
-                        actualMips++;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-            }
-
-            DagorFormats::DdsxHeader exportHeader = header;
-            if (actualMips > 0 && actualMips < std::max<uint32_t>(1, header.mipCount))
-            {
-                result.warnings.push_back(
-                    "DDS payload size (" + std::to_string(payload.size()) +
-                    " bytes) is smaller than expected for " + std::to_string(header.mipCount) +
-                    " mip(s). Clamping mip count to " + std::to_string(actualMips) + " based on available data.");
-                exportHeader.mipCount = static_cast<uint8_t>(actualMips);
-            }
-
-            std::string mipOrderWarning;
-            std::string mipOrderError;
-            if (!NormalizeMipOrderIfNeeded(exportHeader, payload, mipOrderWarning, mipOrderError))
-            {
-                result.error = mipOrderError + " " + BuildDdsxDiagnostic(exportHeader, packPayload.size());
-                return result;
-            }
-            if (!mipOrderWarning.empty())
-            {
-                result.warnings.push_back(mipOrderWarning);
-            }
-
-            size_t expectedPayloadSize = 0;
-            if (CalculateDdsPayloadSize(exportHeader, expectedPayloadSize))
-            {
-                if (payload.size() < expectedPayloadSize)
-                {
-                    result.error = "DDS payload is too small for " + std::string(exportHeader.FormatName()) +
-                        " " + std::to_string(exportHeader.width) + "x" + std::to_string(exportHeader.height) +
-                        " with " + std::to_string(std::max<uint32_t>(1, exportHeader.mipCount)) +
-                        " mip(s): expected at least " + std::to_string(expectedPayloadSize) +
-                        " bytes, got " + std::to_string(payload.size()) + ". " +
-                        BuildDdsxDiagnostic(exportHeader, packPayload.size());
-                    return result;
-                }
-
-                if (payload.size() != expectedPayloadSize)
-                {
-                    result.warnings.push_back("DDS payload size (" + std::to_string(payload.size()) +
-                        ") differs from expected mip data size (" + std::to_string(expectedPayloadSize) + ").");
-                }
-            }
-            else
-            {
-                result.warnings.push_back("Could not validate DDS payload size for format code " +
-                    std::to_string(exportHeader.d3dFormat) + ".");
-            }
+            result.warnings = std::move(prepared.warnings);
+            const DagorFormats::DdsxHeader& exportHeader = prepared.header;
+            const std::vector<uint8_t>& payload = prepared.payload;
 
             const std::string normalizedFormat = NormalizeTextureFormat(options.format);
 
@@ -2088,6 +2271,89 @@ namespace DagorAssetsExtractor::Export
                 {
                     result.warnings.push_back("Could not write export manifest.");
                 }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            result.error = std::string("DDSx Parse Error: ") + ex.what();
+        }
+
+        return result;
+    }
+
+    TexturePreviewResult TextureExporter::DecodePreview(
+        const std::filesystem::path& packPath,
+        const AssetIndex::SubAssetRecord& entry,
+        const TexturePreviewOptions& options)
+    {
+        TexturePreviewResult result;
+
+        try
+        {
+            PreparedTexturePayload prepared;
+            if (!PrepareTexturePayload(
+                    packPath,
+                    entry,
+                    options.gameRoot,
+                    options.oodleDllPath,
+                    options.useOodleFromGameFolder,
+                    prepared))
+            {
+                result.error = std::move(prepared.error);
+                result.warnings = std::move(prepared.warnings);
+                return result;
+            }
+
+            result.warnings = std::move(prepared.warnings);
+            result.srgb = IsSrgbTextureFormat(prepared.header.d3dFormat);
+
+            RasterImage image;
+            std::string builtInError;
+            if (DecodeTopMipToRaster(prepared.header, prepared.payload, image, builtInError))
+            {
+                std::string normalizeError;
+                if (NormalizeRasterToTightBgra(image, normalizeError))
+                {
+                    result.success = true;
+                    result.width = image.width;
+                    result.height = image.height;
+                    result.stride = image.stride;
+                    result.bgraPixels = std::move(image.pixels);
+                    return result;
+                }
+                builtInError = std::move(normalizeError);
+            }
+
+            std::vector<uint8_t> ddsData;
+            RasterImage directXTexImage;
+            std::string directXTexError;
+            if (BuildDdsBuffer(
+                    prepared.header,
+                    prepared.payload,
+                    ddsData,
+                    directXTexError) &&
+                DecodeRasterWithDirectXTex(ddsData, directXTexImage, directXTexError) &&
+                NormalizeRasterToTightBgra(directXTexImage, directXTexError))
+            {
+                result.success = true;
+                result.width = directXTexImage.width;
+                result.height = directXTexImage.height;
+                result.stride = directXTexImage.stride;
+                result.bgraPixels = std::move(directXTexImage.pixels);
+                result.warnings.push_back("Texture preview transcoded via DirectXTex.");
+                return result;
+            }
+
+            result.error = builtInError;
+            if (!directXTexError.empty())
+            {
+                result.error = result.error.empty()
+                    ? directXTexError
+                    : result.error + " DirectXTex fallback also failed: " + directXTexError;
+            }
+            if (result.error.empty())
+            {
+                result.error = "Texture preview decode failed without a diagnostic.";
             }
         }
         catch (const std::exception& ex)

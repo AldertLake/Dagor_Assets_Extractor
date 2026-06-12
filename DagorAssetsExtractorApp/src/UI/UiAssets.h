@@ -34,7 +34,22 @@ namespace DagorAssetsExtractor::UI
         ID3D11ShaderResourceView* view = nullptr;
     };
 
+    struct UiTexture
+    {
+        ID3D11ShaderResourceView* view = nullptr;
+        uint32_t width = 0;
+        uint32_t height = 0;
+    };
+
     void InitializeUiAssets(ID3D11Device* device);
     void ShutdownUiAssets();
     const UiIcon* GetUiIcon(UiIconId id);
+    bool UpdateTexturePreview(
+        const uint8_t* bgraPixels,
+        uint32_t width,
+        uint32_t height,
+        uint32_t stride,
+        bool srgb);
+    void ClearTexturePreview();
+    const UiTexture* GetTexturePreview();
 }

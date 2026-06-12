@@ -35,6 +35,8 @@ namespace
     using DagorAssetsExtractor::Export::TextureExportOptions;
     using DagorAssetsExtractor::Export::TextureExporter;
     using DagorAssetsExtractor::Export::TextureExportResult;
+    using DagorAssetsExtractor::Export::TexturePreviewOptions;
+    using DagorAssetsExtractor::Export::TexturePreviewResult;
 
     [[noreturn]] void Fail(const std::string& message)
     {
@@ -261,6 +263,94 @@ namespace
         Expect(bytes.size() >= kPngSignature.size(), "PNG output is too small for " + assetName + ".");
         Expect(std::equal(kPngSignature.begin(), kPngSignature.end(), bytes.begin()),
             "Texture export did not produce a PNG signature for " + assetName + ".");
+    }
+
+    TexturePreviewResult DecodePreviewFixture(
+        const std::filesystem::path& tempRoot,
+        const std::string& assetName,
+        uint32_t d3dFormat,
+        uint16_t width,
+        uint16_t height,
+        uint16_t bitsPerPixel,
+        const std::vector<uint8_t>& payload)
+    {
+        const std::filesystem::path packPath = tempRoot / (assetName + ".preview.pack");
+        WriteFileBytes(packPath, payload);
+
+        SubAssetRecord entry;
+        entry.name = assetName;
+        entry.offset = 0;
+        entry.size = static_cast<uint32_t>(payload.size());
+        entry.ddsxHeader = BuildDdsxHeader(
+            d3dFormat,
+            width,
+            height,
+            1,
+            bitsPerPixel,
+            0u,
+            static_cast<uint32_t>(payload.size()),
+            0u);
+
+        TexturePreviewOptions options;
+        options.useOodleFromGameFolder = false;
+        return TextureExporter::DecodePreview(packPath, entry, options);
+    }
+
+    void RunTexturePreviewValidation(const std::filesystem::path& tempRoot)
+    {
+        const std::vector<uint8_t> rgbaPayload = {
+            10, 20, 30, 40,
+            50, 60, 70, 80,
+        };
+        const TexturePreviewResult rgba = DecodePreviewFixture(
+            tempRoot,
+            "rgba8_preview",
+            28u,
+            2,
+            1,
+            32u,
+            rgbaPayload);
+        Expect(rgba.success, "RGBA8 preview decode failed: " + rgba.error);
+        Expect(rgba.width == 2 && rgba.height == 1, "RGBA8 preview dimensions are incorrect.");
+        Expect(rgba.stride == 8, "RGBA8 preview stride is incorrect.");
+        Expect(rgba.bgraPixels.size() == 8, "RGBA8 preview pixel buffer size is incorrect.");
+        Expect(
+            rgba.bgraPixels[0] == 30 && rgba.bgraPixels[1] == 20 &&
+            rgba.bgraPixels[2] == 10 && rgba.bgraPixels[3] == 40,
+            "RGBA8 preview was not converted to BGRA8.");
+
+        const TexturePreviewResult gray = DecodePreviewFixture(
+            tempRoot,
+            "r8_preview",
+            61u,
+            2,
+            1,
+            8u,
+            { 0, 255 });
+        Expect(gray.success, "R8 preview decode failed: " + gray.error);
+        Expect(gray.stride == 8 && gray.bgraPixels.size() == 8, "R8 preview was not expanded to BGRA8.");
+        Expect(
+            gray.bgraPixels[0] == 0 && gray.bgraPixels[1] == 0 &&
+            gray.bgraPixels[2] == 0 && gray.bgraPixels[3] == 255 &&
+            gray.bgraPixels[4] == 255 && gray.bgraPixels[5] == 255 &&
+            gray.bgraPixels[6] == 255 && gray.bgraPixels[7] == 255,
+            "R8 preview grayscale expansion is incorrect.");
+
+        DirectX::ScratchImage rgbaImage = MakeRgbaImage();
+        const DirectX::Image* rgbaBase = rgbaImage.GetImage(0, 0, 0);
+        Expect(rgbaBase != nullptr, "BC7 preview validation image is missing.");
+        const TexturePreviewResult bc7 = DecodePreviewFixture(
+            tempRoot,
+            "bc7_preview",
+            98u,
+            4,
+            4,
+            8u,
+            CompressSingleBlock(*rgbaBase, DXGI_FORMAT_BC7_UNORM));
+        Expect(bc7.success, "BC7 preview decode failed: " + bc7.error);
+        Expect(bc7.width == 4 && bc7.height == 4 && bc7.stride == 16,
+            "BC7 preview dimensions or stride are incorrect.");
+        Expect(bc7.bgraPixels.size() == 64, "BC7 preview pixel buffer size is incorrect.");
     }
 
     std::string ExtractGlbJson(const std::filesystem::path& path)
@@ -1402,6 +1492,7 @@ int main()
     {
         const std::filesystem::path tempRoot = MakeTempRoot();
         RunStep2Validation(tempRoot);
+        RunTexturePreviewValidation(tempRoot);
         RunStep3ResolverValidation();
         RunStep3GlbValidation(tempRoot);
         RunStep3PackedNormalMapValidation(tempRoot);

@@ -3,6 +3,7 @@
 #include "AssetIndex/AssetIndex.h"
 #include "AssetIndex/PackContents.h"
 #include "DagorFormats/DdsxReader.h"
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -31,6 +32,25 @@ namespace DagorAssetsExtractor::Export
         std::vector<std::string> warnings;
     };
 
+    struct TexturePreviewOptions
+    {
+        std::filesystem::path gameRoot;
+        std::filesystem::path oodleDllPath;
+        bool useOodleFromGameFolder = true;
+    };
+
+    struct TexturePreviewResult
+    {
+        bool success = false;
+        std::string error;
+        std::vector<std::string> warnings;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t stride = 0;
+        std::vector<uint8_t> bgraPixels;
+        bool srgb = false;
+    };
+
     struct BatchTextureExportResult
     {
         size_t total = 0;
@@ -51,6 +71,11 @@ namespace DagorAssetsExtractor::Export
             const std::filesystem::path& packPath,
             const AssetIndex::SubAssetRecord& entry,
             const TextureExportOptions& options);
+
+        static TexturePreviewResult DecodePreview(
+            const std::filesystem::path& packPath,
+            const AssetIndex::SubAssetRecord& entry,
+            const TexturePreviewOptions& options);
 
         static BatchTextureExportResult ExportAllTextures(
             const std::filesystem::path& packPath,

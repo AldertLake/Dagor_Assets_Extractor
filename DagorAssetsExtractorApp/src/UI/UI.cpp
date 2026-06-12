@@ -9,6 +9,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -1210,6 +1211,19 @@ namespace DagorAssetsExtractor::UI
         ImGui::Separator();
 
         const std::optional<ResourceRecord> selected = FindSelectedRecord(app, records);
+        App::TexturePreviewSnapshot texturePreview = App::SnapshotTexturePreview(app);
+        const bool previewMatchesSelectedPack =
+            selected &&
+            selected->type == AssetType::Dxp &&
+            !texturePreview.packPath.empty() &&
+            texturePreview.packPath == selected->path;
+        if (!texturePreview.packPath.empty() && !previewMatchesSelectedPack)
+        {
+            App::ClearTexturePreview(app);
+            ClearTexturePreview();
+            texturePreview = App::SnapshotTexturePreview(app);
+        }
+
         if (!selected)
         {
             ImGui::TextWrapped("Select a discovered resource pack, descriptor, or BLK file to inspect its metadata.");
@@ -1314,7 +1328,9 @@ namespace DagorAssetsExtractor::UI
                 ImGuiTableFlags subFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
 
-                const float tableHeight = std::clamp(ImGui::GetContentRegionAvail().y * 0.58f, 260.0f, 460.0f);
+                const float tableHeight = isDxp
+                    ? std::clamp(ImGui::GetContentRegionAvail().y * 0.42f, 190.0f, 360.0f)
+                    : std::clamp(ImGui::GetContentRegionAvail().y * 0.58f, 260.0f, 460.0f);
                 if (ImGui::BeginTable("SubAssets", columnCount, subFlags, ImVec2(0.0f, tableHeight)))
                 {
                     if (isDesc)
@@ -1413,7 +1429,29 @@ namespace DagorAssetsExtractor::UI
                             else
                             {
                                 ImGui::TableSetColumnIndex(0);
-                                DrawInlineIconLabel(GetSubAssetIconId(entry, selected->type), entry.name.c_str());
+                                if (isDxp)
+                                {
+                                    const bool isSelectedTexture =
+                                        texturePreview.packPath == selected->path &&
+                                        texturePreview.entryName == entry.name &&
+                                        texturePreview.entryOffset == entry.offset;
+                                    if (ImGui::Selectable(entry.name.c_str(), isSelectedTexture))
+                                    {
+                                        ClearTexturePreview();
+                                        app.texturePreview.fitToWindow = true;
+                                        app.texturePreview.zoom = 1.0f;
+                                        App::RequestTexturePreview(app, selected->path, entry);
+                                        texturePreview = App::SnapshotTexturePreview(app);
+                                    }
+                                    if (ImGui::IsItemHovered())
+                                    {
+                                        ImGui::SetTooltip("Select to preview %s", entry.name.c_str());
+                                    }
+                                }
+                                else
+                                {
+                                    DrawInlineIconLabel(GetSubAssetIconId(entry, selected->type), entry.name.c_str());
+                                }
 
                                 ImGui::TableSetColumnIndex(1);
                                 ImGui::Text("0x%X", entry.offset);
@@ -1486,6 +1524,190 @@ namespace DagorAssetsExtractor::UI
                         }
                     }
                     ImGui::EndTable();
+                }
+
+                if (isDxp)
+                {
+                    if (std::shared_ptr<App::TexturePreviewImage> pending =
+                            App::TakePendingTexturePreview(app))
+                    {
+                        if (!UpdateTexturePreview(
+                                pending->bgraPixels.data(),
+                                pending->width,
+                                pending->height,
+                                pending->stride,
+                                pending->srgb))
+                        {
+                            App::SetTexturePreviewUploadError(
+                                app,
+                                pending->generation,
+                                "D3D11 could not create the preview texture.");
+                        }
+                        texturePreview = App::SnapshotTexturePreview(app);
+                    }
+
+                    if (!texturePreview.entryName.empty())
+                    {
+                        ImGui::Spacing();
+                        DrawPanelTitle(UiIconId::Texture, "Texture Viewer");
+                        ImGui::SameLine();
+                        ImGui::TextDisabled(
+                            "%ux%u  %s  %u mip%s",
+                            texturePreview.sourceWidth,
+                            texturePreview.sourceHeight,
+                            texturePreview.format.empty() ? "Unknown" : texturePreview.format.c_str(),
+                            static_cast<unsigned>(texturePreview.mipCount),
+                            texturePreview.mipCount == 1 ? "" : "s");
+
+                        ImGui::TextUnformatted(texturePreview.entryName.c_str());
+                        if (!texturePreview.compression.empty())
+                        {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("(%s)", texturePreview.compression.c_str());
+                        }
+
+                        if (ImGui::Button("Fit"))
+                        {
+                            app.texturePreview.fitToWindow = true;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("100%"))
+                        {
+                            app.texturePreview.fitToWindow = false;
+                            app.texturePreview.zoom = 1.0f;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("-"))
+                        {
+                            app.texturePreview.fitToWindow = false;
+                            app.texturePreview.zoom = std::max(0.05f, app.texturePreview.zoom / 1.25f);
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("+"))
+                        {
+                            app.texturePreview.fitToWindow = false;
+                            app.texturePreview.zoom = std::min(16.0f, app.texturePreview.zoom * 1.25f);
+                        }
+                        ImGui::SameLine();
+                        ImGui::Checkbox("Checkerboard", &app.texturePreview.checkerboard);
+
+                        if (texturePreview.loading)
+                        {
+                            ImGui::TextColored(
+                                ImVec4(0.72f, 0.84f, 1.0f, 1.0f),
+                                "Decoding preview...");
+                        }
+                        else if (!texturePreview.error.empty())
+                        {
+                            ImGui::TextColored(ImVec4(1.0f, 0.49f, 0.42f, 1.0f), "Preview unavailable");
+                            ImGui::TextWrapped("%s", texturePreview.error.c_str());
+                        }
+
+                        if (!texturePreview.warnings.empty())
+                        {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%zu decode note%s",
+                                texturePreview.warnings.size(),
+                                texturePreview.warnings.size() == 1 ? "" : "s");
+                            if (ImGui::IsItemHovered())
+                            {
+                                ImGui::BeginTooltip();
+                                for (const std::string& warning : texturePreview.warnings)
+                                {
+                                    ImGui::TextWrapped("%s", warning.c_str());
+                                }
+                                ImGui::EndTooltip();
+                            }
+                        }
+
+                        if (const UiTexture* previewTexture = GetTexturePreview();
+                            previewTexture && previewTexture->view)
+                        {
+                            const float canvasHeight = std::clamp(
+                                ImGui::GetContentRegionAvail().y * 0.62f,
+                                240.0f,
+                                540.0f);
+                            ImGui::BeginChild(
+                                "TexturePreviewCanvas",
+                                ImVec2(0.0f, canvasHeight),
+                                true,
+                                ImGuiWindowFlags_HorizontalScrollbar);
+
+                            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+                                ImGui::GetIO().MouseWheel != 0.0f)
+                            {
+                                app.texturePreview.fitToWindow = false;
+                                app.texturePreview.zoom = std::clamp(
+                                    app.texturePreview.zoom *
+                                        std::pow(1.15f, ImGui::GetIO().MouseWheel),
+                                    0.05f,
+                                    16.0f);
+                            }
+
+                            const ImVec2 available = ImGui::GetContentRegionAvail();
+                            float scale = app.texturePreview.zoom;
+                            if (app.texturePreview.fitToWindow)
+                            {
+                                const float fitX = std::max(1.0f, available.x - 20.0f) /
+                                    static_cast<float>(previewTexture->width);
+                                const float fitY = std::max(1.0f, available.y - 20.0f) /
+                                    static_cast<float>(previewTexture->height);
+                                scale = std::min(1.0f, std::min(fitX, fitY));
+                            }
+
+                            const ImVec2 imageSize(
+                                std::max(1.0f, previewTexture->width * scale),
+                                std::max(1.0f, previewTexture->height * scale));
+                            const float offsetX = std::max(8.0f, (available.x - imageSize.x) * 0.5f);
+                            const float offsetY = std::max(8.0f, (available.y - imageSize.y) * 0.5f);
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
+                            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + offsetY);
+
+                            const ImVec2 imageMin = ImGui::GetCursorScreenPos();
+                            const ImVec2 imageMax(imageMin.x + imageSize.x, imageMin.y + imageSize.y);
+                            ImDrawList* drawList = ImGui::GetWindowDrawList();
+                            if (app.texturePreview.checkerboard)
+                            {
+                                constexpr float tileSize = 16.0f;
+                                const ImVec2 windowMin = ImGui::GetWindowPos();
+                                const ImVec2 windowMax(
+                                    windowMin.x + ImGui::GetWindowSize().x,
+                                    windowMin.y + ImGui::GetWindowSize().y);
+                                const float visibleMinX = std::max(imageMin.x, windowMin.x);
+                                const float visibleMinY = std::max(imageMin.y, windowMin.y);
+                                const float visibleMaxX = std::min(imageMax.x, windowMax.x);
+                                const float visibleMaxY = std::min(imageMax.y, windowMax.y);
+                                const int firstX = std::max(0, static_cast<int>((visibleMinX - imageMin.x) / tileSize));
+                                const int firstY = std::max(0, static_cast<int>((visibleMinY - imageMin.y) / tileSize));
+                                const int lastX = std::max(firstX, static_cast<int>(std::ceil((visibleMaxX - imageMin.x) / tileSize)));
+                                const int lastY = std::max(firstY, static_cast<int>(std::ceil((visibleMaxY - imageMin.y) / tileSize)));
+                                for (int y = firstY; y < lastY; ++y)
+                                {
+                                    for (int x = firstX; x < lastX; ++x)
+                                    {
+                                        const ImU32 color = ((x + y) & 1) == 0
+                                            ? IM_COL32(62, 66, 74, 255)
+                                            : IM_COL32(40, 43, 50, 255);
+                                        drawList->AddRectFilled(
+                                            ImVec2(imageMin.x + x * tileSize, imageMin.y + y * tileSize),
+                                            ImVec2(
+                                                std::min(imageMax.x, imageMin.x + (x + 1) * tileSize),
+                                                std::min(imageMax.y, imageMin.y + (y + 1) * tileSize)),
+                                            color);
+                                    }
+                                }
+                            }
+
+                            ImGui::Image(
+                                reinterpret_cast<ImTextureID>(previewTexture->view),
+                                imageSize);
+                            drawList->AddRect(
+                                imageMin,
+                                imageMax,
+                                IM_COL32(112, 119, 132, 255));
+                            ImGui::EndChild();
+                        }
+                    }
                 }
             }
 
