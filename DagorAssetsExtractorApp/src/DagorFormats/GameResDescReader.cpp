@@ -9,6 +9,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace DagorFormats {
@@ -714,7 +715,32 @@ namespace {
                strTableOffset < data.size();
     }
 
-    void ParseLegacyFlatTable(std::span<const uint8_t> data, std::vector<GameResDescEntry>& entries)
+    bool BlockMatchesResourceFilter(
+        const BinaryBlkDocument& document,
+        const BinaryBlkBlock& block,
+        const std::unordered_set<std::string>& resourceNameFilter)
+    {
+        if (resourceNameFilter.contains(block.name))
+        {
+            return true;
+        }
+
+        for (uint32_t i = 0; i < block.paramsCount; ++i)
+        {
+            const BinaryBlkParam param = ReadParam(document, block, i);
+            if (param.stringValue && resourceNameFilter.contains(*param.stringValue))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void ParseLegacyFlatTable(
+        std::span<const uint8_t> data,
+        std::vector<GameResDescEntry>& entries,
+        const std::unordered_set<std::string>* resourceNameFilter)
     {
         DagorIO::MemoryReader reader(data);
         const uint32_t resCount = reader.ReadUInt32();
@@ -735,6 +761,12 @@ namespace {
             entry.resId = resId;
             entry.name = ReadNullTerminatedString(data, strTableOffset + nameOffsetRel);
             entry.className = ReadNullTerminatedString(data, strTableOffset + classOffsetRel);
+            if (resourceNameFilter != nullptr &&
+                !resourceNameFilter->empty() &&
+                !resourceNameFilter->contains(entry.name))
+            {
+                continue;
+            }
 
             if (numDeps > 0)
             {
@@ -792,10 +824,24 @@ namespace {
 
 GameResDescReader::GameResDescReader(std::span<const uint8_t> data) : m_data(data) {}
 
-void GameResDescReader::Parse()
+void GameResDescReader::Parse(const std::vector<std::string>* resourceNameFilter)
 {
     std::vector<uint8_t> decompressedData;
     const std::span<const uint8_t> payload = PrepareDescriptorPayload(m_data, decompressedData);
+    std::unordered_set<std::string> resourceNameSet;
+    if (resourceNameFilter != nullptr)
+    {
+        resourceNameSet.reserve(resourceNameFilter->size());
+        for (const std::string& name : *resourceNameFilter)
+        {
+            if (!name.empty())
+            {
+                resourceNameSet.insert(name);
+            }
+        }
+    }
+    const std::unordered_set<std::string>* filter =
+        resourceNameSet.empty() ? nullptr : &resourceNameSet;
 
     if (payload.empty())
     {
@@ -812,11 +858,20 @@ void GameResDescReader::Parse()
 
         m_entries.clear();
         const BinaryBlkBlock& root = document.blocks[0];
-        m_entries.reserve(root.children.size());
+        m_entries.reserve(filter == nullptr
+            ? root.children.size()
+            : std::min(root.children.size(), resourceNameSet.size()));
         uint32_t resId = 0;
         for (const size_t childIndex : root.children)
         {
-            m_entries.push_back(BuildEntryFromBlock(document, childIndex, resId++));
+            const BinaryBlkBlock& child = document.blocks[childIndex];
+            if (filter != nullptr && !BlockMatchesResourceFilter(document, child, *filter))
+            {
+                ++resId;
+                continue;
+            }
+            m_entries.push_back(BuildEntryFromBlock(document, childIndex, resId));
+            ++resId;
         }
 
         return;
@@ -824,7 +879,7 @@ void GameResDescReader::Parse()
 
     if (LooksLikeLegacyFlatTable(payload))
     {
-        ParseLegacyFlatTable(payload, m_entries);
+        ParseLegacyFlatTable(payload, m_entries, filter);
         return;
     }
 

@@ -2,6 +2,7 @@
 
 #include "AssetIndex/PackContents.h"
 #include "Platform/Platform.h"
+#include "DagorFormats/GrpReader.h"
 
 #include <algorithm>
 #include <atomic>
@@ -28,7 +29,8 @@ namespace DagorAssetsExtractor::AssetIndex
     {
         constexpr size_t MaxWarnings = 12;
         constexpr size_t MaxDescriptorIndexThreads = 8;
-        constexpr int DescriptorLinkerVersion = 7;
+        constexpr size_t ScopedDxpCandidateLimit = 48;
+        constexpr int DescriptorLinkerVersion = 8;
         constexpr int DescriptorLinkCacheVersion = 4;
 
         std::string Trim(std::string value)
@@ -281,14 +283,46 @@ namespace DagorAssetsExtractor::AssetIndex
 
         size_t CommonPrefixTokenCount(std::string_view left, std::string_view right)
         {
-            const std::vector<std::string_view> leftTokens = SplitNameTokens(left);
-            const std::vector<std::string_view> rightTokens = SplitNameTokens(right);
-            const size_t count = std::min(leftTokens.size(), rightTokens.size());
+            size_t leftStart = 0;
+            size_t rightStart = 0;
             size_t matched = 0;
-            while (matched < count && leftTokens[matched] == rightTokens[matched])
+
+            while (leftStart < left.size() && rightStart < right.size())
             {
+                while (leftStart < left.size() && (left[leftStart] == '_' || left[leftStart] == '-'))
+                {
+                    ++leftStart;
+                }
+                while (rightStart < right.size() && (right[rightStart] == '_' || right[rightStart] == '-'))
+                {
+                    ++rightStart;
+                }
+
+                if (leftStart >= left.size() || rightStart >= right.size())
+                {
+                    break;
+                }
+
+                const size_t leftEnd = left.find_first_of("_-", leftStart);
+                const size_t rightEnd = right.find_first_of("_-", rightStart);
+
+                const std::string_view leftToken = (leftEnd == std::string_view::npos)
+                    ? left.substr(leftStart)
+                    : left.substr(leftStart, leftEnd - leftStart);
+                const std::string_view rightToken = (rightEnd == std::string_view::npos)
+                    ? right.substr(rightStart)
+                    : right.substr(rightStart, rightEnd - rightStart);
+
+                if (leftToken != rightToken)
+                {
+                    break;
+                }
+
                 ++matched;
+                leftStart = (leftEnd == std::string_view::npos) ? left.size() : leftEnd + 1;
+                rightStart = (rightEnd == std::string_view::npos) ? right.size() : rightEnd + 1;
             }
+
             return matched;
         }
 
@@ -335,6 +369,33 @@ namespace DagorAssetsExtractor::AssetIndex
         bool IsSameDirectory(const fs::path& left, const fs::path& right)
         {
             return SamePath(left.parent_path(), right.parent_path());
+        }
+
+        bool IsAncestorOrSamePath(const fs::path& ancestor, const fs::path& path)
+        {
+            std::string ancestorKey = FullPathKey(Platform::PathToUtf8(ancestor.lexically_normal()));
+            const std::string pathKey = FullPathKey(Platform::PathToUtf8(path.lexically_normal()));
+            if (ancestorKey.empty() || pathKey.empty())
+            {
+                return false;
+            }
+            if (ancestorKey == pathKey)
+            {
+                return true;
+            }
+            if (ancestorKey.back() != '/')
+            {
+                ancestorKey.push_back('/');
+            }
+            return pathKey.rfind(ancestorKey, 0) == 0;
+        }
+
+        bool IsDescriptorInFocusResourceRoot(const ResourceRecord& descriptor, const ResourceRecord& focus)
+        {
+            const fs::path descriptorDir = descriptor.path.parent_path();
+            const fs::path focusDir = focus.path.parent_path();
+            return IsAncestorOrSamePath(descriptorDir, focusDir) ||
+                   IsAncestorOrSamePath(focusDir, descriptorDir);
         }
 
         bool ContainsAscii(std::string_view value, std::string_view needle)
@@ -442,9 +503,11 @@ namespace DagorAssetsExtractor::AssetIndex
                 return SamePath(record.path, focus->path);
             }
 
-            // Only parse descriptors that are related to the focus pack.
-            // This prevents the system from doing a 100GB exhaustive scan for every export!
-            return IsRecordRelatedToFocus(record, *focus);
+            // Descriptors have generic names such as dynModelDesc.bin and riDesc.bin and are often
+            // stored in a parent resource folder rather than beside the selected GRP/DXP pack.
+            // Keep scoped builds on that resource root instead of doing an exhaustive descriptor parse.
+            return IsRecordRelatedToFocus(record, *focus) ||
+                   IsDescriptorInFocusResourceRoot(record, *focus);
         }
 
         bool ShouldIncludeGrpForFocus(const ResourceRecord& record, const ResourceRecord* focus)
@@ -479,10 +542,23 @@ namespace DagorAssetsExtractor::AssetIndex
             }
             if (focus->type == AssetType::Descriptor || focus->type == AssetType::Grp)
             {
-                return IsRecordRelatedToFocus(record, *focus);
+                // HQ texture packs commonly live under content.hq/hq_tex and do not share the
+                // selected GRP's folder or country-prefixed stem. Keep them as cheap path-only
+                // candidates until descriptor texture names are known, then rank and cap them.
+                return true;
             }
 
             return true;
+        }
+
+        bool DescriptorPathLooksLikeDynModelDesc(const fs::path& path)
+        {
+            return ContainsAscii(BasenameKey(Platform::PathToUtf8(path.filename())), "dynmodeldesc");
+        }
+
+        bool DescriptorPathLooksLikeRiDesc(const fs::path& path)
+        {
+            return ContainsAscii(BasenameKey(Platform::PathToUtf8(path.filename())), "ridesc");
         }
 
         bool LinkMatchesFocus(const DescriptorResourceLink& link, const ResourceRecord* focus)
@@ -783,26 +859,42 @@ namespace DagorAssetsExtractor::AssetIndex
                 return false;
             }
 
-            const std::shared_ptr<PackContents> contents = ParseGrpContents(path, static_cast<size_t>(maxPackBytes));
-            if (!contents || !contents->error.empty())
+            std::vector<uint8_t> data;
+            if (!ReadFilePrefix(path, static_cast<size_t>(fileSize), data, error))
             {
-                error = contents ? contents->error : ("Could not parse GRP: " + Platform::PathToUtf8(path.filename()));
                 return false;
             }
 
-            for (const SubAssetRecord& subAsset : contents->entries)
+            try
             {
-                LightweightGrpEntry entry;
-                entry.path = path;
-                entry.name = subAsset.name;
-                entry.classId = subAsset.grpClassId;
-                entry.className = subAsset.formatInfo;
-                entry.canExportStaticModel = CanExportGrpEntryAsStaticModel(subAsset);
-                entry.canExportSkinnedModel = CanExportGrpEntryAsSkinnedModel(subAsset);
-                entries.push_back(std::move(entry));
-            }
+                DagorFormats::GrpReader reader(data);
+                reader.Parse();
 
-            return true;
+                for (const DagorFormats::GrpFileInfo& file : reader.GetFiles())
+                {
+                    LightweightGrpEntry entry;
+                    entry.path = path;
+                    entry.name = file.name;
+                    entry.classId = file.classId;
+                    entry.className = DescribeGrpClassId(file.classId);
+
+                    SubAssetRecord probe;
+                    probe.name = file.name;
+                    probe.grpClassId = file.classId;
+                    entry.canExportStaticModel = CanExportGrpEntryAsStaticModel(probe);
+                    entry.canExportSkinnedModel = CanExportGrpEntryAsSkinnedModel(probe);
+
+                    entries.push_back(std::move(entry));
+                }
+
+                return true;
+            }
+            catch (const std::exception& ex)
+            {
+                error = std::string("Legacy GRP parse failed for ") +
+                    Platform::PathToUtf8(path.filename()) + ": " + ex.what();
+                return false;
+            }
         }
 
         bool TryReadDxpNamesFromBuffer(
@@ -964,6 +1056,43 @@ namespace DagorAssetsExtractor::AssetIndex
             return ContainsAscii(key, "content.hq") || ContainsAscii(key, "/hq_tex/");
         }
 
+        int TexturePackQualityScore(const fs::path& path, std::string_view entryName = {})
+        {
+            const std::string pathKey = FullPathKey(Platform::PathToUtf8(path));
+            const std::string entryKey = ToLowerAscii(std::string(entryName));
+            int score = 0;
+
+            if (ContainsAscii(pathKey, "/content.hq/"))
+            {
+                score += 140;
+            }
+            if (ContainsAscii(pathKey, "/uhq_vehicles/"))
+            {
+                score += 120;
+            }
+            if (ContainsAscii(pathKey, "/hq_tex/"))
+            {
+                score += 100;
+            }
+
+            const std::string packName = BasenameKey(Platform::PathToUtf8(path.filename()));
+            if (EndsWith(packName, "-hq") || EndsWith(packName, "_hq"))
+            {
+                score += 80;
+            }
+
+            if (ContainsAscii(entryKey, "$hq"))
+            {
+                score += 60;
+            }
+            if (ContainsAscii(entryKey, "$tq") || ContainsAscii(entryKey, "$lq"))
+            {
+                score -= 140;
+            }
+
+            return score;
+        }
+
         int CommonPathScore(const fs::path& left, const fs::path& right)
         {
             const std::string leftKey = FullPathKey(Platform::PathToUtf8(left));
@@ -1096,11 +1225,11 @@ namespace DagorAssetsExtractor::AssetIndex
         int ScoreDxpRecordForFocus(
             const ResourceRecord& record,
             const ResourceRecord& focus,
-            const std::vector<std::string>& focusedResourceNames,
-            const std::vector<std::string>& focusedTextureNames)
+            const std::vector<std::vector<std::string>>& focusedResourceNameKeys,
+            const std::vector<std::vector<std::string>>& focusedTextureNameKeys,
+            const std::string& packStem)
         {
             int score = 0;
-            const std::string packStem = PackStemKey(record.path);
             if (IsSameDirectory(record.path, focus.path))
             {
                 score += 20;
@@ -1113,6 +1242,7 @@ namespace DagorAssetsExtractor::AssetIndex
             {
                 score += 4;
             }
+            score += TexturePackQualityScore(record.path) / 10;
 
             if (packStem.find("shared") != std::string::npos ||
                 packStem.find("common") != std::string::npos ||
@@ -1122,13 +1252,43 @@ namespace DagorAssetsExtractor::AssetIndex
                 score += 15;
             }
 
-            for (const std::string& resourceName : focusedResourceNames)
+            for (const std::vector<std::string>& keys : focusedResourceNameKeys)
             {
-                score = std::max(score, NamePackAffinityScore(resourceName, packStem));
+                for (const std::string& key : keys)
+                {
+                    if (IsNameRelatedToPackStem(key, packStem))
+                    {
+                        score = std::max(score, 120);
+                    }
+                    const size_t commonPrefix = CommonPrefixTokenCount(key, packStem);
+                    if (commonPrefix >= 3)
+                    {
+                        score = std::max(score, 80 + static_cast<int>(commonPrefix * 5));
+                    }
+                    else if (commonPrefix == 2)
+                    {
+                        score = std::max(score, 45);
+                    }
+                }
             }
-            for (const std::string& textureName : focusedTextureNames)
+            for (const std::vector<std::string>& keys : focusedTextureNameKeys)
             {
-                score = std::max(score, NamePackAffinityScore(textureName, packStem));
+                for (const std::string& key : keys)
+                {
+                    if (IsNameRelatedToPackStem(key, packStem))
+                    {
+                        score = std::max(score, 120);
+                    }
+                    const size_t commonPrefix = CommonPrefixTokenCount(key, packStem);
+                    if (commonPrefix >= 3)
+                    {
+                        score = std::max(score, 80 + static_cast<int>(commonPrefix * 5));
+                    }
+                    else if (commonPrefix == 2)
+                    {
+                        score = std::max(score, 45);
+                    }
+                }
             }
             return score;
         }
@@ -1404,8 +1564,11 @@ namespace DagorAssetsExtractor::AssetIndex
             const fs::path& descriptorPath,
             const std::vector<LightweightGrpEntry>& entries,
             const std::unordered_map<std::string, std::vector<size_t>>& index,
-            const CachedEntryKeys& keys)
+            const CachedEntryKeys& keys,
+            bool descriptorIsDynModel,
+            bool descriptorIsRendInst)
         {
+            (void)descriptorEntry;
             std::vector<size_t> candidates;
             auto addCandidates = [&](const std::vector<std::string>& nameKeys) {
                 for (const std::string& key : nameKeys)
@@ -1429,11 +1592,6 @@ namespace DagorAssetsExtractor::AssetIndex
                 addCandidates(keys.dynModelKeys);
             }
 
-            const bool descriptorIsDynModel =
-                ContainsAscii(BasenameKey(Platform::PathToUtf8(descriptorPath.filename())), "dynmodeldesc");
-            const bool descriptorIsRendInst =
-                ContainsAscii(BasenameKey(Platform::PathToUtf8(descriptorPath.filename())), "ridesc");
-
             const LightweightGrpEntry* best = nullptr;
             int bestScore = std::numeric_limits<int>::min();
             for (const size_t candidate : candidates)
@@ -1453,10 +1611,33 @@ namespace DagorAssetsExtractor::AssetIndex
                 {
                     score += 120;
                 }
-                if (IsPackRelatedToAnyName(entry.path, { descriptorEntry.name, descriptorEntry.dynModelName }))
+
+                bool related = false;
+                const std::string entryPackStem = PackStemKey(entry.path);
+                for (const std::string& key : keys.nameKeys)
+                {
+                    if (IsNameRelatedToPackStem(key, entryPackStem))
+                    {
+                        related = true;
+                        break;
+                    }
+                }
+                if (!related)
+                {
+                    for (const std::string& key : keys.dynModelKeys)
+                    {
+                        if (IsNameRelatedToPackStem(key, entryPackStem))
+                        {
+                            related = true;
+                            break;
+                        }
+                    }
+                }
+                if (related)
                 {
                     score += 20;
                 }
+
                 if (PathLooksLikePatch(entry.path))
                 {
                     score += 15;
@@ -1538,6 +1719,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 {
                     score += 5;
                 }
+                score += TexturePackQualityScore(entry.path, entry.name);
                 if (IsPackRelatedToAnyName(entry.path, { std::string(textureName), link.resourceName }))
                 {
                     score += 10;
@@ -1755,31 +1937,14 @@ namespace DagorAssetsExtractor::AssetIndex
     {
         DescriptorResourceLinkBuildResult result;
 
-        std::vector<BlkResourceLink> builtBlkLinks;
-        if (options.blkLinks == nullptr)
-        {
-            if (!ReportDescriptorProgress(result, options, "BLK relationships", "Parsing BLK resource-pack hints", 0, 0))
-            {
-                return result;
-            }
-
-            BlkResourceLinkBuildResult blkResult = BuildBlkResourceLinks(records);
-            builtBlkLinks = std::move(blkResult.links);
-            for (const std::string& warning : blkResult.warnings)
-            {
-                AddWarning(result, "BLK relationship warning: " + warning);
-            }
-        }
-
-        const std::vector<BlkResourceLink>* blkLinks = options.blkLinks ? options.blkLinks : &builtBlkLinks;
-        const std::vector<DescriptorPackGroup> packGroups = BuildDescriptorPackGroups(*blkLinks);
-        (void)packGroups;
         const ResourceRecord* focusRecord = FindFocusRecord(records, options.focusPath);
 
         std::vector<const ResourceRecord*> descriptorRecords;
+        std::vector<const ResourceRecord*> allDescriptorRecords;
         std::vector<const ResourceRecord*> grpRecords;
         std::vector<const ResourceRecord*> dxpRecords;
         descriptorRecords.reserve(records.size());
+        allDescriptorRecords.reserve(records.size());
         grpRecords.reserve(records.size());
         dxpRecords.reserve(records.size());
 
@@ -1787,6 +1952,7 @@ namespace DagorAssetsExtractor::AssetIndex
         {
             if (record.type == AssetType::Descriptor)
             {
+                allDescriptorRecords.push_back(&record);
                 if (ShouldIncludeDescriptorForFocus(record, focusRecord))
                 {
                     descriptorRecords.push_back(&record);
@@ -1807,9 +1973,67 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
             }
         }
-        
-        const size_t totalWork =
-            std::max<size_t>(1, descriptorRecords.size() + grpRecords.size() + dxpRecords.size() + 1);
+
+        if (focusRecord != nullptr &&
+            focusRecord->type != AssetType::Descriptor &&
+            descriptorRecords.empty())
+        {
+            descriptorRecords = allDescriptorRecords;
+            AddWarning(
+                result,
+                "Scoped descriptor root search found no descriptor files; fell back to all descriptors.");
+        }
+
+        std::vector<std::string> descriptorResourceNameFilter;
+        if (focusRecord != nullptr &&
+            focusRecord->type == AssetType::Grp &&
+            !descriptorRecords.empty())
+        {
+            std::vector<LightweightGrpEntry> focusedGrpEntries;
+            std::string focusedGrpError;
+            if (ParseGrpMetadataForLinking(
+                    focusRecord->path,
+                    options.maxPackBytes,
+                    focusedGrpEntries,
+                    focusedGrpError))
+            {
+                bool hasDynModelEntries = false;
+                bool hasRendInstEntries = false;
+                for (const LightweightGrpEntry& entry : focusedGrpEntries)
+                {
+                    AppendUniqueString(descriptorResourceNameFilter, entry.name);
+                    hasDynModelEntries = hasDynModelEntries || entry.className == "DynModel";
+                    hasRendInstEntries = hasRendInstEntries || entry.className == "RendInst";
+                }
+
+                if (hasDynModelEntries != hasRendInstEntries)
+                {
+                    descriptorRecords.erase(
+                        std::remove_if(
+                            descriptorRecords.begin(),
+                            descriptorRecords.end(),
+                            [&](const ResourceRecord* record) {
+                                if (hasDynModelEntries && DescriptorPathLooksLikeRiDesc(record->path))
+                                {
+                                    return true;
+                                }
+                                if (hasRendInstEntries && DescriptorPathLooksLikeDynModelDesc(record->path))
+                                {
+                                    return true;
+                                }
+                                return false;
+                            }),
+                        descriptorRecords.end());
+                }
+            }
+        }
+
+        const bool scopedBuild = focusRecord != nullptr;
+        const size_t plannedDxpWork = scopedBuild && focusRecord->type != AssetType::Dxp
+            ? std::min(dxpRecords.size(), ScopedDxpCandidateLimit)
+            : dxpRecords.size();
+        size_t totalWork =
+            std::max<size_t>(1, descriptorRecords.size() + grpRecords.size() + plannedDxpWork + 2);
         size_t workDone = 0;
 
         if (!ReportDescriptorProgress(
@@ -1845,7 +2069,10 @@ namespace DagorAssetsExtractor::AssetIndex
             }
 
             const std::shared_ptr<PackContents> descriptorContents =
-                ParseDescriptorContents(record->path, static_cast<size_t>(options.maxDescriptorBytes));
+                ParseDescriptorContents(
+                    record->path,
+                    static_cast<size_t>(options.maxDescriptorBytes),
+                    descriptorResourceNameFilter.empty() ? nullptr : &descriptorResourceNameFilter);
 
             if (!descriptorContents)
             {
@@ -1912,12 +2139,33 @@ namespace DagorAssetsExtractor::AssetIndex
         }
 
         std::vector<std::string> focusedResourceNames;
+        std::vector<std::vector<std::string>> focusedResourceNameKeys;
         std::vector<std::string> focusedTextureNames;
+        std::vector<std::vector<std::string>> focusedTextureNameKeys;
+
+        auto appendUniqueResource = [](std::vector<std::string>& names, std::vector<std::vector<std::string>>& keysList, const std::string& name) {
+            if (name.empty()) return;
+            if (std::find(names.begin(), names.end(), name) == names.end()) {
+                names.push_back(name);
+                keysList.push_back(BuildAssetNameKeys(name));
+            }
+        };
+
         if (focusRecord != nullptr)
         {
+            fs::path lastPath;
+            bool descriptorIsDynModel = false;
+            bool descriptorIsRendInst = false;
             for (size_t entryIndex = 0; entryIndex < descriptorEntries.size(); ++entryIndex)
             {
                 const auto& [descriptorPath, descriptorEntry] = descriptorEntries[entryIndex];
+                if (descriptorPath != lastPath)
+                {
+                    lastPath = descriptorPath;
+                    descriptorIsDynModel = ContainsAscii(BasenameKey(Platform::PathToUtf8(descriptorPath.filename())), "dynmodeldesc");
+                    descriptorIsRendInst = ContainsAscii(BasenameKey(Platform::PathToUtf8(descriptorPath.filename())), "ridesc");
+                }
+
                 bool matchesFocus = false;
                 if (focusRecord->type == AssetType::Descriptor)
                 {
@@ -1925,7 +2173,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
                 else if (focusRecord->type == AssetType::Grp)
                 {
-                    if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex, descriptorKeys[entryIndex]))
+                    if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex, descriptorKeys[entryIndex], descriptorIsDynModel, descriptorIsRendInst))
                     {
                         matchesFocus = SamePath(grpMatch->path, focusRecord->path);
                     }
@@ -1936,13 +2184,13 @@ namespace DagorAssetsExtractor::AssetIndex
                     continue;
                 }
 
-                AppendUniqueString(focusedResourceNames, descriptorEntry.name);
-                AppendUniqueString(focusedResourceNames, descriptorEntry.dynModelName);
+                appendUniqueResource(focusedResourceNames, focusedResourceNameKeys, descriptorEntry.name);
+                appendUniqueResource(focusedResourceNames, focusedResourceNameKeys, descriptorEntry.dynModelName);
                 for (const uint32_t textureIndex : BuildTextureIndices(descriptorEntry))
                 {
                     if (textureIndex < descriptorEntry.textureNames.size())
                     {
-                        AppendUniqueString(focusedTextureNames, descriptorEntry.textureNames[textureIndex]);
+                        appendUniqueResource(focusedTextureNames, focusedTextureNameKeys, descriptorEntry.textureNames[textureIndex]);
                     }
                 }
             }
@@ -1952,22 +2200,42 @@ namespace DagorAssetsExtractor::AssetIndex
             BuildTextureKeySets(focusedTextureNames);
         if (focusRecord != nullptr && !focusedTextureNames.empty())
         {
-            std::stable_sort(dxpRecords.begin(), dxpRecords.end(), [&](const ResourceRecord* left, const ResourceRecord* right) {
-                const int leftScore = ScoreDxpRecordForFocus(*left, *focusRecord, focusedResourceNames, focusedTextureNames);
-                const int rightScore = ScoreDxpRecordForFocus(*right, *focusRecord, focusedResourceNames, focusedTextureNames);
-                if (leftScore != rightScore)
-                {
-                    return leftScore > rightScore;
-                }
-                return PathLooksLikeHq(left->path) && !PathLooksLikeHq(right->path);
-            });
-            
-            // To ensure rapid scoped exports, cap the maximum number of dynamically indexed DXP candidates
-            // to the most highly correlated ones. Global cache builds remain exhaustive.
-            if (dxpRecords.size() > 15)
+            struct ScoredRecord
             {
-                dxpRecords.resize(15);
+                const ResourceRecord* record;
+                int score;
+            };
+            std::vector<ScoredRecord> scoredRecords;
+            scoredRecords.reserve(dxpRecords.size());
+            for (const ResourceRecord* record : dxpRecords)
+            {
+                const std::string packStem = PackStemKey(record->path);
+                const int score = ScoreDxpRecordForFocus(*record, *focusRecord, focusedResourceNameKeys, focusedTextureNameKeys, packStem);
+                scoredRecords.push_back({ record, score });
             }
+
+            std::stable_sort(scoredRecords.begin(), scoredRecords.end(), [&](const ScoredRecord& left, const ScoredRecord& right) {
+                if (left.score != right.score)
+                {
+                    return left.score > right.score;
+                }
+                return PathLooksLikeHq(left.record->path) && !PathLooksLikeHq(right.record->path);
+            });
+
+            dxpRecords.clear();
+            for (const auto& sr : scoredRecords)
+            {
+                dxpRecords.push_back(sr.record);
+            }
+            
+            // To keep selected-asset builds fast, index only the path-ranked DXP packs most likely
+            // to contain the descriptor texture set. Global cache builds remain exhaustive.
+            if (dxpRecords.size() > ScopedDxpCandidateLimit)
+            {
+                dxpRecords.resize(ScopedDxpCandidateLimit);
+            }
+
+            totalWork = std::max<size_t>(1, descriptorRecords.size() + grpRecords.size() + dxpRecords.size() + 2);
 
             if (!ReportDescriptorProgress(
                     result,
@@ -1976,6 +2244,21 @@ namespace DagorAssetsExtractor::AssetIndex
                     "targetResources=" + std::to_string(focusedResourceNames.size()) +
                         ", targetTextures=" + std::to_string(focusedTextureNames.size()) +
                         ", dxpCandidates=" + std::to_string(dxpRecords.size()),
+                    workDone,
+                    totalWork))
+            {
+                return result;
+            }
+        }
+        else if (focusRecord != nullptr && focusRecord->type != AssetType::Dxp)
+        {
+            dxpRecords.clear();
+            totalWork = std::max<size_t>(1, descriptorRecords.size() + grpRecords.size() + 2);
+            if (!ReportDescriptorProgress(
+                    result,
+                    options,
+                    "Selected scope",
+                    "No descriptor texture references matched the selected asset; skipping DXP index",
                     workDone,
                     totalWork))
             {
@@ -2042,6 +2325,10 @@ namespace DagorAssetsExtractor::AssetIndex
             std::vector<DescriptorResourceLink>& localLinks = threadLinks[threadId];
             std::vector<std::string>& localWarnings = threadWarnings[threadId];
 
+            fs::path lastPath;
+            bool descriptorIsDynModel = false;
+            bool descriptorIsRendInst = false;
+
             while (!linkingCancelRequested.load(std::memory_order_relaxed))
             {
                 const size_t entryIndex = nextIndex.fetch_add(1, std::memory_order_relaxed);
@@ -2051,6 +2338,13 @@ namespace DagorAssetsExtractor::AssetIndex
                 }
 
                 const auto& [descriptorPath, descriptorEntry] = descriptorEntries[entryIndex];
+                if (descriptorPath != lastPath)
+                {
+                    lastPath = descriptorPath;
+                    descriptorIsDynModel = ContainsAscii(BasenameKey(Platform::PathToUtf8(descriptorPath.filename())), "dynmodeldesc");
+                    descriptorIsRendInst = ContainsAscii(BasenameKey(Platform::PathToUtf8(descriptorPath.filename())), "ridesc");
+                }
+
                 DescriptorResourceLink link;
                 link.descriptorPath = descriptorPath;
                 link.resourceName = descriptorEntry.name;
@@ -2062,7 +2356,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 link.materialTextureRefs = descriptorEntry.dependencyIds;
                 link.materialTextureBindings = descriptorEntry.materialTextureRefs;
 
-                if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex, descriptorKeys[entryIndex]))
+                if (const LightweightGrpEntry* grpMatch = FindBestGrpEntry(descriptorEntry, descriptorPath, grpEntries, grpIndex, descriptorKeys[entryIndex], descriptorIsDynModel, descriptorIsRendInst))
                 {
                     link.matchedGrpPath = grpMatch->path;
                     link.matchedGrpEntryName = grpMatch->name;

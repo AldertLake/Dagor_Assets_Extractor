@@ -33,7 +33,7 @@ class GameResDescReader {
 public:
     explicit GameResDescReader(std::span<const uint8_t> data);
 
-    void Parse();
+    void Parse(const std::vector<std::string>* resourceNameFilter = nullptr);
 
     const std::vector<GameResDescEntry>& GetEntries() const { return m_entries; }
 

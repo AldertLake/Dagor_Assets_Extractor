@@ -138,6 +138,9 @@ namespace DagorAssetsExtractor::AssetIndex
 
     // Parse the contents of a GameRes descriptor file (.bin) from disk.
     // Returns a PackContents with entries populated, or with error set.
-    std::shared_ptr<PackContents> ParseDescriptorContents(const std::filesystem::path& path, size_t maxFileSize = 512 * 1024 * 1024);
+    std::shared_ptr<PackContents> ParseDescriptorContents(
+        const std::filesystem::path& path,
+        size_t maxFileSize = 512 * 1024 * 1024,
+        const std::vector<std::string>* resourceNameFilter = nullptr);
 
 } // namespace DagorAssetsExtractor::AssetIndex

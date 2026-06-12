@@ -9,8 +9,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <limits>
+#include <malloc.h>
+#include <memory>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -289,10 +292,13 @@ namespace DagorFormats
             }
         };
 
+        using AlignedBufferPtr = std::unique_ptr<uint8_t[], void(*)(void*)>;
+
         const acl::compressed_tracks* MakeAclTracks(
             std::span<const uint8_t> dump,
             uint32_t offset,
-            std::string& warning)
+            std::string& warning,
+            AlignedBufferPtr& alignedBuffer)
         {
             if (offset == kInvalidOffset || offset >= dump.size())
             {
@@ -312,8 +318,24 @@ namespace DagorFormats
                 return nullptr;
             }
 
+            const uint8_t* srcPtr = dump.data() + offset;
+            const uint8_t* tracksPtr = srcPtr;
+
+            if (reinterpret_cast<uintptr_t>(srcPtr) % 16 != 0)
+            {
+                uint8_t* allocated = static_cast<uint8_t*>(_aligned_malloc(aclSize, 16));
+                if (!allocated)
+                {
+                    warning = "Failed to allocate 16-byte aligned buffer for ACL tracks.";
+                    return nullptr;
+                }
+                std::memcpy(allocated, srcPtr, aclSize);
+                alignedBuffer.reset(allocated);
+                tracksPtr = allocated;
+            }
+
             acl::error_result error;
-            const acl::compressed_tracks* tracks = acl::make_compressed_tracks(dump.data() + offset, &error);
+            const acl::compressed_tracks* tracks = acl::make_compressed_tracks(tracksPtr, &error);
             if (!tracks)
             {
                 warning = std::string("ACL compressed_tracks validation failed: ") + error.c_str();
@@ -404,7 +426,8 @@ namespace DagorFormats
             Anim2DataClipInfo& clip)
         {
             std::string warning;
-            const acl::compressed_tracks* tracks = MakeAclTracks(dump, channel.animTracksOffset, warning);
+            AlignedBufferPtr alignedBuffer(nullptr, [](void* ptr) { _aligned_free(ptr); });
+            const acl::compressed_tracks* tracks = MakeAclTracks(dump, channel.animTracksOffset, warning, alignedBuffer);
             if (!tracks)
             {
                 clip.warnings.push_back("Transform channel skipped: " + warning);
@@ -495,7 +518,8 @@ namespace DagorFormats
             Anim2DataClipInfo& clip)
         {
             std::string warning;
-            const acl::compressed_tracks* tracks = MakeAclTracks(dump, channel.animTracksOffset, warning);
+            AlignedBufferPtr alignedBuffer(nullptr, [](void* ptr) { _aligned_free(ptr); });
+            const acl::compressed_tracks* tracks = MakeAclTracks(dump, channel.animTracksOffset, warning, alignedBuffer);
             if (!tracks)
             {
                 clip.warnings.push_back("Float3 channel skipped: " + warning);

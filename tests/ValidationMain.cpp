@@ -1,4 +1,5 @@
 #include "AssetIndex/PackContents.h"
+#include "AssetIndex/DependencyGraph.h"
 #include "DirectXTex.h"
 #include "Export/MaterialTextureResolver.h"
 #include "Export/ModelExporter.h"
@@ -1414,6 +1415,45 @@ int main()
         RunDynModelActionFirstFrameRestPoseValidation(tempRoot);
         RunDynModelParentScalingAndMirroringValidation(tempRoot);
         std::cout << "Validation succeeded: " << tempRoot.string() << std::endl;
+
+        // Performance test with all records
+        {
+            std::cout << "\n=== GRP Performance Test (All Records) ===" << std::endl;
+            const std::filesystem::path cachePath = "C:\\Users\\AldertLake\\Documents\\Random Projects\\Dagor_Assets_Extractor\\build\\vs2026\\bin\\windows\\x86_64\\Debug\\cache\\index-cache";
+            const std::filesystem::path gameRoot = "D:\\SteamLibrary\\steamapps\\common\\War Thunder";
+            const std::filesystem::path grpPath = "D:\\SteamLibrary\\steamapps\\common\\War Thunder\\content\\base\\res\\heliaircrafts.grp";
+            
+            if (std::filesystem::exists(cachePath) && std::filesystem::exists(grpPath))
+            {
+                auto loadResult = DagorAssetsExtractor::AssetIndex::LoadIndexCacheRecords(cachePath, gameRoot);
+                std::cout << "Loaded " << loadResult.records.size() << " records from cache." << std::endl;
+
+                if (!loadResult.records.empty())
+                {
+                    DagorAssetsExtractor::AssetIndex::DescriptorResourceLinkBuildOptions options;
+                    options.focusPath = grpPath;
+                    options.progress = [](const DagorAssetsExtractor::AssetIndex::DescriptorResourceLinkProgress& progress) {
+                        std::cout << "Progress: [" << progress.stage << "] " << progress.item 
+                                  << " (" << progress.current << "/" << progress.total << ")" << std::endl;
+                        return true;
+                    };
+
+                    auto start = std::chrono::high_resolution_clock::now();
+                    auto result = DagorAssetsExtractor::AssetIndex::BuildDescriptorResourceLinks(loadResult.records, options);
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
+
+                    std::cout << "Build status: " << (result.canceled ? "CANCELED" : "SUCCESS") << std::endl;
+                    std::cout << "Warnings: " << result.warnings.size() << std::endl;
+                    std::cout << "Elapsed: " << elapsed << " ms" << std::endl;
+                }
+            }
+            else
+            {
+                std::cout << "Cache or GRP path not found." << std::endl;
+            }
+            std::cout << "==========================================\n" << std::endl;
+        }
+
         return 0;
     }
     catch (const std::exception& ex)

@@ -189,6 +189,170 @@ namespace DagorAssetsExtractor::Export
             return true;
         }
 
+        template <typename TVertex>
+        bool IsDegenerateTriangle(
+            const std::vector<TVertex>& vertices,
+            uint32_t i0,
+            uint32_t i1,
+            uint32_t i2);
+
+        struct MeshAuditStats
+        {
+            bool hasFiniteBounds = false;
+            float minX = std::numeric_limits<float>::max();
+            float minY = std::numeric_limits<float>::max();
+            float minZ = std::numeric_limits<float>::max();
+            float maxX = -std::numeric_limits<float>::max();
+            float maxY = -std::numeric_limits<float>::max();
+            float maxZ = -std::numeric_limits<float>::max();
+            size_t nonFinitePositions = 0;
+            size_t nonFiniteNormals = 0;
+            size_t zeroNormals = 0;
+            size_t validPrimitives = 0;
+            size_t invalidRangePrimitives = 0;
+            size_t invalidIndexPrimitives = 0;
+            size_t degenerateTriangles = 0;
+            size_t outOfRangeMaterials = 0;
+            std::vector<uint32_t> materialSlots;
+        };
+
+        std::string FormatAuditFloat(float value)
+        {
+            if (!std::isfinite(value))
+            {
+                return "nan";
+            }
+
+            std::ostringstream text;
+            text << std::fixed << std::setprecision(3) << value;
+            return text.str();
+        }
+
+        std::string FormatBounds(const MeshAuditStats& stats)
+        {
+            if (!stats.hasFiniteBounds)
+            {
+                return "none";
+            }
+
+            std::ostringstream text;
+            text << "["
+                 << FormatAuditFloat(stats.minX) << "," << FormatAuditFloat(stats.minY) << "," << FormatAuditFloat(stats.minZ)
+                 << "]-["
+                 << FormatAuditFloat(stats.maxX) << "," << FormatAuditFloat(stats.maxY) << "," << FormatAuditFloat(stats.maxZ)
+                 << "]";
+            return text.str();
+        }
+
+        std::string FormatMaterialSlots(std::vector<uint32_t> slots)
+        {
+            if (slots.empty())
+            {
+                return "none";
+            }
+
+            std::sort(slots.begin(), slots.end());
+            slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+
+            std::ostringstream text;
+            const size_t maxListed = std::min<size_t>(slots.size(), 12);
+            for (size_t i = 0; i < maxListed; ++i)
+            {
+                if (i > 0)
+                {
+                    text << ",";
+                }
+                text << slots[i];
+            }
+            if (slots.size() > maxListed)
+            {
+                text << ",+" << (slots.size() - maxListed);
+            }
+            return text.str();
+        }
+
+        template <typename TVertex>
+        MeshAuditStats AuditMeshGeometry(
+            const std::vector<TVertex>& vertices,
+            const std::vector<uint32_t>& indices,
+            const std::vector<DagorFormats::RendInstPrimitive>& primitives,
+            size_t materialCount)
+        {
+            MeshAuditStats stats;
+            for (const auto& vertex : vertices)
+            {
+                if (std::isfinite(vertex.x) && std::isfinite(vertex.y) && std::isfinite(vertex.z))
+                {
+                    stats.hasFiniteBounds = true;
+                    stats.minX = std::min(stats.minX, vertex.x);
+                    stats.minY = std::min(stats.minY, vertex.y);
+                    stats.minZ = std::min(stats.minZ, vertex.z);
+                    stats.maxX = std::max(stats.maxX, vertex.x);
+                    stats.maxY = std::max(stats.maxY, vertex.y);
+                    stats.maxZ = std::max(stats.maxZ, vertex.z);
+                }
+                else
+                {
+                    ++stats.nonFinitePositions;
+                }
+
+                const float normalLenSq = (vertex.nx * vertex.nx) + (vertex.ny * vertex.ny) + (vertex.nz * vertex.nz);
+                if (!std::isfinite(normalLenSq))
+                {
+                    ++stats.nonFiniteNormals;
+                }
+                else if (normalLenSq <= 1e-12f)
+                {
+                    ++stats.zeroNormals;
+                }
+            }
+
+            for (const DagorFormats::RendInstPrimitive& primitive : primitives)
+            {
+                if (primitive.indexCount == 0 ||
+                    primitive.firstIndex >= indices.size() ||
+                    primitive.indexCount > indices.size() - primitive.firstIndex ||
+                    (primitive.indexCount % 3) != 0)
+                {
+                    ++stats.invalidRangePrimitives;
+                    continue;
+                }
+
+                bool hasOutOfRangeIndex = false;
+                for (uint32_t i = 0; i < primitive.indexCount; ++i)
+                {
+                    if (indices[static_cast<size_t>(primitive.firstIndex) + i] >= vertices.size())
+                    {
+                        hasOutOfRangeIndex = true;
+                        break;
+                    }
+                }
+                if (hasOutOfRangeIndex)
+                {
+                    ++stats.invalidIndexPrimitives;
+                    continue;
+                }
+
+                ++stats.validPrimitives;
+                stats.materialSlots.push_back(primitive.materialIndex);
+                if (materialCount > 0 && primitive.materialIndex >= materialCount)
+                {
+                    ++stats.outOfRangeMaterials;
+                }
+
+                for (uint32_t offset = 0; offset + 2 < primitive.indexCount; offset += 3)
+                {
+                    const size_t src = static_cast<size_t>(primitive.firstIndex) + offset;
+                    if (IsDegenerateTriangle(vertices, indices[src], indices[src + 1], indices[src + 2]))
+                    {
+                        ++stats.degenerateTriangles;
+                    }
+                }
+            }
+
+            return stats;
+        }
+
         bool IsIdentityMatrix(const std::array<float, 16>& matrix)
         {
             constexpr std::array<float, 16> kIdentity = {
@@ -2996,17 +3160,57 @@ namespace DagorAssetsExtractor::Export
     {
         std::ofstream debugLog("scratch/export_debug.txt", std::ios::app);
         debugLog << "[ExportToGlb DynModel] Exporting to " << path.string() << std::endl;
+        const auto emitDiagnostic = [&](const std::string& message)
+        {
+            debugLog << "  " << message << std::endl;
+            if (options.diagnosticLog)
+            {
+                options.diagnosticLog(message);
+            }
+        };
+
+        emitDiagnostic(
+            "GLB input summary: meshes=" + std::to_string(lods_in.size()) +
+            ", skeletonNodes=" + std::to_string(skeleton.size()) +
+            ", includeSkeletonRig=" + std::string(includeSkeletonRig ? "true" : "false") +
+            ", animationClips=" + std::to_string(animations.size()) +
+            ", materialSlots=" + std::to_string(materials.size()));
 
         std::vector<DagorFormats::DynModelMesh> lods;
-        for (const auto& lod_in : lods_in)
+        for (size_t lodIndex = 0; lodIndex < lods_in.size(); ++lodIndex)
         {
+            const auto& lod_in = lods_in[lodIndex];
+            const MeshAuditStats inputAudit =
+                AuditMeshGeometry(lod_in.vertices, lod_in.indices, lod_in.primitives, materials.size());
+            emitDiagnostic(
+                "mesh audit input[" + std::to_string(lodIndex) + "] name='" + lod_in.name +
+                "', parent='" + lod_in.parentNodeName +
+                "', skinned=" + std::string(lod_in.useSkinning ? "true" : "false") +
+                ", vertices=" + std::to_string(lod_in.vertices.size()) +
+                ", indices=" + std::to_string(lod_in.indices.size()) +
+                ", primitives=" + std::to_string(lod_in.primitives.size()) +
+                ", validPrimitives=" + std::to_string(inputAudit.validPrimitives) +
+                ", invalidRangePrimitives=" + std::to_string(inputAudit.invalidRangePrimitives) +
+                ", invalidIndexPrimitives=" + std::to_string(inputAudit.invalidIndexPrimitives) +
+                ", degenerateTriangles=" + std::to_string(inputAudit.degenerateTriangles) +
+                ", outOfRangeMaterials=" + std::to_string(inputAudit.outOfRangeMaterials) +
+                ", nonFinitePositions=" + std::to_string(inputAudit.nonFinitePositions) +
+                ", nonFiniteNormals=" + std::to_string(inputAudit.nonFiniteNormals) +
+                ", zeroNormals=" + std::to_string(inputAudit.zeroNormals) +
+                ", materialSlots=" + FormatMaterialSlots(inputAudit.materialSlots) +
+                ", bounds=" + FormatBounds(inputAudit));
+
             if (lod_in.vertices.empty() || lod_in.indices.empty())
             {
-                debugLog << "  LOD " << lod_in.name << " skipped: verts=" << lod_in.vertices.size() << ", indices=" << lod_in.indices.size() << std::endl;
+                emitDiagnostic(
+                    "mesh skipped before GLB write: name='" + lod_in.name +
+                    "', reason=empty vertices or indices, vertices=" + std::to_string(lod_in.vertices.size()) +
+                    ", indices=" + std::to_string(lod_in.indices.size()));
                 continue;
             }
 
             DagorFormats::DynModelMesh validLod = lod_in;
+            const size_t primitivesBeforeValidation = validLod.primitives.size();
             validLod.primitives.erase(
                 std::remove_if(validLod.primitives.begin(), validLod.primitives.end(),
                     [&](const DagorFormats::RendInstPrimitive& p)
@@ -3014,6 +3218,14 @@ namespace DagorAssetsExtractor::Export
                         return !PrimitiveHasValidIndices(validLod.indices, validLod.vertices.size(), p);
                     }),
                 validLod.primitives.end());
+            const size_t invalidPrimitivesRemoved = primitivesBeforeValidation - validLod.primitives.size();
+            if (invalidPrimitivesRemoved > 0)
+            {
+                emitDiagnostic(
+                    "mesh primitive validation removed primitives: name='" + lod_in.name +
+                    "', removed=" + std::to_string(invalidPrimitivesRemoved) +
+                    ", remaining=" + std::to_string(validLod.primitives.size()));
+            }
 
             if (validLod.primitives.empty())
             {
@@ -3024,40 +3236,59 @@ namespace DagorAssetsExtractor::Export
                 };
                 if (!PrimitiveHasValidIndices(validLod.indices, validLod.vertices.size(), defaultPrimitive))
                 {
-                    debugLog << "  LOD " << lod_in.name << " skipped: no valid primitive/index ranges." << std::endl;
+                    emitDiagnostic(
+                        "mesh skipped before GLB write: name='" + lod_in.name +
+                        "', reason=no valid primitive/index ranges");
                     continue;
                 }
-                debugLog << "  LOD " << lod_in.name << " had no valid primitives, creating bounded default." << std::endl;
+                emitDiagnostic(
+                    "mesh had no valid primitives; creating bounded default primitive: name='" + lod_in.name +
+                    "', indexCount=" + std::to_string(defaultPrimitive.indexCount));
                 validLod.primitives.push_back(defaultPrimitive);
             }
 
             const size_t removedDegenerateTriangles = FilterDegenerateTriangles(validLod);
             if (removedDegenerateTriangles > 0)
             {
-                debugLog << "  DynModel mesh " << validLod.name
-                         << " removed " << removedDegenerateTriangles
-                         << " degenerate triangles before GLB export." << std::endl;
+                emitDiagnostic(
+                    "mesh degenerate filter removed triangles: name='" + validLod.name +
+                    "', removedTriangles=" + std::to_string(removedDegenerateTriangles));
             }
             if (validLod.indices.empty() || validLod.primitives.empty())
             {
-                debugLog << "  LOD " << lod_in.name << " skipped: all triangles were degenerate." << std::endl;
+                emitDiagnostic(
+                    "mesh skipped before GLB write: name='" + lod_in.name +
+                    "', reason=all triangles were degenerate");
                 continue;
             }
 
             const size_t repairedNormals = RepairNormals(validLod.vertices, validLod.indices);
             if (repairedNormals > 0)
             {
-                debugLog << "  DynModel mesh " << validLod.name
-                         << " repaired " << repairedNormals
-                         << " invalid/non-unit normals before GLB export." << std::endl;
+                emitDiagnostic(
+                    "mesh normal repair changed vertices: name='" + validLod.name +
+                    "', repairedNormals=" + std::to_string(repairedNormals));
             }
+
+            const MeshAuditStats outputAudit =
+                AuditMeshGeometry(validLod.vertices, validLod.indices, validLod.primitives, materials.size());
+            emitDiagnostic(
+                "mesh audit export[" + std::to_string(lods.size()) + "] name='" + validLod.name +
+                "', vertices=" + std::to_string(validLod.vertices.size()) +
+                ", indices=" + std::to_string(validLod.indices.size()) +
+                ", primitives=" + std::to_string(validLod.primitives.size()) +
+                ", validPrimitives=" + std::to_string(outputAudit.validPrimitives) +
+                ", degenerateTriangles=" + std::to_string(outputAudit.degenerateTriangles) +
+                ", outOfRangeMaterials=" + std::to_string(outputAudit.outOfRangeMaterials) +
+                ", materialSlots=" + FormatMaterialSlots(outputAudit.materialSlots) +
+                ", bounds=" + FormatBounds(outputAudit));
 
             lods.push_back(std::move(validLod));
         }
 
         if (lods.empty())
         {
-            debugLog << "[ExportToGlb DynModel] Failed: no valid LODs after filtering. Total input LODs: " << lods_in.size() << std::endl;
+            emitDiagnostic("GLB export failed: no valid meshes after filtering. inputMeshes=" + std::to_string(lods_in.size()));
             return false;
         }
 
@@ -3275,9 +3506,51 @@ namespace DagorAssetsExtractor::Export
 
         if (exportMeshes.empty())
         {
-            debugLog << "[ExportToGlb DynModel] Failed: no exportable meshes after skeleton layout preparation." << std::endl;
+            emitDiagnostic("GLB export failed: no exportable meshes after skeleton layout preparation.");
             return false;
         }
+
+        size_t skinnedMeshCount = 0;
+        size_t bakedRigidMeshCount = 0;
+        size_t bakedBindPoseMeshCount = 0;
+        size_t skeletonPlacementMeshCount = 0;
+        for (size_t meshIndex = 0; meshIndex < exportMeshes.size(); ++meshIndex)
+        {
+            const DynExportMesh& exportMesh = exportMeshes[meshIndex];
+            if (exportMesh.skinned)
+            {
+                ++skinnedMeshCount;
+            }
+            if (exportMesh.bakeRigidTransform)
+            {
+                ++bakedRigidMeshCount;
+            }
+            if (exportMesh.bakeBindPoseSkin)
+            {
+                ++bakedBindPoseMeshCount;
+            }
+            if (exportMesh.usesSkeletonPlacement)
+            {
+                ++skeletonPlacementMeshCount;
+            }
+
+            emitDiagnostic(
+                "mesh layout[" + std::to_string(meshIndex) + "] name='" + exportMesh.mesh.name +
+                "', skinned=" + std::string(exportMesh.skinned ? "true" : "false") +
+                ", explicitSkin=" + std::string(exportMesh.explicitSkin ? "true" : "false") +
+                ", bakeBindPoseSkin=" + std::string(exportMesh.bakeBindPoseSkin ? "true" : "false") +
+                ", bakeRigidTransform=" + std::string(exportMesh.bakeRigidTransform ? "true" : "false") +
+                ", usesSkeletonPlacement=" + std::string(exportMesh.usesSkeletonPlacement ? "true" : "false") +
+                ", parentJoint=" + (exportMesh.parentJoint == kNoJoint ? std::string("none") : std::to_string(exportMesh.parentJoint)) +
+                ", skinJoints=" + std::to_string(exportMesh.skinJoints.size()));
+        }
+
+        emitDiagnostic(
+            "mesh layout summary: exportMeshes=" + std::to_string(exportMeshes.size()) +
+            ", skinned=" + std::to_string(skinnedMeshCount) +
+            ", bakedRigid=" + std::to_string(bakedRigidMeshCount) +
+            ", bakedBindPose=" + std::to_string(bakedBindPoseMeshCount) +
+            ", skeletonPlacement=" + std::to_string(skeletonPlacementMeshCount));
 
         std::unordered_set<std::string> exportMeshNames;
         exportMeshNames.reserve(exportMeshes.size());
@@ -3747,6 +4020,14 @@ namespace DagorAssetsExtractor::Export
             }
 
             binInfos.push_back(info);
+            emitDiagnostic(
+                "mesh audit gltf[" + std::to_string(meshIndex) + "] name='" + mesh.name +
+                "', vertexBytes=" + std::to_string(info.vertByteLength) +
+                ", indexBytes=" + std::to_string(info.indexByteLength) +
+                ", tangentBytes=" + std::to_string(info.tangentByteLength) +
+                ", hasTangents=" + std::string(info.hasTangent ? "true" : "false") +
+                ", bounds=[" + FormatAuditFloat(info.minX) + "," + FormatAuditFloat(info.minY) + "," + FormatAuditFloat(info.minZ) +
+                "]-[" + FormatAuditFloat(info.maxX) + "," + FormatAuditFloat(info.maxY) + "," + FormatAuditFloat(info.maxZ) + "]");
             while (binBuffer.size() % 4 != 0) binBuffer.push_back(0);
         }
 

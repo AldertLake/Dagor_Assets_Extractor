@@ -1,480 +1,80 @@
-2026-05-31 - 01:33:26 : Application started.
-2026-05-31 - 01:33:26 : Portable cache folder: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Debug\cache
-2026-05-31 - 01:33:26 : Settings path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Debug\cache\Settings.ini
-2026-05-31 - 01:33:26 : Index cache path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Debug\cache\index-cache
-2026-05-31 - 01:33:26 : Descriptor-link cache path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Debug\cache\descriptor-links-cache
-2026-05-31 - 01:33:26 : Loaded saved game folder: D:\SteamLibrary\steamapps\common\War Thunder
-2026-05-31 - 01:33:27 : Loaded 8495 cached records.
-2026-05-31 - 01:33:27 : Descriptor-link cache load scheduled: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Debug\cache\descriptor-links-cache
-2026-05-31 - 01:33:27 : No descriptor-link cache file found. (0 ms)
-2026-05-31 - 01:33:40 : Loaded 8495 cached records.
-2026-05-31 - 01:33:40 : Descriptor-link cache load scheduled: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Debug\cache\descriptor-links-cache
-2026-05-31 - 01:33:40 : No descriptor-link cache file found. (0 ms)
-2026-05-31 - 01:33:40 : Settings saved to C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Debug\cache\Settings.ini
-2026-05-31 - 01:34:23 : Preparing descriptor, GRP, and DXP metadata indexes.
-2026-05-31 - 01:34:23 : Building selected descriptor relationships: target=f_16c_block_40_barak_2.grp, records=8495, blkLinks=0, using universal metadata indexes.
-2026-05-31 - 01:34:24 : Descriptor pass: Parsing descriptor files [0/546] links=0 descriptors=0 grpPacks=0 dxpPacks=0
-2026-05-31 - 01:34:24 : Descriptor link progress: Descriptor pass: Parsing descriptor files [0/546] links=0 descriptors=0 grpPacks=0 dxpPacks=0
-2026-05-31 - 01:34:31 : GRP index: Indexing GRP resource names [1/546] links=0 descriptors=1 grpPacks=0 dxpPacks=0
-2026-05-31 - 01:34:31 : Descriptor link progress: GRP index: Indexing GRP resource names [1/546] links=0 descriptors=1 grpPacks=0 dxpPacks=0
-2026-05-31 - 01:34:54 : Selected scope: targetResources=1, targetTextures=105, dxpCandidates=15 [2/546] links=0 descriptors=1 grpPacks=1 dxpPacks=0
-2026-05-31 - 01:34:54 : Descriptor link progress: Selected scope: targetResources=1, targetTextures=105, dxpCandidates=15 [2/546] links=0 descriptors=1 grpPacks=1 dxpPacks=0
-2026-05-31 - 01:34:54 : DXP index: Indexing DXP texture names [2/546] links=0 descriptors=1 grpPacks=1 dxpPacks=0
-2026-05-31 - 01:34:54 : Descriptor link progress: DXP index: Indexing DXP texture names [2/546] links=0 descriptors=1 grpPacks=1 dxpPacks=0
-2026-05-31 - 01:34:55 : Linking: Resolving descriptor resources to GRP/DXP indexes [17/546] links=0 descriptors=1 grpPacks=1 dxpPacks=15
-2026-05-31 - 01:34:55 : Descriptor link progress: Linking: Resolving descriptor resources to GRP/DXP indexes [17/546] links=0 descriptors=1 grpPacks=1 dxpPacks=15
-2026-05-31 - 01:34:56 : Complete: Descriptor relationships built [546/546] links=1 descriptors=1 grpPacks=1 dxpPacks=15
-2026-05-31 - 01:34:56 : Descriptor link progress: Complete: Descriptor relationships built [546/546] links=1 descriptors=1 grpPacks=1 dxpPacks=15
-2026-05-31 - 01:34:57 : Descriptor relationships built: 1 resources, 1 GRP packs indexed, 15 DXP packs indexed.
-2026-05-31 - 01:34:57 : Descriptor relationships built: 1 resources, 1 GRP packs indexed, 15 DXP packs indexed.
-2026-05-31 - 01:35:16 : Parsing contents of f_16c_block_40_barak_2.grp...
-2026-05-31 - 01:35:16 : Parsed 5 sub-assets from f_16c_block_40_barak_2.grp
-2026-05-31 - 01:35:23 : Exporting model: f_16c_block_40_barak_2_cockpit...
-2026-05-31 - 01:35:23 : Starting model export for: f_16c_block_40_barak_2_cockpit
-2026-05-31 - 01:35:23 : Opening GRP pack file: f_16c_block_40_barak_2.grp
-2026-05-31 - 01:35:23 : GLB material texture export for f_16c_block_40_barak_2_cockpit will use PNG only; DDS/TGA are not core glTF image formats and will not be linked into GLB materials.
-2026-05-31 - 01:35:26 : Resolved descriptor material slots: 75 descriptor-backed materials
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for empty_glass*: [aircrafts-hq.dxp.bin::empty_glass$hq*, zzz-tq_pack.dxp.bin::empty_glass$tq*, aircrafts.dxp.bin::empty_glass*]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16d_block_40_barak2_cockpit_c*: [f_16d_block_40_barak_2-hq.dxp.bin::f_16d_block_40_barak2_cockpit_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16d_block_40_barak2_cockpit_c$tq*, usa_airc_bq.dxp.bin::f_16d_block_40_barak2_cockpit_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16d_block_40_barak2_cockpit_n*: [f_16d_block_40_barak_2-hq.dxp.bin::f_16d_block_40_barak2_cockpit_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16d_block_40_barak2_cockpit_n$tq*, usa_airc_bq.dxp.bin::f_16d_block_40_barak2_cockpit_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_20_mlu_cockpit_labels_c*: [f_16a_block_20_mlu-hq.dxp.bin::f_16a_block_20_mlu_cockpit_labels_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16a_block_20_mlu_cockpit_labels_c$tq*, usa_airc_bq.dxp.bin::f_16a_block_20_mlu_cockpit_labels_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_20_mlu_cockpit_labels_n*: [f_16a_block_20_mlu-hq.dxp.bin::f_16a_block_20_mlu_cockpit_labels_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16a_block_20_mlu_cockpit_labels_n$tq*, usa_airc_bq.dxp.bin::f_16a_block_20_mlu_cockpit_labels_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for zflare_green*: [aircrafts-hq.dxp.bin::zflare_green$hq*, zzz-tq_pack.dxp.bin::zflare_green$tq*, aircrafts.dxp.bin::zflare_green*?abbw]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for glass_dirt*: [aircrafts-hq.dxp.bin::glass_dirt$hq*, zzz-tq_pack.dxp.bin::glass_dirt$tq*, aircrafts.dxp.bin::glass_dirt*]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for bullet_glass_holes*: [aircrafts-hq.dxp.bin::bullet_glass_holes$hq*, zzz-tq_pack.dxp.bin::bullet_glass_holes$tq*, aircrafts.dxp.bin::bullet_glass_holes*]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for damaged_gauges_c*: [aircrafts-hq.dxp.bin::damaged_gauges_c$hq*, zzz-tq_pack.dxp.bin::damaged_gauges_c$tq*, aircrafts.dxp.bin::damaged_gauges_c*]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for bulletholes_c*: [aircrafts-hq.dxp.bin::bulletholes_c$hq*, zzz-tq_pack.dxp.bin::bulletholes_c$tq*, aircrafts.dxp.bin::bulletholes_c*]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for bulletholes_n*: [aircrafts-hq.dxp.bin::bulletholes_n$hq*, zzz-tq_pack.dxp.bin::bulletholes_n$tq*, aircrafts.dxp.bin::bulletholes_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16d_block_40_barak2_cockpit1_c*: [f_16d_block_40_barak_2-hq.dxp.bin::f_16d_block_40_barak2_cockpit1_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16d_block_40_barak2_cockpit1_c$tq*, usa_airc_bq.dxp.bin::f_16d_block_40_barak2_cockpit1_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16d_block_40_barak2_cockpit1_n*: [f_16d_block_40_barak_2-hq.dxp.bin::f_16d_block_40_barak2_cockpit1_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16d_block_40_barak2_cockpit1_n$tq*, usa_airc_bq.dxp.bin::f_16d_block_40_barak2_cockpit1_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16d_block_40_barak2_cockpit_labels_c*: [f_16d_block_40_barak_2-hq.dxp.bin::f_16d_block_40_barak2_cockpit_labels_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16d_block_40_barak2_cockpit_labels_c$tq*, usa_airc_bq.dxp.bin::f_16d_block_40_barak2_cockpit_labels_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16d_block_40_barak2_cockpit_labels_n*: [f_16d_block_40_barak_2-hq.dxp.bin::f_16d_block_40_barak2_cockpit_labels_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16d_block_40_barak2_cockpit_labels_n$tq*, usa_airc_bq.dxp.bin::f_16d_block_40_barak2_cockpit_labels_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_cockpit_labels_illum_c*: [f_16a_block_10-hq.dxp.bin::f_16a_block_10_cockpit_labels_illum_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16a_block_10_cockpit_labels_illum_c$tq*, usa_airc_bq.dxp.bin::f_16a_block_10_cockpit_labels_illum_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for seat_aces2_c*: [_seats-hq.dxp.bin::seat_aces2_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::seat_aces2_c$tq*, usa_airc_bq.dxp.bin::seat_aces2_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for seat_aces2_n*: [_seats-hq.dxp.bin::seat_aces2_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::seat_aces2_n$tq*, usa_airc_bq.dxp.bin::seat_aces2_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_engine_nozzle_positions_f16_c*: [other-hq.dxp.bin::us_gauge_engine_nozzle_positions_f16_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_engine_nozzle_positions_f16_c$tq*, usa_airc_bq.dxp.bin::us_gauge_engine_nozzle_positions_f16_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_engine_nozzle_positions_f16_n*: [other-hq.dxp.bin::us_gauge_engine_nozzle_positions_f16_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_engine_nozzle_positions_f16_n$tq*, usa_airc_bq.dxp.bin::us_gauge_engine_nozzle_positions_f16_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_oil_pressure_100_psi_f16_c*: [oil-hq.dxp.bin::us_gauge_oil_pressure_100_psi_f16_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_oil_pressure_100_psi_f16_c$tq*, usa_airc_bq.dxp.bin::us_gauge_oil_pressure_100_psi_f16_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_oil_pressure_100_psi_f16_n*: [oil-hq.dxp.bin::us_gauge_oil_pressure_100_psi_f16_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_oil_pressure_100_psi_f16_n$tq*, usa_airc_bq.dxp.bin::us_gauge_oil_pressure_100_psi_f16_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_fan_turbine_inlet_temperature_f16_c*: [exhaust_temperature-hq.dxp.bin::us_gauge_fan_turbine_inlet_temperature_f16_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_fan_turbine_inlet_temperature_f16_c$tq*, usa_airc_bq.dxp.bin::us_gauge_fan_turbine_inlet_temperature_f16_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_fan_turbine_inlet_temperature_f16_n*: [exhaust_temperature-hq.dxp.bin::us_gauge_fan_turbine_inlet_temperature_f16_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_fan_turbine_inlet_temperature_f16_n$tq*, usa_airc_bq.dxp.bin::us_gauge_fan_turbine_inlet_temperature_f16_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_fuel_remaining_type_jp8_c*: [fuel-hq.dxp.bin::us_gauge_fuel_remaining_type_jp8_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_fuel_remaining_type_jp8_c$tq*, usa_airc_bq.dxp.bin::us_gauge_fuel_remaining_type_jp8_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_fuel_remaining_type_jp8_n*: [fuel-hq.dxp.bin::us_gauge_fuel_remaining_type_jp8_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_fuel_remaining_type_jp8_n$tq*, usa_airc_bq.dxp.bin::us_gauge_fuel_remaining_type_jp8_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_compass_type_aqu_3a_c*: [compass-hq.dxp.bin::us_gauge_compass_type_aqu_3a_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_compass_type_aqu_3a_c$tq*, usa_airc_bq.dxp.bin::us_gauge_compass_type_aqu_3a_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_compass_type_aqu_3a_n*: [compass-hq.dxp.bin::us_gauge_compass_type_aqu_3a_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_compass_type_aqu_3a_n$tq*, usa_airc_bq.dxp.bin::us_gauge_compass_type_aqu_3a_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_hydraulic_pressure_a10_c*: [pressure-hq.dxp.bin::us_gauge_hydraulic_pressure_a10_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_hydraulic_pressure_a10_c$tq*, usa_airc_bq.dxp.bin::us_gauge_hydraulic_pressure_a10_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_hydraulic_pressure_a10_n*: [pressure-hq.dxp.bin::us_gauge_hydraulic_pressure_a10_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_hydraulic_pressure_a10_n$tq*, usa_airc_bq.dxp.bin::us_gauge_hydraulic_pressure_a10_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_fuel_remaining_epu_c*: [fuel-hq.dxp.bin::us_gauge_fuel_remaining_epu_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_fuel_remaining_epu_c$tq*, usa_airc_bq.dxp.bin::us_gauge_fuel_remaining_epu_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_fuel_remaining_epu_n*: [fuel-hq.dxp.bin::us_gauge_fuel_remaining_epu_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_fuel_remaining_epu_n$tq*, usa_airc_bq.dxp.bin::us_gauge_fuel_remaining_epu_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_cabin_pressure_alt_type_x_1000_c*: [altitude-hq.dxp.bin::us_gauge_cabin_pressure_alt_type_x_1000_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_cabin_pressure_alt_type_x_1000_c$tq*, usa_airc_bq.dxp.bin::us_gauge_cabin_pressure_alt_type_x_1000_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_cabin_pressure_alt_type_x_1000_n*: [altitude-hq.dxp.bin::us_gauge_cabin_pressure_alt_type_x_1000_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_cabin_pressure_alt_type_x_1000_n$tq*, usa_airc_bq.dxp.bin::us_gauge_cabin_pressure_alt_type_x_1000_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for uk_gauge_clock_type_a_13a_c*: [clock-hq.dxp.bin::uk_gauge_clock_type_a_13a_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::uk_gauge_clock_type_a_13a_c$tq*, uk_airc_bq.dxp.bin::uk_gauge_clock_type_a_13a_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for uk_gauge_clock_type_a_13a_n*: [clock-hq.dxp.bin::uk_gauge_clock_type_a_13a_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::uk_gauge_clock_type_a_13a_n$tq*, uk_airc_bq.dxp.bin::uk_gauge_clock_type_a_13a_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_speed_indicator_mtype_avu_8_a_c*: [speed-hq.dxp.bin::us_gauge_speed_indicator_mtype_avu_8_a_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_speed_indicator_mtype_avu_8_a_c$tq*, usa_airc_bq.dxp.bin::us_gauge_speed_indicator_mtype_avu_8_a_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_speed_indicator_mtype_avu_8_a_n*: [speed-hq.dxp.bin::us_gauge_speed_indicator_mtype_avu_8_a_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_speed_indicator_mtype_avu_8_a_n$tq*, usa_airc_bq.dxp.bin::us_gauge_speed_indicator_mtype_avu_8_a_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_barometric_altimeter_type_aau_34a_c*: [altitude-hq.dxp.bin::us_gauge_barometric_altimeter_type_aau_34a_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_barometric_altimeter_type_aau_34a_c$tq*, usa_airc_bq.dxp.bin::us_gauge_barometric_altimeter_type_aau_34a_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_barometric_altimeter_type_aau_34a_n*: [altitude-hq.dxp.bin::us_gauge_barometric_altimeter_type_aau_34a_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_barometric_altimeter_type_aau_34a_n$tq*, usa_airc_bq.dxp.bin::us_gauge_barometric_altimeter_type_aau_34a_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_aviahorizon_turn_bank_f16_c*: [artifical_horizon-hq.dxp.bin::us_gauge_aviahorizon_turn_bank_f16_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_aviahorizon_turn_bank_f16_c$tq*, usa_airc_bq.dxp.bin::us_gauge_aviahorizon_turn_bank_f16_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_aviahorizon_turn_bank_f16_n*: [artifical_horizon-hq.dxp.bin::us_gauge_aviahorizon_turn_bank_f16_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_aviahorizon_turn_bank_f16_n$tq*, usa_airc_bq.dxp.bin::us_gauge_aviahorizon_turn_bank_f16_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for uk_gauge_horizontal_situation_indicator_type_aqu_13a_c*: [compass-hq.dxp.bin::uk_gauge_horizontal_situation_indicator_type_aqu_13a_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::uk_gauge_horizontal_situation_indicator_type_aqu_13a_c$tq*, uk_airc_bq.dxp.bin::uk_gauge_horizontal_situation_indicator_type_aqu_13a_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for uk_gauge_horizontal_situation_indicator_type_aqu_13a_n*: [compass-hq.dxp.bin::uk_gauge_horizontal_situation_indicator_type_aqu_13a_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::uk_gauge_horizontal_situation_indicator_type_aqu_13a_n$tq*, uk_airc_bq.dxp.bin::uk_gauge_horizontal_situation_indicator_type_aqu_13a_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_aviahorizon_type_6_0_c*: [artifical_horizon-hq.dxp.bin::us_gauge_aviahorizon_type_6_0_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_aviahorizon_type_6_0_c$tq*, usa_airc_bq.dxp.bin::us_gauge_aviahorizon_type_6_0_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_aviahorizon_type_6_0_n*: [artifical_horizon-hq.dxp.bin::us_gauge_aviahorizon_type_6_0_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_aviahorizon_type_6_0_n$tq*, usa_airc_bq.dxp.bin::us_gauge_aviahorizon_type_6_0_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_radar_warning_receiver_ip1310_c*: [other-hq.dxp.bin::us_gauge_radar_warning_receiver_ip1310_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_radar_warning_receiver_ip1310_c$tq*, usa_airc_bq.dxp.bin::us_gauge_radar_warning_receiver_ip1310_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_radar_warning_receiver_ip1310_n*: [other-hq.dxp.bin::us_gauge_radar_warning_receiver_ip1310_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_radar_warning_receiver_ip1310_n$tq*, usa_airc_bq.dxp.bin::us_gauge_radar_warning_receiver_ip1310_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_color_mfd_c*: [other-hq.dxp.bin::us_gauge_color_mfd_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_color_mfd_c$tq*, usa_airc_bq.dxp.bin::us_gauge_color_mfd_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_color_mfd_n*: [other-hq.dxp.bin::us_gauge_color_mfd_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_color_mfd_n$tq*, usa_airc_bq.dxp.bin::us_gauge_color_mfd_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_angle_of_attack_indicator_f16_c*: [aoa-hq.dxp.bin::us_gauge_angle_of_attack_indicator_f16_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_angle_of_attack_indicator_f16_c$tq*, usa_airc_bq.dxp.bin::us_gauge_angle_of_attack_indicator_f16_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_angle_of_attack_indicator_f16_n*: [aoa-hq.dxp.bin::us_gauge_angle_of_attack_indicator_f16_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_angle_of_attack_indicator_f16_n$tq*, usa_airc_bq.dxp.bin::us_gauge_angle_of_attack_indicator_f16_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_tachometer_f16_20_c*: [rpm-hq.dxp.bin::us_gauge_tachometer_f16_20_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_tachometer_f16_20_c$tq*, usa_airc_bq.dxp.bin::us_gauge_tachometer_f16_20_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_tachometer_f16_20_n*: [rpm-hq.dxp.bin::us_gauge_tachometer_f16_20_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_tachometer_f16_20_n$tq*, usa_airc_bq.dxp.bin::us_gauge_tachometer_f16_20_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_fuel_flow_meter_f16_20_c*: [fuel-hq.dxp.bin::us_gauge_fuel_flow_meter_f16_20_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_fuel_flow_meter_f16_20_c$tq*, usa_airc_bq.dxp.bin::us_gauge_fuel_flow_meter_f16_20_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_fuel_flow_meter_f16_20_n*: [fuel-hq.dxp.bin::us_gauge_fuel_flow_meter_f16_20_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_fuel_flow_meter_f16_20_n$tq*, usa_airc_bq.dxp.bin::us_gauge_fuel_flow_meter_f16_20_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_vario_f16_20_c*: [vario-hq.dxp.bin::us_gauge_vario_f16_20_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_vario_f16_20_c$tq*, usa_airc_bq.dxp.bin::us_gauge_vario_f16_20_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_vario_f16_20_n*: [vario-hq.dxp.bin::us_gauge_vario_f16_20_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_vario_f16_20_n$tq*, usa_airc_bq.dxp.bin::us_gauge_vario_f16_20_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_20_mlu_cockpit_stick_c*: [f_16a_block_20_mlu-hq.dxp.bin::f_16a_block_20_mlu_cockpit_stick_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16a_block_20_mlu_cockpit_stick_c$tq*, usa_airc_bq.dxp.bin::f_16a_block_20_mlu_cockpit_stick_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_20_mlu_cockpit_stick_n*: [f_16a_block_20_mlu-hq.dxp.bin::f_16a_block_20_mlu_cockpit_stick_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::f_16a_block_20_mlu_cockpit_stick_n$tq*, usa_airc_bq.dxp.bin::f_16a_block_20_mlu_cockpit_stick_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_mlu_hud_c*: [aircrafts-hq.dxp.bin::us_mlu_hud_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_mlu_hud_c$tq*, aircrafts.dxp.bin::us_mlu_hud_c*]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_mlu_hud_n*: [aircrafts-hq.dxp.bin::us_mlu_hud_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_mlu_hud_n$tq*, aircrafts.dxp.bin::us_mlu_hud_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_oxygen_indicator_f5a_c*: [oxygen-hq.dxp.bin::us_gauge_oxygen_indicator_f5a_c$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_oxygen_indicator_f5a_c$tq*, usa_airc_bq.dxp.bin::us_gauge_oxygen_indicator_f5a_c*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gauge_oxygen_indicator_f5a_n*: [oxygen-hq.dxp.bin::us_gauge_oxygen_indicator_f5a_n$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::us_gauge_oxygen_indicator_f5a_n$tq*, usa_airc_bq.dxp.bin::us_gauge_oxygen_indicator_f5a_n*?na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for zflare_red*: [aircrafts-hq.dxp.bin::zflare_red$hq*, zzz-tq_pack.dxp.bin::zflare_red$tq*, aircrafts.dxp.bin::zflare_red*?abbw]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for zflare_yellow*: [aircrafts-hq.dxp.bin::zflare_yellow$hq*, pkg_cockpits_zzz-tq_pack.dxp.bin::zflare_yellow$tq*, aircrafts.dxp.bin::zflare_yellow*?na16]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16c_block_40_barak_2_c*: [f_16c_block_40_barak_2.dxp.bin::f_16c_block_40_barak_2_c$hq*, zzz-tq_pack.dxp.bin::f_16c_block_40_barak_2_c$tq*, usa_air_bq.dxp.bin::f_16c_block_40_barak_2_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16c_block_40_barak_2_n*: [f_16c_block_40_barak_2.dxp.bin::f_16c_block_40_barak_2_n$hq*, zzz-tq_pack.dxp.bin::f_16c_block_40_barak_2_n$tq*, usa_air_bq.dxp.bin::f_16c_block_40_barak_2_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for aircraft_normal_detail_lo_n*: [aircrafts-hq.dxp.bin::aircraft_normal_detail_lo_n$hq*, zzz-tq_pack.dxp.bin::aircraft_normal_detail_lo_n$tq*, aircrafts.dxp.bin::aircraft_normal_detail_lo_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for 4_blade_slow_propmask*: [aircrafts.dxp.bin::4_blade_slow_propmask$hq*, zzz-tq_pack.dxp.bin::4_blade_slow_propmask$tq*, aircrafts.dxp.bin::4_blade_slow_propmask*?abbwu05]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for prop_nm_spec*: [aircrafts-hq.dxp.bin::prop_nm_spec$hq*, zzz-tq_pack.dxp.bin::prop_nm_spec$tq*, aircrafts.dxp.bin::prop_nm_spec*?abbwq0-0-1]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for black_yellow_sb2c_1c_rottex*: [aircrafts.dxp.bin::black_yellow_sb2c_1c_rottex$hq*, zzz-tq_pack.dxp.bin::black_yellow_sb2c_1c_rottex$tq*, aircrafts.dxp.bin::black_yellow_sb2c_1c_rottex*?accwu01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for 4_blade_fast_propmask*: [aircrafts.dxp.bin::4_blade_fast_propmask$hq*, zzz-tq_pack.dxp.bin::4_blade_fast_propmask$tq*, aircrafts.dxp.bin::4_blade_fast_propmask*?abbwu05]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16c_block_50_inside_c*: [f_16c_block_50.dxp.bin::f_16c_block_50_inside_c$hq*, zzz-tq_pack.dxp.bin::f_16c_block_50_inside_c$tq*, usa_air_bq.dxp.bin::f_16c_block_50_inside_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16c_block_50_inside_n*: [f_16c_block_50.dxp.bin::f_16c_block_50_inside_n$hq*, zzz-tq_pack.dxp.bin::f_16c_block_50_inside_n$tq*, usa_air_bq.dxp.bin::f_16c_block_50_inside_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_lattice_c*: [f_16a_block_10.dxp.bin::f_16a_block_10_lattice_c$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_lattice_c$tq*, usa_air_bq.dxp.bin::f_16a_block_10_lattice_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_lattice_n*: [f_16a_block_10.dxp.bin::f_16a_block_10_lattice_n$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_lattice_n$tq*, usa_air_bq.dxp.bin::f_16a_block_10_lattice_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16c_block_40_barak_2_1_c*: [f_16c_block_40_barak_2.dxp.bin::f_16c_block_40_barak_2_1_c$hq*, zzz-tq_pack.dxp.bin::f_16c_block_40_barak_2_1_c$tq*, usa_air_bq.dxp.bin::f_16c_block_40_barak_2_1_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16c_block_40_barak_2_1_n*: [f_16c_block_40_barak_2.dxp.bin::f_16c_block_40_barak_2_1_n$hq*, zzz-tq_pack.dxp.bin::f_16c_block_40_barak_2_1_n$tq*, usa_air_bq.dxp.bin::f_16c_block_40_barak_2_1_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_pylon2_c*: [f_16a_block_10.dxp.bin::f_16a_block_10_pylon2_c$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_pylon2_c$tq*, usa_air_bq.dxp.bin::f_16a_block_10_pylon2_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_pylon2_n*: [f_16a_block_10.dxp.bin::f_16a_block_10_pylon2_n$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_pylon2_n$tq*, usa_air_bq.dxp.bin::f_16a_block_10_pylon2_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_pylon1_c*: [f_16a_block_10.dxp.bin::f_16a_block_10_pylon1_c$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_pylon1_c$tq*, usa_air_bq.dxp.bin::f_16a_block_10_pylon1_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_pylon1_n*: [f_16a_block_10.dxp.bin::f_16a_block_10_pylon1_n$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_pylon1_n$tq*, usa_air_bq.dxp.bin::f_16a_block_10_pylon1_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_launcher_aim9_c*: [f_16a_block_10.dxp.bin::f_16a_block_10_launcher_aim9_c$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_launcher_aim9_c$tq*, usa_air_bq.dxp.bin::f_16a_block_10_launcher_aim9_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_launcher_aim9_n*: [f_16a_block_10.dxp.bin::f_16a_block_10_launcher_aim9_n$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_launcher_aim9_n$tq*, usa_air_bq.dxp.bin::f_16a_block_10_launcher_aim9_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gpu_5a_pod_c*: [aircrafts.dxp.bin::us_gpu_5a_pod_c$hq*, zzz-tq_pack.dxp.bin::us_gpu_5a_pod_c$tq*, aircrafts.dxp.bin::us_gpu_5a_pod_c*?q0-1-1na16u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_gpu_5a_pod_n*: [aircrafts.dxp.bin::us_gpu_5a_pod_n$hq*, zzz-tq_pack.dxp.bin::us_gpu_5a_pod_n$tq*, aircrafts.dxp.bin::us_gpu_5a_pod_n*?q0-1-1na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for gunfire*: [aircrafts-hq.dxp.bin::gunfire$hq*, zzz-tq_pack.dxp.bin::gunfire$tq*, aircrafts.dxp.bin::gunfire*]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for jet_flame_diamonds*: [aircrafts.dxp.bin::jet_flame_diamonds$hq*, zzz-tq_pack.dxp.bin::jet_flame_diamonds$tq*, aircrafts.dxp.bin::jet_flame_diamonds*?accwu05]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_lau_117_c*: [usa_aircrafts.dxp.bin::us_lau_117_c$hq*, zzz-tq_pack.dxp.bin::us_lau_117_c$tq*, usa_aircrafts.dxp.bin::us_lau_117_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_lau_117_n*: [usa_aircrafts.dxp.bin::us_lau_117_n$hq*, zzz-tq_pack.dxp.bin::us_lau_117_n$tq*, usa_aircrafts.dxp.bin::us_lau_117_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_300gal_drop_tank_with_f_16_fuse_pylon_c*: [weaponry.dxp.bin::us_300gal_drop_tank_with_f_16_fuse_pylon_c$hq*, zzz-tq_pack.dxp.bin::us_300gal_drop_tank_with_f_16_fuse_pylon_c$tq*, weaponry.dxp.bin::us_300gal_drop_tank_with_f_16_fuse_pylon_c*]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_300gal_drop_tank_with_f_16_fuse_pylon_n*: [weaponry.dxp.bin::us_300gal_drop_tank_with_f_16_fuse_pylon_n$hq*, zzz-tq_pack.dxp.bin::us_300gal_drop_tank_with_f_16_fuse_pylon_n$tq*, weaponry.dxp.bin::us_300gal_drop_tank_with_f_16_fuse_pylon_n*?q0-1-1u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_pylon2a_c*: [f_16a_block_10.dxp.bin::f_16a_block_10_pylon2a_c$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_pylon2a_c$tq*, usa_air_bq.dxp.bin::f_16a_block_10_pylon2a_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_pylon2a_n*: [f_16a_block_10.dxp.bin::f_16a_block_10_pylon2a_n$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_pylon2a_n$tq*, usa_air_bq.dxp.bin::f_16a_block_10_pylon2a_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_lantirn_pylon_dark_c*: [usa_aircrafts.dxp.bin::us_lantirn_pylon_dark_c$hq*, zzz-tq_pack.dxp.bin::us_lantirn_pylon_dark_c$tq*, usa_aircrafts.dxp.bin::us_lantirn_pylon_dark_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_lantirn_pylon_n*: [usa_aircrafts.dxp.bin::us_lantirn_pylon_n$hq*, zzz-tq_pack.dxp.bin::us_lantirn_pylon_n$tq*, usa_aircrafts.dxp.bin::us_lantirn_pylon_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for litening_2_pod_c*: [usa_aircrafts.dxp.bin::litening_2_pod_c$hq*, zzz-tq_pack.dxp.bin::litening_2_pod_c$tq*, usa_aircrafts.dxp.bin::litening_2_pod_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for litening_2_pod_n*: [usa_aircrafts.dxp.bin::litening_2_pod_n$hq*, zzz-tq_pack.dxp.bin::litening_2_pod_n$tq*, usa_aircrafts.dxp.bin::litening_2_pod_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for mesh1_a*: [aircrafts.dxp.bin::mesh1_a$hq*, zzz-tq_pack.dxp.bin::mesh1_a$tq*, aircrafts.dxp.bin::mesh1_a*?q0-1-1na16u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for mesh1_n*: [aircrafts.dxp.bin::mesh1_n$hq*, zzz-tq_pack.dxp.bin::mesh1_n$tq*, aircrafts.dxp.bin::mesh1_n*?q0-1-1na16u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_drop_tank_pylon_c*: [f_16a_block_10.dxp.bin::f_16a_block_10_drop_tank_pylon_c$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_drop_tank_pylon_c$tq*, usa_air_bq.dxp.bin::f_16a_block_10_drop_tank_pylon_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for f_16a_block_10_drop_tank_pylon_n*: [f_16a_block_10.dxp.bin::f_16a_block_10_drop_tank_pylon_n$hq*, zzz-tq_pack.dxp.bin::f_16a_block_10_drop_tank_pylon_n$tq*, usa_air_bq.dxp.bin::f_16a_block_10_drop_tank_pylon_n*?u03]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_lau_129aa_c*: [usa_aircrafts.dxp.bin::us_lau_129aa_c$hq*, zzz-tq_pack.dxp.bin::us_lau_129aa_c$tq*, usa_aircrafts.dxp.bin::us_lau_129aa_c*?u01]
-2026-05-31 - 01:36:14 : Resolved texture dependency candidates for us_lau_129aa_n*: [usa_aircrafts.dxp.bin::us_lau_129aa_n$hq*, zzz-tq_pack.dxp.bin::us_lau_129aa_n$tq*, usa_aircrafts.dxp.bin::us_lau_129aa_n*?u03]
-2026-05-31 - 01:36:25 : Exporting 105 texture dependencies...
-2026-05-31 - 01:36:25 : Preparing texture export: f_16a_block_20_mlu_cockpit_labels_c* from f_16a_block_20_mlu-hq.dxp.bin :: f_16a_block_20_mlu_cockpit_labels_c$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:25 : Preparing texture export: f_16a_block_20_mlu_cockpit_labels_n* from f_16a_block_20_mlu-hq.dxp.bin :: f_16a_block_20_mlu_cockpit_labels_n$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:25 : Preparing texture export: f_16d_block_40_barak2_cockpit_n* from f_16d_block_40_barak_2-hq.dxp.bin :: f_16d_block_40_barak2_cockpit_n$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:25 : DDSx header: fmt=DXT1 (BC1) (827611204), size=2048x2048, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=3, flags=0x60084011, compression=Oodle, memSz=2097164, packedSz=672104, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:25 : DDSx header: fmt=DXT5 (BC3) (894720068), size=2048x2048, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=4, flags=0x6008C011, compression=Oodle, memSz=4194316, packedSz=797008, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:25 : Preparing texture export: f_16d_block_40_barak2_cockpit_c* from f_16d_block_40_barak_2-hq.dxp.bin :: f_16d_block_40_barak2_cockpit_c$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:25 : Preparing texture export: empty_glass* from zzz-tq_pack.dxp.bin :: empty_glass$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:25 : DDSx header: fmt=DXT5 (BC3) (894720068), size=4096x4096, mips=3, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=2, dxtShift=4, flags=0x6008C011, compression=Oodle, memSz=16777228, packedSz=6374216, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:25 : Preparing texture export: bullet_glass_holes* from zzz-tq_pack.dxp.bin :: bullet_glass_holes$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:25 : Preparing texture export: f_16d_block_40_barak2_cockpit1_c* from f_16d_block_40_barak_2-hq.dxp.bin :: f_16d_block_40_barak2_cockpit1_c$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:25 : DDSx header: fmt=DXT1 (BC1) (827611204), size=4096x4096, mips=3, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=2, dxtShift=3, flags=0x60084011, compression=Oodle, memSz=8388620, packedSz=3902928, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:25 : Preparing texture export: f_16d_block_40_barak2_cockpit1_n* from f_16d_block_40_barak_2-hq.dxp.bin :: f_16d_block_40_barak2_cockpit1_n$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:25 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=1392, packedSz=56, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:25 : Preparing texture export: f_16d_block_40_barak2_cockpit_labels_c* from f_16d_block_40_barak_2-hq.dxp.bin :: f_16d_block_40_barak2_cockpit_labels_c$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:25 : Preparing texture export: f_16d_block_40_barak2_cockpit_labels_n* from f_16d_block_40_barak_2-hq.dxp.bin :: f_16d_block_40_barak2_cockpit_labels_n$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:25 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=1392, packedSz=696, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:25 : DDSx header: fmt=DXT1 (BC1) (827611204), size=4096x2048, mips=3, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=2, dxtShift=3, flags=0x60084011, compression=Oodle, memSz=4194316, packedSz=1872120, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:25 : Preparing texture export: bulletholes_c* from zzz-tq_pack.dxp.bin :: bulletholes_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:25 : Preparing texture export: bulletholes_n* from zzz-tq_pack.dxp.bin :: bulletholes_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=4096x2048, mips=3, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=2, dxtShift=4, flags=0x6008C011, compression=Oodle, memSz=8388620, packedSz=2600176, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Preparing texture export: damaged_gauges_c* from zzz-tq_pack.dxp.bin :: damaged_gauges_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: glass_dirt* from zzz-tq_pack.dxp.bin :: glass_dirt$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=524288, packedSz=152232, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=1048576, packedSz=158840, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Preparing texture export: zflare_green* from aircrafts.dxp.bin :: zflare_green*?abbw [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=1392, packedSz=1008, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x00048011, compression=None, memSz=1392, packedSz=0, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x00040011, compression=None, memSz=1392, packedSz=0, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=128x16, mips=8, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=2, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=2832, packedSz=1376, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=A8R8G8B8 (21), size=16x16, mips=5, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=4, dxtShift=0, flags=0x60040044, compression=Oodle, memSz=1364, packedSz=720, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: bullet_glass_holes*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: empty_glass*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: damaged_gauges_c*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_cockpit_labels_illum_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: f_16a_block_10_cockpit_labels_illum_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: seat_aces2_c* from _seats-hq.dxp.bin :: seat_aces2_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: bulletholes_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: glass_dirt*
-2026-05-31 - 01:36:26 : Preparing texture export: seat_aces2_n* from _seats-hq.dxp.bin :: seat_aces2_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: bulletholes_n*
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=1392, packedSz=952, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=2048x2048, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=3, flags=0x60084011, compression=Oodle, memSz=2097164, packedSz=1102992, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: zflare_green*
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=2048x2048, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=4, flags=0x6008C011, compression=Oodle, memSz=4194316, packedSz=1791808, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_engine_nozzle_positions_f16_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_engine_nozzle_positions_f16_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_engine_nozzle_positions_f16_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_engine_nozzle_positions_f16_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_oil_pressure_100_psi_f16_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_oil_pressure_100_psi_f16_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_oil_pressure_100_psi_f16_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_oil_pressure_100_psi_f16_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=1976, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=848, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2048, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=904, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_cockpit_labels_illum_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_fan_turbine_inlet_temperature_f16_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_fan_turbine_inlet_temperature_f16_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2088, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_engine_nozzle_positions_f16_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_oil_pressure_100_psi_f16_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_engine_nozzle_positions_f16_n*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_oil_pressure_100_psi_f16_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_fuel_remaining_type_jp8_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_fuel_remaining_type_jp8_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_fuel_remaining_type_jp8_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_fuel_remaining_type_jp8_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_fan_turbine_inlet_temperature_f16_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_fan_turbine_inlet_temperature_f16_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_compass_type_aqu_3a_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_compass_type_aqu_3a_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=920, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2160, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=960, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_fan_turbine_inlet_temperature_f16_c*
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2160, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_compass_type_aqu_3a_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_compass_type_aqu_3a_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=768, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_fuel_remaining_type_jp8_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_fuel_remaining_type_jp8_n*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_fan_turbine_inlet_temperature_f16_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_hydraulic_pressure_a10_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_hydraulic_pressure_a10_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_compass_type_aqu_3a_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_compass_type_aqu_3a_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_fuel_remaining_epu_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_fuel_remaining_epu_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_hydraulic_pressure_a10_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_hydraulic_pressure_a10_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2024, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=1960, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=1000, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_cabin_pressure_alt_type_x_1000_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_cabin_pressure_alt_type_x_1000_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_fuel_remaining_epu_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_fuel_remaining_epu_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2208, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=840, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16d_block_40_barak2_cockpit_labels_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_cabin_pressure_alt_type_x_1000_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_cabin_pressure_alt_type_x_1000_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=904, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_cabin_pressure_alt_type_x_1000_c*
-2026-05-31 - 01:36:26 : Preparing texture export: uk_gauge_clock_type_a_13a_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: uk_gauge_clock_type_a_13a_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2048, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_hydraulic_pressure_a10_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_fuel_remaining_epu_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_hydraulic_pressure_a10_n*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_fuel_remaining_epu_n*
-2026-05-31 - 01:36:26 : Preparing texture export: uk_gauge_clock_type_a_13a_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: uk_gauge_clock_type_a_13a_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=880, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_barometric_altimeter_type_aau_34a_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_barometric_altimeter_type_aau_34a_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_speed_indicator_mtype_avu_8_a_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_speed_indicator_mtype_avu_8_a_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_speed_indicator_mtype_avu_8_a_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_speed_indicator_mtype_avu_8_a_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2152, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2088, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=904, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_cabin_pressure_alt_type_x_1000_n*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: uk_gauge_clock_type_a_13a_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_barometric_altimeter_type_aau_34a_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_barometric_altimeter_type_aau_34a_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_aviahorizon_turn_bank_f16_c* from artifical_horizon-hq.dxp.bin :: us_gauge_aviahorizon_turn_bank_f16_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=896, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=262144, packedSz=76120, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_barometric_altimeter_type_aau_34a_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_aviahorizon_turn_bank_f16_n* from artifical_horizon-hq.dxp.bin :: us_gauge_aviahorizon_turn_bank_f16_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_speed_indicator_mtype_avu_8_a_c*
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=524288, packedSz=103800, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: uk_gauge_clock_type_a_13a_n*
-2026-05-31 - 01:36:26 : Preparing texture export: uk_gauge_horizontal_situation_indicator_type_aqu_13a_c* from compass-hq.dxp.bin :: uk_gauge_horizontal_situation_indicator_type_aqu_13a_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_speed_indicator_mtype_avu_8_a_n*
-2026-05-31 - 01:36:26 : Preparing texture export: uk_gauge_horizontal_situation_indicator_type_aqu_13a_n* from compass-hq.dxp.bin :: uk_gauge_horizontal_situation_indicator_type_aqu_13a_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=524288, packedSz=144288, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=1048576, packedSz=235104, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_barometric_altimeter_type_aau_34a_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_aviahorizon_type_6_0_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_aviahorizon_type_6_0_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_aviahorizon_type_6_0_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_aviahorizon_type_6_0_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2152, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=816, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_aviahorizon_type_6_0_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_radar_warning_receiver_ip1310_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_radar_warning_receiver_ip1310_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=1928, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_aviahorizon_type_6_0_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_radar_warning_receiver_ip1310_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_radar_warning_receiver_ip1310_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=664, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_radar_warning_receiver_ip1310_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_color_mfd_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_color_mfd_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=1776, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_radar_warning_receiver_ip1310_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_color_mfd_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_color_mfd_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=640, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_color_mfd_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_angle_of_attack_indicator_f16_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_angle_of_attack_indicator_f16_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=1384, packedSz=1112, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_color_mfd_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_angle_of_attack_indicator_f16_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_angle_of_attack_indicator_f16_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=2768, packedSz=1216, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_angle_of_attack_indicator_f16_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_tachometer_f16_20_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_tachometer_f16_20_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=2168, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_angle_of_attack_indicator_f16_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_tachometer_f16_20_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_tachometer_f16_20_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=960, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_tachometer_f16_20_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_fuel_flow_meter_f16_20_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_fuel_flow_meter_f16_20_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=1384, packedSz=1088, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_tachometer_f16_20_n*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_fuel_flow_meter_f16_20_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_fuel_flow_meter_f16_20_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_fuel_flow_meter_f16_20_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=2768, packedSz=1376, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_vario_f16_20_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_vario_f16_20_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=1384, packedSz=1104, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_vario_f16_20_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_fuel_flow_meter_f16_20_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_20_mlu_cockpit_stick_c* from f_16a_block_20_mlu-hq.dxp.bin :: f_16a_block_20_mlu_cockpit_stick_c$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=524288, packedSz=288328, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_vario_f16_20_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_vario_f16_20_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=2768, packedSz=1480, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_aviahorizon_turn_bank_f16_c*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_20_mlu_cockpit_stick_n* from f_16a_block_20_mlu-hq.dxp.bin :: f_16a_block_20_mlu_cockpit_stick_n$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=1048576, packedSz=606080, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_vario_f16_20_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_mlu_hud_c* from aircrafts-hq.dxp.bin :: us_mlu_hud_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=2048x1024, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=3, flags=0x600C0011, compression=Oodle, memSz=1310720, packedSz=453904, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: uk_gauge_horizontal_situation_indicator_type_aqu_13a_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_mlu_hud_n* from aircrafts-hq.dxp.bin :: us_mlu_hud_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=2048x1024, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=4, flags=0x600C8011, compression=Oodle, memSz=2621440, packedSz=642808, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_aviahorizon_turn_bank_f16_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_oxygen_indicator_f5a_c* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_oxygen_indicator_f5a_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x64, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=2744, packedSz=1976, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_oxygen_indicator_f5a_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gauge_oxygen_indicator_f5a_n* from pkg_cockpits_zzz-tq_pack.dxp.bin :: us_gauge_oxygen_indicator_f5a_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=784, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gauge_oxygen_indicator_f5a_n*
-2026-05-31 - 01:36:26 : Preparing texture export: zflare_red* from aircrafts.dxp.bin :: zflare_red*?abbw [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=A8R8G8B8 (21), size=16x16, mips=5, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=4, dxtShift=0, flags=0x60040044, compression=Oodle, memSz=1364, packedSz=664, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: zflare_red*
-2026-05-31 - 01:36:26 : Preparing texture export: zflare_yellow* from aircrafts.dxp.bin :: zflare_yellow*?na16 [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=3, dxtShift=4, flags=0x60004011, compression=Oodle, memSz=1036, packedSz=672, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: zflare_yellow*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16c_block_40_barak_2_c* from f_16c_block_40_barak_2.dxp.bin :: f_16c_block_40_barak_2_c$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=4096x4096, mips=3, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=2, dxtShift=3, flags=0x60084011, compression=Oodle, memSz=8388620, packedSz=4190104, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16d_block_40_barak2_cockpit_labels_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16c_block_40_barak_2_n* from f_16c_block_40_barak_2.dxp.bin :: f_16c_block_40_barak_2_n$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=4096x4096, mips=3, hqPartLevels=0, lQmip=2, mQmip=1, uQmip=2, dxtShift=4, flags=0x6008C011, compression=Oodle, memSz=16777228, packedSz=7559160, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_20_mlu_cockpit_stick_c*
-2026-05-31 - 01:36:26 : Preparing texture export: aircraft_normal_detail_lo_n* from zzz-tq_pack.dxp.bin :: aircraft_normal_detail_lo_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x00048011, compression=None, memSz=1392, packedSz=0, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: aircraft_normal_detail_lo_n*
-2026-05-31 - 01:36:26 : Preparing texture export: 4_blade_slow_propmask* from aircrafts.dxp.bin :: 4_blade_slow_propmask$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=L8 (50), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=0, flags=0x60080044, compression=Oodle, memSz=1048576, packedSz=156344, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_mlu_hud_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: 4_blade_slow_propmask*
-2026-05-31 - 01:36:26 : Preparing texture export: black_yellow_sb2c_1c_rottex* from zzz-tq_pack.dxp.bin :: black_yellow_sb2c_1c_rottex$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=256x8, mips=9, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=1, dxtShift=3, flags=0x60040033, compression=Oodle, memSz=1544, packedSz=144, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Preparing texture export: prop_nm_spec* from zzz-tq_pack.dxp.bin :: prop_nm_spec$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=A8R8G8B8 (21), size=16x16, mips=5, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=4, dxtShift=0, flags=0x60048044, compression=Oodle, memSz=1364, packedSz=1072, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_20_mlu_cockpit_labels_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: prop_nm_spec*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: black_yellow_sb2c_1c_rottex*
-2026-05-31 - 01:36:26 : Preparing texture export: 4_blade_fast_propmask* from aircrafts.dxp.bin :: 4_blade_fast_propmask$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=L8 (50), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=0, flags=0x60080044, compression=Oodle, memSz=1048576, packedSz=138920, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Preparing texture export: f_16c_block_50_inside_n* from zzz-tq_pack.dxp.bin :: f_16c_block_50_inside_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : Preparing texture export: f_16c_block_50_inside_c* from zzz-tq_pack.dxp.bin :: f_16c_block_50_inside_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=840, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=1392, packedSz=848, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16c_block_50_inside_c*
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16c_block_50_inside_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_lattice_c* from zzz-tq_pack.dxp.bin :: f_16a_block_10_lattice_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=1392, packedSz=832, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_lattice_n* from zzz-tq_pack.dxp.bin :: f_16a_block_10_lattice_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=456, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_lattice_c*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16c_block_40_barak_2_1_c* from f_16c_block_40_barak_2.dxp.bin :: f_16c_block_40_barak_2_1_c$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=2048x512, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=3, flags=0x60084011, compression=Oodle, memSz=524300, packedSz=249488, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_lattice_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16c_block_40_barak_2_1_n* from f_16c_block_40_barak_2.dxp.bin :: f_16c_block_40_barak_2_1_n$hq* [unclassified, source=descriptor-link-cache]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=2048x512, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=4, flags=0x6008C011, compression=Oodle, memSz=1048588, packedSz=230080, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: uk_gauge_horizontal_situation_indicator_type_aqu_13a_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_pylon2_c* from f_16a_block_10.dxp.bin :: f_16a_block_10_pylon2_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=262144, packedSz=117496, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: 4_blade_fast_propmask*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_pylon2_n* from f_16a_block_10.dxp.bin :: f_16a_block_10_pylon2_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=524288, packedSz=132944, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_pylon2_c*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_pylon1_c* from zzz-tq_pack.dxp.bin :: f_16a_block_10_pylon1_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=1384, packedSz=1232, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_pylon1_c*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_pylon1_n* from zzz-tq_pack.dxp.bin :: f_16a_block_10_pylon1_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=2768, packedSz=1248, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_pylon1_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_launcher_aim9_c* from f_16a_block_10.dxp.bin :: f_16a_block_10_launcher_aim9_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=262144, packedSz=101656, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_20_mlu_cockpit_stick_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_launcher_aim9_n* from f_16a_block_10.dxp.bin :: f_16a_block_10_launcher_aim9_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=524288, packedSz=124816, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16c_block_40_barak_2_1_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gpu_5a_pod_c* from aircrafts.dxp.bin :: us_gpu_5a_pod_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=262144, packedSz=103512, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_launcher_aim9_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_gpu_5a_pod_n* from aircrafts.dxp.bin :: us_gpu_5a_pod_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=524288, packedSz=297696, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_pylon2_n*
-2026-05-31 - 01:36:26 : Preparing texture export: gunfire* from zzz-tq_pack.dxp.bin :: gunfire$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=2768, packedSz=1040, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: seat_aces2_c*
-2026-05-31 - 01:36:26 : Preparing texture export: jet_flame_diamonds* from aircrafts.dxp.bin :: jet_flame_diamonds$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=BC7 (BC7 ) (540492610), size=2048x2048, mips=2, hqPartLevels=0, lQmip=1, mQmip=1, uQmip=1, dxtShift=4, flags=0x600C0033, compression=Oodle, memSz=5242880, packedSz=799552, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: gunfire*
-2026-05-31 - 01:36:26 : Preparing texture export: us_lau_117_c* from usa_aircrafts.dxp.bin :: us_lau_117_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=262144, packedSz=125736, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gpu_5a_pod_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_lau_117_n* from usa_aircrafts.dxp.bin :: us_lau_117_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=524288, packedSz=213440, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_lau_117_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_300gal_drop_tank_with_f_16_fuse_pylon_c* from weaponry.dxp.bin :: us_300gal_drop_tank_with_f_16_fuse_pylon_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=524288, packedSz=288160, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_launcher_aim9_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_300gal_drop_tank_with_f_16_fuse_pylon_n* from weaponry.dxp.bin :: us_300gal_drop_tank_with_f_16_fuse_pylon_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=1048576, packedSz=281664, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16c_block_40_barak_2_1_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_pylon2a_c* from zzz-tq_pack.dxp.bin :: f_16a_block_10_pylon2a_c$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=3, flags=0x60040011, compression=Oodle, memSz=1384, packedSz=1224, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_pylon2a_c*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_pylon2a_n* from zzz-tq_pack.dxp.bin :: f_16a_block_10_pylon2a_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=64x32, mips=7, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=2768, packedSz=1752, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_pylon2a_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_lantirn_pylon_dark_c* from usa_aircrafts.dxp.bin :: us_lantirn_pylon_dark_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x256, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=131072, packedSz=63288, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_gpu_5a_pod_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_lantirn_pylon_n* from usa_aircrafts.dxp.bin :: us_lantirn_pylon_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x256, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=262144, packedSz=63072, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_lantirn_pylon_dark_c*
-2026-05-31 - 01:36:26 : Preparing texture export: litening_2_pod_c* from usa_aircrafts.dxp.bin :: litening_2_pod_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=524288, packedSz=276120, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_lau_117_n*
-2026-05-31 - 01:36:26 : Preparing texture export: litening_2_pod_n* from usa_aircrafts.dxp.bin :: litening_2_pod_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x1024, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=1048576, packedSz=276512, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_300gal_drop_tank_with_f_16_fuse_pylon_c*
-2026-05-31 - 01:36:26 : Preparing texture export: mesh1_a* from zzz-tq_pack.dxp.bin :: mesh1_a$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60040011, compression=Oodle, memSz=1392, packedSz=808, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: mesh1_a*
-2026-05-31 - 01:36:26 : Preparing texture export: mesh1_n* from zzz-tq_pack.dxp.bin :: mesh1_n$tq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=32x32, mips=6, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=3, dxtShift=4, flags=0x60048011, compression=Oodle, memSz=1392, packedSz=56, HQ_PART=no, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=yes
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: mesh1_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_drop_tank_pylon_c* from f_16a_block_10.dxp.bin :: f_16a_block_10_drop_tank_pylon_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=262144, packedSz=107544, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_lantirn_pylon_n*
-2026-05-31 - 01:36:26 : Preparing texture export: f_16a_block_10_drop_tank_pylon_n* from f_16a_block_10.dxp.bin :: f_16a_block_10_drop_tank_pylon_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=524288, packedSz=127600, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: us_mlu_hud_n*
-2026-05-31 - 01:36:26 : Preparing texture export: us_lau_129aa_c* from usa_aircrafts.dxp.bin :: us_lau_129aa_c$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT1 (BC1) (827611204), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=3, flags=0x60080011, compression=Oodle, memSz=262144, packedSz=141472, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: f_16a_block_10_drop_tank_pylon_c*
-2026-05-31 - 01:36:26 : Preparing texture export: us_lau_129aa_n* from usa_aircrafts.dxp.bin :: us_lau_129aa_n$hq* [unclassified, source=fast-dxp-index]
-2026-05-31 - 01:36:26 : DDSx header: fmt=DXT5 (BC3) (894720068), size=1024x512, mips=1, hqPartLevels=0, lQmip=0, mQmip=0, uQmip=0, dxtShift=4, flags=0x60088011, compression=Oodle, memSz=524288, packedSz=138432, HQ_PART=yes, NEED_PAIRED_BASETEX=no, REV_MIP_ORDER=no
-2026-05-31 - 01:36:26 : Successfully exported texture dependency: litening_2_pod_c*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: us_lau_129aa_c*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: f_16a_block_10_drop_tank_pylon_n*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: us_300gal_drop_tank_with_f_16_fuse_pylon_n*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: us_lau_129aa_n*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: f_16d_block_40_barak2_cockpit1_c*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: litening_2_pod_n*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: f_16a_block_20_mlu_cockpit_labels_n*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: seat_aces2_n*
-2026-05-31 - 01:36:27 : Successfully exported texture dependency: f_16d_block_40_barak2_cockpit_c*
-2026-05-31 - 01:36:28 : Successfully exported texture dependency: f_16c_block_40_barak_2_c*
-2026-05-31 - 01:36:28 : Successfully exported texture dependency: jet_flame_diamonds*
-2026-05-31 - 01:36:28 : Successfully exported texture dependency: f_16d_block_40_barak2_cockpit1_n*
-2026-05-31 - 01:36:29 : Successfully exported texture dependency: f_16d_block_40_barak2_cockpit_n*
-2026-05-31 - 01:36:30 : Successfully exported texture dependency: f_16c_block_40_barak_2_n*
-2026-05-31 - 01:36:30 : Model material dependency summary for f_16c_block_40_barak_2_cockpit: internalMaterials=75, uniqueTextures=105, exportedTextures=105, assignedTextures=199, gltfMaterialSlots=75
-2026-05-31 - 01:36:30 : Exporting model geometry...
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel MatVData: payload=18775550 bytes, gvdOfs=128, gvdCnt=2, mvdFlag=0
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel GVD[0]: vCnt=960792, vStride=16, iPackedSz=3400101, iSz=6770334, iCnt=32, flags=0x220, storageFormat=3
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel GVD[1]: vCnt=96, vStride=24, iPackedSz=281, iSz=552, iCnt=68, flags=0x220, storageFormat=5
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel GVD[0] decoded vertices=960792, indices=3385167, blockStart=192, blockSize=18772773
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel GVD[1] decoded vertices=96, indices=276, blockStart=18772965, blockSize=2585
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: Phase1 header: payload=4427600, decompressedMvd=18775550, containerHeader=20, lodHdrInfo=0x58, lodHdrSize=88, riStructSize=160, texCnt=external, matCnt=external, vdataNum=2, mvdHdrSize=192, mvdHdrFlag=true
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel ModelData: offset=4351685, size=72, lodCount=1
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel scene nodes: blockOffset=4351773, blockSize=11272, nameIndicesOfs=6200, nameCount=507, skinNodesOfs=10256, skinNodeCount=507
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel LOD[0]: start=4363049, headerSize=32, rigidCount=506, skinCount=0, shaderMeshOfs=16224
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel LOD[0] ShaderMeshes end at 4427593
-2026-05-31 - 01:36:30 : DynModel diagnostic for f_16c_block_40_barak_2_cockpit: DynModel material index summary: uniqueRaw=74, maxRaw=74, mode=raw
-2026-05-31 - 01:36:30 : DynModel UV export summary for f_16c_block_40_barak_2_cockpit: vertices=960888, objShortUvToGltf=960888, objFloatUvToGltf=0, zeroUv=1
-2026-05-31 - 01:36:30 : DynModel export summary for f_16c_block_40_barak_2_cockpit: meshes=506, compactVertices=960888, indices=3385443, primitives=585
-2026-05-31 - 01:36:30 : DynModel material slot summary for f_16c_block_40_barak_2_cockpit: primitiveMaterialSlots=74, maxSlot=74, descriptorMaterials=75, descriptorBindings=108
-2026-05-31 - 01:36:38 : Resolved skeleton f_16c_block_40_barak_2_cockpit_skeleton (590 nodes) from f_16c_block_40_barak_2.grp
-2026-05-31 - 01:36:38 : Resolved skeleton f_16c_block_40_barak_2_cockpit_skeleton (590 nodes)
-2026-05-31 - 01:36:38 : Skeleton / rig export disabled for f_16c_block_40_barak_2_cockpit; using resolved skeleton only for rigid part placement metadata.
-2026-05-31 - 01:36:38 : Writing DynModel GLB for f_16c_block_40_barak_2_cockpit with skeletonNodes=590, includeSkeletonRig=false, animationClips=0 to C:\Users\AldertLake\Documents\DagorAssetsExtractorExports\f_16c_block_40_barak_2_cockpit\f_16c_block_40_barak_2_cockpit.glb
-2026-05-31 - 01:36:38 : Writing GLB skinned model (590 bones, 0 animations)...
-2026-05-31 - 01:36:40 : Exported model: f_16c_block_40_barak_2_cockpit to C:\Users\AldertLake\Documents\DagorAssetsExtractorExports\f_16c_block_40_barak_2_cockpit\f_16c_block_40_barak_2_cockpit.glb
-2026-05-31 - 01:36:40 : Model export completed successfully.
+2026-06-05 - 00:49:37 : Application started.
+2026-06-05 - 00:49:37 : Portable cache folder: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Release\cache
+2026-06-05 - 00:49:37 : Settings path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Release\cache\Settings.ini
+2026-06-05 - 00:49:37 : Index cache path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Release\cache\index-cache
+2026-06-05 - 00:49:37 : Descriptor-link cache path: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Release\cache\descriptor-links-cache
+2026-06-05 - 00:49:37 : Loaded saved game folder: D:\SteamLibrary\steamapps\common\War Thunder
+2026-06-05 - 00:49:41 : Loaded 8461 cached records (34 stale or invalid skipped).
+2026-06-05 - 00:49:41 : Descriptor-link cache load scheduled: C:\Users\AldertLake\Documents\Random Projects\Dagor_Assets_Extractor\build\vs2026\bin\windows\x86_64\Release\cache\descriptor-links-cache
+2026-06-05 - 00:49:41 : No descriptor-link cache file found. (0 ms)
+2026-06-05 - 00:49:48 : Parsing contents of j_15t.grp...
+2026-06-05 - 00:49:48 : Parsed 5 sub-assets from j_15t.grp
+2026-06-05 - 00:49:54 : Exporting model: j_15t_cockpit...
+2026-06-05 - 00:49:54 : Starting model export for: j_15t_cockpit
+2026-06-05 - 00:49:54 : Opening GRP pack file: j_15t.grp
+2026-06-05 - 00:49:54 : Exporting model geometry...
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel MatVData: payload=24846870 bytes, gvdOfs=128, gvdCnt=3, mvdFlag=0
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel GVD[0]: vCnt=1027627, vStride=16, iPackedSz=3416680, iSz=6808698, iCnt=32, flags=0x220, storageFormat=3
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel GVD[1]: vCnt=257984, vStride=16, iPackedSz=855241, iSz=1705830, iCnt=32, flags=0x220, storageFormat=3
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel GVD[2]: vCnt=184, vStride=24, iPackedSz=533, iSz=1056, iCnt=68, flags=0x220, storageFormat=5
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel GVD[0] decoded vertices=1027627, indices=3404349, blockStart=224, blockSize=19858712
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel GVD[1] decoded vertices=257984, indices=852915, blockStart=19858936, blockSize=4982985
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel GVD[2] decoded vertices=184, indices=528, blockStart=24841921, blockSize=4949
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: Phase1 header: payload=5192832, decompressedMvd=24846870, containerHeader=20, lodHdrInfo=0x58, lodHdrSize=88, riStructSize=160, texCnt=external, matCnt=external, vdataNum=3, mvdHdrSize=224, mvdHdrFlag=true
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel ModelData: offset=5083976, size=72, lodCount=1
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel scene nodes: blockOffset=5084064, blockSize=13368, nameIndicesOfs=7376, nameCount=599, skinNodesOfs=12168, skinNodeCount=599
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel LOD[0]: start=5097436, headerSize=32, rigidCount=598, skinCount=1, shaderMeshOfs=19176
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel LOD[0] ShaderMeshes end at 5174276
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel skinned resource count=1
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel skinned resource size=18533
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel MatVData: payload=66727 bytes, gvdOfs=96, gvdCnt=1, mvdFlag=1
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel GVD[0]: vCnt=2277, vStride=24, iPackedSz=11951, iSz=23808, iCnt=32, flags=0x220, storageFormat=15
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel GVD[0] decoded vertices=2277, indices=11904, blockStart=128, blockSize=66599
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel skinned skin-tail: offset=18533, compressedBytes=81, firstBytes=78 DA 0B 63 62 60 10 60 64 70 60 00
+2026-06-05 - 00:49:54 : DynModel diagnostic for j_15t_cockpit: DynModel material index summary: uniqueRaw=88, maxRaw=88, mode=raw
+2026-06-05 - 00:49:54 : DynModel UV export summary for j_15t_cockpit: vertices=1288072, objShortUvToGltf=1288072, objFloatUvToGltf=0, zeroUv=15
+2026-06-05 - 00:49:54 : DynModel export summary for j_15t_cockpit: meshes=599, compactVertices=1288072, indices=4269696, primitives=704
+2026-06-05 - 00:49:54 : DynModel material slot summary for j_15t_cockpit: primitiveMaterialSlots=88, maxSlot=88, descriptorMaterials=0, descriptorBindings=0
+2026-06-05 - 00:49:54 : Resolved skeleton j_15t_cockpit_skeleton (706 nodes) from j_15t.grp
+2026-06-05 - 00:49:54 : Resolved skeleton j_15t_cockpit_skeleton (706 nodes)
+2026-06-05 - 00:49:54 : Resolving Anim2Data animation clips for j_15t_cockpit...
+2026-06-05 - 00:49:54 : Anim2Data resolver for j_15t_cockpit: candidates=7
+2026-06-05 - 00:49:54 : Anim2Data candidate for j_15t_cockpit: j_15t_cockpit_anim from j_15t.grp score=135 source=same GRP pack
+2026-06-05 - 00:49:54 : Decoded Anim2Data j_15t_cockpit_anim: finalScore=30797, matchedSkeletonNodes=678, matchedModelNodes=0, unmatchedNodes=1, animatedNodes=679: clips=1, exportNodeTracks=679, channels=3, nodes=679, labels=2
+2026-06-05 - 00:49:54 : Anim2Data warning for j_15t_cockpit_anim: Channel 0: dataType=1, channelType=1, nodeCount=679, animTracksOffset=0, nodeTrackOffset=223736, nodeNameOffset=207440, dumpSize=236136, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 F8 69 03 00 00 00 00 00 A7 02 00 00 01 00 00 00 F0 79 03 00 00 00 00 00 50 2A 03 00 00 00 00 00 
+2026-06-05 - 00:49:54 : Anim2Data warning for j_15t_cockpit_anim: Channel 1: dataType=1, channelType=2, nodeCount=679, animTracksOffset=0, nodeTrackOffset=225094, nodeNameOffset=212872, dumpSize=236136, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 46 6F 03 00 00 00 00 00 A7 02 00 00 02 00 00 00 8C 84 03 00 00 00 00 00 88 3F 03 00 00 00 00 00 
+2026-06-05 - 00:49:54 : Anim2Data warning for j_15t_cockpit_anim: Channel 0: dataType=2, channelType=5, nodeCount=679, animTracksOffset=0, nodeTrackOffset=226452, nodeNameOffset=218304, dumpSize=236136, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 94 74 03 00 00 00 00 00 A7 02 00 00 05 00 00 00 28 8F 03 00 00 00 00 00 C0 54 03 00 00 00 00 00 
+2026-06-05 - 00:49:54 : Anim2Data candidate for j_15t_cockpit: bf_110g_4_cockpit_anim from bf_110g_4_cockpit.grp score=74 source=name-affinity GRP search
+2026-06-05 - 00:49:54 : Decoded Anim2Data bf_110g_4_cockpit_anim: finalScore=2776, matchedSkeletonNodes=88, matchedModelNodes=0, unmatchedNodes=98, animatedNodes=186: clips=1, exportNodeTracks=186, channels=3, nodes=186, labels=2
+2026-06-05 - 00:49:54 : Anim2Data warning for bf_110g_4_cockpit_anim: Channel 0: dataType=1, channelType=1, nodeCount=186, animTracksOffset=0, nodeTrackOffset=43944, nodeNameOffset=39480, dumpSize=47464, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 A8 AB 00 00 00 00 00 00 BA 00 00 00 01 00 00 00 10 B0 00 00 00 00 00 00 38 9A 00 00 00 00 00 00 
+2026-06-05 - 00:49:54 : Anim2Data warning for bf_110g_4_cockpit_anim: Channel 1: dataType=1, channelType=2, nodeCount=186, animTracksOffset=0, nodeTrackOffset=44316, nodeNameOffset=40968, dumpSize=47464, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 1C AD 00 00 00 00 00 00 BA 00 00 00 02 00 00 00 F8 B2 00 00 00 00 00 00 08 A0 00 00 00 00 00 00 
+2026-06-05 - 00:49:54 : Anim2Data warning for bf_110g_4_cockpit_anim: Channel 0: dataType=2, channelType=5, nodeCount=186, animTracksOffset=0, nodeTrackOffset=44688, nodeNameOffset=42456, dumpSize=47464, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 90 AE 00 00 00 00 00 00 BA 00 00 00 05 00 00 00 E0 B5 00 00 00 00 00 00 D8 A5 00 00 00 00 00 00 
+2026-06-05 - 00:49:54 : Anim2Data candidate for j_15t_cockpit: dh_110_cockpit_anim from dh110_sea_vixen_cockpit.grp score=74 source=name-affinity GRP search
+2026-06-05 - 00:49:55 : Decoded Anim2Data dh_110_cockpit_anim: finalScore=1285, matchedSkeletonNodes=120, matchedModelNodes=0, unmatchedNodes=306, animatedNodes=426: clips=1, exportNodeTracks=426, channels=3, nodes=426, labels=2
+2026-06-05 - 00:49:55 : Anim2Data warning for dh_110_cockpit_anim: Channel 0: dataType=1, channelType=1, nodeCount=426, animTracksOffset=0, nodeTrackOffset=90352, nodeNameOffset=80128, dumpSize=98184, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 F0 60 01 00 00 00 00 00 AA 01 00 00 01 00 00 00 F0 6A 01 00 00 00 00 00 00 39 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for dh_110_cockpit_anim: Channel 1: dataType=1, channelType=2, nodeCount=426, animTracksOffset=0, nodeTrackOffset=91204, nodeNameOffset=83536, dumpSize=98184, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 44 64 01 00 00 00 00 00 AA 01 00 00 02 00 00 00 98 71 01 00 00 00 00 00 50 46 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for dh_110_cockpit_anim: Channel 0: dataType=2, channelType=5, nodeCount=426, animTracksOffset=0, nodeTrackOffset=92056, nodeNameOffset=86944, dumpSize=98184, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 98 67 01 00 00 00 00 00 AA 01 00 00 05 00 00 00 40 78 01 00 00 00 00 00 A0 53 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data candidate for j_15t_cockpit: leo_451_late_cockpit_anim from leo_451_late_cockpit.grp score=74 source=name-affinity GRP search
+2026-06-05 - 00:49:55 : Decoded Anim2Data leo_451_late_cockpit_anim: finalScore=43, matchedSkeletonNodes=9, matchedModelNodes=0, unmatchedNodes=36, animatedNodes=45: clips=1, exportNodeTracks=45, channels=3, nodes=45, labels=2
+2026-06-05 - 00:49:55 : Anim2Data warning for leo_451_late_cockpit_anim: Channel 0: dataType=1, channelType=1, nodeCount=45, animTracksOffset=0, nodeTrackOffset=13240, nodeNameOffset=12160, dumpSize=14216, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 B8 33 00 00 00 00 00 00 2D 00 00 00 01 00 00 00 D0 34 00 00 00 00 00 00 80 2F 00 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for leo_451_late_cockpit_anim: Channel 1: dataType=1, channelType=2, nodeCount=45, animTracksOffset=0, nodeTrackOffset=13330, nodeNameOffset=12520, dumpSize=14216, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 12 34 00 00 00 00 00 00 2D 00 00 00 02 00 00 00 84 35 00 00 00 00 00 00 E8 30 00 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for leo_451_late_cockpit_anim: Channel 0: dataType=2, channelType=5, nodeCount=45, animTracksOffset=0, nodeTrackOffset=13420, nodeNameOffset=12880, dumpSize=14216, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 6C 34 00 00 00 00 00 00 2D 00 00 00 05 00 00 00 38 36 00 00 00 00 00 00 50 32 00 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data candidate for j_15t_cockpit: mig_21_bis_lazur_cockpit_anim from mig_21_bis_lazur_cockpit.grp score=74 source=name-affinity GRP search
+2026-06-05 - 00:49:55 : Decoded Anim2Data mig_21_bis_lazur_cockpit_anim: finalScore=3111, matchedSkeletonNodes=128, matchedModelNodes=0, unmatchedNodes=202, animatedNodes=330: clips=1, exportNodeTracks=330, channels=3, nodes=330, labels=2
+2026-06-05 - 00:49:55 : Anim2Data warning for mig_21_bis_lazur_cockpit_anim: Channel 0: dataType=1, channelType=1, nodeCount=330, animTracksOffset=0, nodeTrackOffset=97208, nodeNameOffset=89288, dumpSize=103320, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 B8 7B 01 00 00 00 00 00 4A 01 00 00 01 00 00 00 80 83 01 00 00 00 00 00 C8 5C 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for mig_21_bis_lazur_cockpit_anim: Channel 1: dataType=1, channelType=2, nodeCount=330, animTracksOffset=0, nodeTrackOffset=97868, nodeNameOffset=91928, dumpSize=103320, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 4C 7E 01 00 00 00 00 00 4A 01 00 00 02 00 00 00 A8 88 01 00 00 00 00 00 18 67 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for mig_21_bis_lazur_cockpit_anim: Channel 0: dataType=2, channelType=5, nodeCount=330, animTracksOffset=0, nodeTrackOffset=98528, nodeNameOffset=94568, dumpSize=103320, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 E0 80 01 00 00 00 00 00 4A 01 00 00 05 00 00 00 D0 8D 01 00 00 00 00 00 68 71 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data candidate for j_15t_cockpit: q_5a_cockpit_anim from q_5a_cockpit.grp score=74 source=name-affinity GRP search
+2026-06-05 - 00:49:55 : Decoded Anim2Data q_5a_cockpit_anim: finalScore=3885, matchedSkeletonNodes=142, matchedModelNodes=0, unmatchedNodes=192, animatedNodes=334: clips=1, exportNodeTracks=334, channels=3, nodes=334, labels=2
+2026-06-05 - 00:49:55 : Anim2Data warning for q_5a_cockpit_anim: Channel 0: dataType=1, channelType=1, nodeCount=334, animTracksOffset=0, nodeTrackOffset=82704, nodeNameOffset=74688, dumpSize=88888, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 10 43 01 00 00 00 00 00 4E 01 00 00 01 00 00 00 F0 4A 01 00 00 00 00 00 C0 23 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for q_5a_cockpit_anim: Channel 1: dataType=1, channelType=2, nodeCount=334, animTracksOffset=0, nodeTrackOffset=83372, nodeNameOffset=77360, dumpSize=88888, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 AC 45 01 00 00 00 00 00 4E 01 00 00 02 00 00 00 28 50 01 00 00 00 00 00 30 2E 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for q_5a_cockpit_anim: Channel 0: dataType=2, channelType=5, nodeCount=334, animTracksOffset=0, nodeTrackOffset=84040, nodeNameOffset=80032, dumpSize=88888, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 48 48 01 00 00 00 00 00 4E 01 00 00 05 00 00 00 60 55 01 00 00 00 00 00 A0 38 01 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data candidate for j_15t_cockpit: vampire_fb5_cockpit_anim from vampire_fb5_cockpit.grp score=74 source=name-affinity GRP search
+2026-06-05 - 00:49:55 : Decoded Anim2Data vampire_fb5_cockpit_anim: finalScore=2931, matchedSkeletonNodes=81, matchedModelNodes=0, unmatchedNodes=65, animatedNodes=146: clips=1, exportNodeTracks=146, channels=3, nodes=146, labels=2
+2026-06-05 - 00:49:55 : Anim2Data warning for vampire_fb5_cockpit_anim: Channel 0: dataType=1, channelType=1, nodeCount=146, animTracksOffset=0, nodeTrackOffset=41528, nodeNameOffset=38024, dumpSize=44328, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 38 A2 00 00 00 00 00 00 92 00 00 00 01 00 00 00 B0 A5 00 00 00 00 00 00 88 94 00 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for vampire_fb5_cockpit_anim: Channel 1: dataType=1, channelType=2, nodeCount=146, animTracksOffset=0, nodeTrackOffset=41820, nodeNameOffset=39192, dumpSize=44328, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 5C A3 00 00 00 00 00 00 92 00 00 00 02 00 00 00 F8 A7 00 00 00 00 00 00 18 99 00 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Anim2Data warning for vampire_fb5_cockpit_anim: Channel 0: dataType=2, channelType=5, nodeCount=146, animTracksOffset=0, nodeTrackOffset=42112, nodeNameOffset=40360, dumpSize=44328, hasAclTracks=1 | Hex: 00 00 00 00 00 00 00 00 80 A4 00 00 00 00 00 00 92 00 00 00 05 00 00 00 40 AA 00 00 00 00 00 00 A8 9D 00 00 00 00 00 00 
+2026-06-05 - 00:49:55 : Writing DynModel GLB for j_15t_cockpit with skeletonNodes=706, includeSkeletonRig=true, animationClips=1 to C:\Users\AldertLake\Documents\DagorAssetsExtractorExports\j_15t_cockpit\j_15t_cockpit.glb
+2026-06-05 - 00:49:55 : Writing GLB skinned model (706 bones, 1 animations)...
+2026-06-05 - 00:49:55 : Exported model: j_15t_cockpit to C:\Users\AldertLake\Documents\DagorAssetsExtractorExports\j_15t_cockpit\j_15t_cockpit.glb
+2026-06-05 - 00:49:55 : Model export completed successfully.

@@ -475,7 +475,6 @@ namespace DagorAssetsExtractor::App
             app.progressJob.currentItem.clear();
             app.progressJob.current = 0;
             app.progressJob.total = total;
-            app.progressJob.total = total;
             app.progressJob.windowOpen = true;
         }
 
@@ -2293,6 +2292,10 @@ namespace DagorAssetsExtractor::App
         const bool exportGlb = true;
         Export::GlbExportOptions glbOptions;
         glbOptions.embedTexturesInGlb = app.settings.embedTexturesInGlb;
+        glbOptions.diagnosticLog = [&app, assetName = entry.name](const std::string& message)
+        {
+            AddLog(app, LogLevel::Info, "DynModel GLB diagnostic for " + assetName + ": " + message);
+        };
 
         // Calculate total steps for progress
         const AssetIndex::DescriptorResourceLink* matchedLinkOnMain = nullptr;
@@ -2554,11 +2557,37 @@ namespace DagorAssetsExtractor::App
                     std::string resolutionSource;
                 };
 
-                auto getTextureQualityRank = [](std::string_view entryName) -> int {
-                    if (entryName.find("$hq") != std::string_view::npos) return 3;
-                    if (entryName.find("$tq") != std::string_view::npos || 
-                        entryName.find("$lq") != std::string_view::npos) return 1;
-                    return 2; // Standard/Base Quality
+                auto getTextureQualityRank = [](const fs::path& dxpPath, std::string_view entryName) -> int {
+                    const std::string pathKey = ToLowerLocal(Platform::PathToUtf8(dxpPath));
+                    const std::string entryKey = ToLowerLocal(entryName);
+                    int rank = 100; // Standard/base quality.
+
+                    if (ContainsAscii(pathKey, "/content.hq/"))
+                    {
+                        rank += 400;
+                    }
+                    if (ContainsAscii(pathKey, "/uhq_vehicles/"))
+                    {
+                        rank += 320;
+                    }
+                    if (ContainsAscii(pathKey, "/hq_tex/"))
+                    {
+                        rank += 280;
+                    }
+                    if (ContainsAscii(pathKey, "-hq.dxp.bin") || ContainsAscii(pathKey, "_hq.dxp.bin"))
+                    {
+                        rank += 220;
+                    }
+                    if (ContainsAscii(entryKey, "$hq"))
+                    {
+                        rank += 120;
+                    }
+                    if (ContainsAscii(entryKey, "$tq") || ContainsAscii(entryKey, "$lq"))
+                    {
+                        rank -= 260;
+                    }
+
+                    return rank;
                 };
 
                 std::unordered_map<std::string, std::vector<std::pair<fs::path, std::string>>> globalTextureDxpLookup;
@@ -2589,8 +2618,8 @@ namespace DagorAssetsExtractor::App
                 for (auto& [_, list] : globalTextureDxpLookup)
                 {
                     std::sort(list.begin(), list.end(), [&](const auto& a, const auto& b) {
-                        int aRank = getTextureQualityRank(a.second);
-                        int bRank = getTextureQualityRank(b.second);
+                        int aRank = getTextureQualityRank(a.first, a.second);
+                        int bRank = getTextureQualityRank(b.first, b.second);
                         if (aRank != bRank) {
                             return aRank > bRank;
                         }
@@ -2664,8 +2693,8 @@ namespace DagorAssetsExtractor::App
                     for (auto& [_, list] : fastDxpTextureIndex)
                     {
                         std::sort(list.begin(), list.end(), [&](const auto& a, const auto& b) {
-                            int aRank = getTextureQualityRank(a.second);
-                            int bRank = getTextureQualityRank(b.second);
+                            int aRank = getTextureQualityRank(a.first, a.second);
+                            int bRank = getTextureQualityRank(b.first, b.second);
                             if (aRank != bRank) {
                                 return aRank > bRank;
                             }
@@ -2722,8 +2751,8 @@ namespace DagorAssetsExtractor::App
 
                     // Sort results: quality rank descending first, then by resolutionSource preference (descriptor-link-cache over fast-dxp-index)
                     std::sort(results.begin(), results.end(), [&](const auto& a, const auto& b) {
-                        int aRank = getTextureQualityRank(a.dxpEntryName);
-                        int bRank = getTextureQualityRank(b.dxpEntryName);
+                        int aRank = getTextureQualityRank(a.dxpPath, a.dxpEntryName);
+                        int bRank = getTextureQualityRank(b.dxpPath, b.dxpEntryName);
                         if (aRank != bRank) {
                             return aRank > bRank;
                         }
@@ -4121,8 +4150,8 @@ namespace DagorAssetsExtractor::App
         BeginProgressJob(
             app,
             scopedBuild ? "Descriptor Resource Links - Selected Asset" : "Descriptor Resource Links",
-            scopedBuild ? "Starting selected descriptor relationship build" : "Starting descriptor relationship build",
-            records->size());
+            scopedBuild ? "Planning selected descriptor relationship build" : "Planning descriptor relationship build",
+            0);
         AddProgressJobLog(app, LogLevel::Info, "Preparing descriptor, GRP, and DXP metadata indexes.");
         std::string buildLogPrefix = "Building descriptor relationships: ";
         if (scopedBuild)
@@ -4141,6 +4170,7 @@ namespace DagorAssetsExtractor::App
             {
                 std::string lastProgressStage;
                 uint64_t lastLogCurrent = 0;
+                std::mutex progressCallbackMutex;
 
                 AssetIndex::DescriptorResourceLinkBuildOptions options;
                 options.blkLinks = blkLinks ? blkLinks.get() : nullptr;
@@ -4148,7 +4178,8 @@ namespace DagorAssetsExtractor::App
                 {
                     options.focusPath = selected->path;
                 }
-                options.progress = [&app, records, &lastProgressStage, &lastLogCurrent](const AssetIndex::DescriptorResourceLinkProgress& progress) {
+                options.progress = [&app, records, &lastProgressStage, &lastLogCurrent, &progressCallbackMutex](const AssetIndex::DescriptorResourceLinkProgress& progress) {
+                    std::lock_guard<std::mutex> progressLock(progressCallbackMutex);
                     UpdateProgressJob(
                         app,
                         static_cast<uint64_t>(progress.current),
@@ -4397,7 +4428,6 @@ namespace DagorAssetsExtractor::App
         snapshot.status = app.progressJob.status;
         snapshot.currentItem = app.progressJob.currentItem;
         snapshot.current = app.progressJob.current;
-        snapshot.total = app.progressJob.total;
         snapshot.total = app.progressJob.total;
         return snapshot;
     }

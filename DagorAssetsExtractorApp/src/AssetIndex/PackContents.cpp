@@ -519,7 +519,10 @@ namespace DagorAssetsExtractor::AssetIndex
 
     // -- Parse Descriptor -----------------------------------------------------
 
-    std::shared_ptr<PackContents> ParseDescriptorContents(const fs::path& path, size_t maxFileSize)
+    std::shared_ptr<PackContents> ParseDescriptorContents(
+        const fs::path& path,
+        size_t maxFileSize,
+        const std::vector<std::string>* resourceNameFilter)
     {
         auto contents = std::make_shared<PackContents>();
         contents->sourcePath = path;
@@ -535,7 +538,7 @@ namespace DagorAssetsExtractor::AssetIndex
         try
         {
             DagorFormats::GameResDescReader reader(data);
-            reader.Parse();
+            reader.Parse(resourceNameFilter);
 
             for (const auto& entry : reader.GetEntries())
             {

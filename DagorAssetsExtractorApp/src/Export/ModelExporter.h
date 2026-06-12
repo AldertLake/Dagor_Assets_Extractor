@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include <functional>
 
 namespace DagorAssetsExtractor::Export
 {
@@ -29,6 +30,7 @@ namespace DagorAssetsExtractor::Export
     {
         bool embedTexturesInGlb = true;
         bool bypassAnimationRebase = false;
+        std::function<void(const std::string&)> diagnosticLog;
     };
 
     struct AnimationNodeTrack
