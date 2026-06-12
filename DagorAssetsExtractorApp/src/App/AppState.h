@@ -19,6 +19,11 @@
 #include "Jobs/JobSystem.h"
 #include "App/LogSystem.h"
 
+namespace DagorAssetsExtractor::Export
+{
+    enum class TextureMapKind : int;
+}
+
 namespace DagorAssetsExtractor::App
 {
     constexpr size_t PathBufferSize = 1024;
@@ -164,6 +169,15 @@ namespace DagorAssetsExtractor::App
         uint32_t stride = 0;
         bool srgb = false;
         std::vector<uint8_t> bgraPixels;
+        struct MapPreview
+        {
+            Export::TextureMapKind kind;
+            uint32_t width = 0;
+            uint32_t height = 0;
+            uint32_t stride = 0;
+            std::vector<uint8_t> bgraPixels;
+        };
+        std::vector<MapPreview> mapPreviews;
     };
 
     struct TexturePreviewSnapshot
@@ -208,6 +222,24 @@ namespace DagorAssetsExtractor::App
         bool fitToWindow = true;
         bool checkerboard = true;
         float zoom = 1.0f;
+        uint32_t selectedMapMask = 0;
+        uint64_t uploadedGeneration = 0;
+    };
+
+    struct ModelPreviewSubmesh
+    {
+        std::string name;
+        uint32_t startIndex = 0;
+        uint32_t indexCount = 0;
+        float bboxMin[3] = { 1e30f, 1e30f, 1e30f };
+        float bboxMax[3] = { -1e30f, -1e30f, -1e30f };
+    };
+
+    struct ModelPreviewBone
+    {
+        std::string name;
+        uint16_t parentIndex = 0xFFFFu;
+        float worldPos[3] = { 0.0f, 0.0f, 0.0f };
     };
 
     struct ModelPreviewVertex
@@ -228,6 +260,8 @@ namespace DagorAssetsExtractor::App
         uint32_t grpClassId = 0;
         uint32_t subMeshCount = 0;
         size_t fileSize = 0;
+        std::vector<ModelPreviewSubmesh> submeshes;
+        std::vector<ModelPreviewBone> bones;
     };
 
     struct ModelPreviewLighting
@@ -241,6 +275,7 @@ namespace DagorAssetsExtractor::App
         float specIntensity = 0.45f;
         float specPower = 32.0f;
         float backgroundColor[3] = { 0.12f, 0.13f, 0.15f };
+        bool showGround = true;
     };
 
     struct ModelPreviewState
@@ -262,19 +297,27 @@ namespace DagorAssetsExtractor::App
         size_t fileSize = 0;
         float bboxMin[3] = { 0.0f, 0.0f, 0.0f };
         float bboxMax[3] = { 0.0f, 0.0f, 0.0f };
+        std::vector<ModelPreviewSubmesh> submeshes;
+        int hoveredSubmeshIndex = -1;
+        std::vector<ModelPreviewVertex> vertices;
+        std::vector<uint32_t> indices;
+        std::vector<ModelPreviewBone> bones;
+        bool showBones = false;
 
         // Camera control preferences.
         float yaw = 45.0f;
         float pitch = 30.0f;
         float zoom = 5.0f;
-        float panX = 0.0f;
-        float panY = 0.0f;
-        bool wireframe = false;
+        float panWorldX = 0.0f;
+        float panWorldY = 0.0f;
+        float panWorldZ = 0.0f;
+        int renderMode = 0;
 
         // Performance statistics
         float renderLatencyMs = 0.0f;
-        float frameTimes[90] = {};
-        float latencyTimes[90] = {};
+        float fpsHistory[90] = {};
+        float latencyHistory[90] = {};
+        float frameTimeHistory[90] = {};
         int statOffset = 0;
         ModelPreviewLighting lighting;
     };
@@ -379,6 +422,8 @@ namespace DagorAssetsExtractor::App
     void SetModelPreviewUploadError(AppState& app, uint64_t generation, std::string error);
 
     void RequestTextureExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
+    void RequestTextureMapExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, Export::TextureMapKind mapKind);
+    void RequestTextureMapsExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, std::vector<Export::TextureMapKind> mapKinds);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel);
     void RequestModelExport(AppState& app, const std::filesystem::path& packPath, const AssetIndex::SubAssetRecord& entry, bool includeTexturesForDynModel, bool includeSkeletonRigForDynModel);

@@ -41,14 +41,20 @@ namespace DagorAssetsExtractor::UI
             float yaw,
             float pitch,
             float zoom,
-            float panX,
-            float panY,
-            bool wireframe,
+            float panWorldX,
+            float panWorldY,
+            float panWorldZ,
+            int renderMode,
             const float bboxMin[3],
             const float bboxMax[3],
             uint32_t width,
             uint32_t height,
-            const App::ModelPreviewLighting& lighting);
+            const App::ModelPreviewLighting& lighting,
+            int hoveredSubmeshIndex = -1,
+            const std::vector<App::ModelPreviewSubmesh>& submeshes = {});
+
+        std::string GetGPUName() const;
+        void GetVRAMInfo(uint64_t& usageBytes, uint64_t& budgetBytes) const;
 
     private:
         bool CreateRenderTarget(uint32_t width, uint32_t height);
@@ -62,6 +68,10 @@ namespace DagorAssetsExtractor::UI
         ID3D11Buffer* m_indexBuffer = nullptr;
         uint32_t m_indexCount = 0;
 
+        // Ground Grid Buffers
+        ID3D11Buffer* m_groundVertexBuffer = nullptr;
+        uint32_t m_groundVertexCount = 0;
+
         // Shaders & Pipeline state
         ID3D11VertexShader* m_vertexShader = nullptr;
         ID3D11PixelShader* m_pixelShader = nullptr;
@@ -70,6 +80,7 @@ namespace DagorAssetsExtractor::UI
         ID3D11RasterizerState* m_rasterizerStateSolid = nullptr;
         ID3D11RasterizerState* m_rasterizerStateWireframe = nullptr;
         ID3D11DepthStencilState* m_depthStencilState = nullptr;
+        ID3D11DepthStencilState* m_depthStencilStateNoDepth = nullptr;
 
         // Render target resources
         ID3D11Texture2D* m_renderTargetTexture = nullptr;

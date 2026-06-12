@@ -7,6 +7,8 @@
 #include "DagorFormats/VromfsReader.h"
 #include "Jobs/JobSystem.h"
 
+#include <objbase.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -35,6 +37,8 @@ namespace
     using DagorAssetsExtractor::Export::TextureExportOptions;
     using DagorAssetsExtractor::Export::TextureExporter;
     using DagorAssetsExtractor::Export::TextureExportResult;
+    using DagorAssetsExtractor::Export::TextureMapExportOptions;
+    using DagorAssetsExtractor::Export::TextureMapKind;
     using DagorAssetsExtractor::Export::TexturePreviewOptions;
     using DagorAssetsExtractor::Export::TexturePreviewResult;
 
@@ -219,6 +223,64 @@ namespace
         return std::any_of(result.warnings.begin(), result.warnings.end(), [&](const std::string& warning) {
             return warning.find(needle) != std::string::npos;
         });
+    }
+
+    std::filesystem::path FindMapOutput(
+        const TextureExportResult& result,
+        TextureMapKind kind)
+    {
+        const auto outputIt = std::find_if(
+            result.mapOutputs.begin(),
+            result.mapOutputs.end(),
+            [&](const DagorAssetsExtractor::Export::TextureMapOutput& output) {
+                return output.kind == kind;
+            });
+        return outputIt == result.mapOutputs.end()
+            ? std::filesystem::path{}
+            : outputIt->outputPath;
+    }
+
+    std::array<uint8_t, 4> ReadFirstPngPixelRgba(const std::filesystem::path& path)
+    {
+        std::array<uint8_t, 4> pixel = {};
+        {
+            DirectX::TexMetadata metadata = {};
+            DirectX::ScratchImage loaded;
+            HRESULT hr = DirectX::LoadFromWICFile(
+                path.c_str(),
+                DirectX::WIC_FLAGS_IGNORE_SRGB,
+                &metadata,
+                loaded);
+            if (FAILED(hr))
+            {
+                Fail("Could not load validation PNG: " + path.string());
+            }
+
+            const DirectX::Image* image = loaded.GetImage(0, 0, 0);
+            Expect(image != nullptr, "Validation PNG has no top image.");
+
+            DirectX::ScratchImage rgba;
+            hr = DirectX::Convert(
+                *image,
+                DXGI_FORMAT_R8G8B8A8_UNORM,
+                DirectX::TEX_FILTER_DEFAULT,
+                DirectX::TEX_THRESHOLD_DEFAULT,
+                rgba);
+            if (FAILED(hr))
+            {
+                Fail("Could not convert validation PNG to RGBA8.");
+            }
+
+            const DirectX::Image* rgbaImage = rgba.GetImage(0, 0, 0);
+            Expect(rgbaImage != nullptr && rgbaImage->pixels != nullptr, "Converted validation PNG is empty.");
+            pixel = {
+                rgbaImage->pixels[0],
+                rgbaImage->pixels[1],
+                rgbaImage->pixels[2],
+                rgbaImage->pixels[3],
+            };
+        }
+        return pixel;
     }
 
     void ValidateReadableExport(
@@ -899,6 +961,17 @@ namespace
         Expect(resolved.occlusionTextureName == "tank_ao", "Occlusion resolver missed the documented AO slot.");
         Expect(resolved.metallicRoughnessTextureName.empty(), "Generic mask texture should not be treated as metallic-roughness.");
 
+        DagorFormats::InternalMaterial packedVehicleMaterial;
+        packedVehicleMaterial.shaderClass = "dynamic_vehicle";
+        packedVehicleMaterial.textureSlots[0] = "tank_body_c$hq";
+        packedVehicleMaterial.textureSlots[2] = "tank_body_n$hq";
+        packedVehicleMaterial.textureSlots[3] = "tank_body_ao$hq";
+        const ResolvedMaterialTextures packedVehicleResolved =
+            DagorAssetsExtractor::Export::ResolveMaterialTextures(packedVehicleMaterial);
+        Expect(
+            packedVehicleResolved.packedNormalPbrTextureName == "tank_body_n$hq",
+            "Resolver did not mark the War Thunder packed normal/PBR source.");
+
         DagorFormats::InternalMaterial ormMaterial;
         ormMaterial.shaderClass = "dynamic_vehicle";
         ormMaterial.textureSlots[1] = "tank_orm";
@@ -912,6 +985,40 @@ namespace
         Expect(DagorAssetsExtractor::Export::LooksLikePackedNormalMap("f_16c_n"), "LooksLikePackedNormalMap failed for f_16c_n");
         Expect(DagorAssetsExtractor::Export::LooksLikePackedNormalMap("f_16c_n$hq"), "LooksLikePackedNormalMap failed for f_16c_n$hq");
         Expect(!DagorAssetsExtractor::Export::LooksLikePackedNormalMap("tank_orm"), "LooksLikePackedNormalMap matched tank_orm wrongly");
+
+        const auto packedNormalAnalysis =
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps("tank_body_n$hq");
+        Expect(
+            packedNormalAnalysis.layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::WarThunderPackedNormalPbr,
+            "Packed War Thunder normal/PBR layout was not detected.");
+        Expect(
+            std::any_of(
+                packedNormalAnalysis.maps.begin(),
+                packedNormalAnalysis.maps.end(),
+                [](const auto& map) { return map.kind == TextureMapKind::Metallic; }),
+            "Packed War Thunder texture analysis omitted metallic.");
+        Expect(
+            std::none_of(
+                packedNormalAnalysis.maps.begin(),
+                packedNormalAnalysis.maps.end(),
+                [](const auto& map) { return map.kind == TextureMapKind::AmbientOcclusion; }),
+            "Packed War Thunder _n texture analysis must not claim AO.");
+
+        const auto aoAnalysis =
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps("tank_body_ao$hq");
+        Expect(
+            aoAnalysis.layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::AmbientOcclusion,
+            "AO texture layout was not detected.");
+
+        const auto unknownAnalysis =
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps("tank_body_mask");
+        Expect(
+            unknownAnalysis.layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::Unknown &&
+                unknownAnalysis.maps.empty(),
+            "Unknown texture names must fail detection safely.");
 
         Expect(
             DagorAssetsExtractor::Export::ClassifyDescriptorBinding("dynamic_vehicle", "t3", "tank_ao") ==
@@ -1006,17 +1113,164 @@ namespace
         options.preserveOriginalDDS = false;
         options.overwrite = true;
         options.exportJsonManifest = false;
-        options.splitPackedNormalMap = true;
+        options.generateMaterialMaps = true;
 
         const TextureExportResult result = TextureExporter::ExportTexture(packPath, entry, options);
         Expect(result.success, "Packed normal map split export failed: " + result.error);
 
+        TexturePreviewOptions previewOptions;
+        const TexturePreviewResult preview =
+            TextureExporter::DecodePreview(packPath, entry, previewOptions);
+        Expect(preview.success, "Packed map preview decode failed: " + preview.error);
+        const auto mapPreviews = TextureExporter::BuildMapPreviews(
+            entry.name,
+            preview.bgraPixels.data(),
+            preview.width,
+            preview.height,
+            preview.stride,
+            2);
+        Expect(mapPreviews.size() == 5, "Packed _n texture did not produce five map thumbnails.");
+        const auto metallicPreviewIt = std::find_if(
+            mapPreviews.begin(),
+            mapPreviews.end(),
+            [](const auto& mapPreview) {
+                return mapPreview.kind == TextureMapKind::Metallic;
+            });
+        Expect(
+            metallicPreviewIt != mapPreviews.end() &&
+                metallicPreviewIt->width == 2 &&
+                metallicPreviewIt->height == 2 &&
+                metallicPreviewIt->bgraPixels[0] == 192 &&
+                metallicPreviewIt->bgraPixels[1] == 192 &&
+                metallicPreviewIt->bgraPixels[2] == 192,
+            "Metallic map thumbnail did not preserve the source blue channel.");
+
         const std::filesystem::path normalPath = result.outputPath;
-        const std::filesystem::path mrPath = options.outputDir / "test_normal_n_metalrough.png";
+        const std::filesystem::path mrPath =
+            FindMapOutput(result, TextureMapKind::MetallicRoughness);
 
         Expect(std::filesystem::exists(normalPath), "Reconstructed normal map PNG does not exist.");
         Expect(std::filesystem::exists(mrPath), "Extracted metallic-roughness PNG does not exist.");
-        Expect(WarningContains(result, "Split packed normal map channels"), "Expected split warning in result.");
+        Expect(
+            FindMapOutput(result, TextureMapKind::Normal) == normalPath,
+            "Normal output was not tracked explicitly.");
+        Expect(
+            WarningContains(result, "Metallic uses source blue directly"),
+            "Expected packed-channel conversion warning in result.");
+
+        const std::array<uint8_t, 4> normalPixel = ReadFirstPngPixelRgba(normalPath);
+        Expect(
+            normalPixel[0] == 100 && normalPixel[1] == 64 &&
+                normalPixel[2] >= 233 && normalPixel[2] <= 236 &&
+                normalPixel[3] == 255,
+            "Reconstructed normal channels are incorrect: R=" +
+                std::to_string(normalPixel[0]) + ", G=" +
+                std::to_string(normalPixel[1]) + ", B=" +
+                std::to_string(normalPixel[2]) + ", A=" +
+                std::to_string(normalPixel[3]));
+
+        const std::array<uint8_t, 4> mrPixel = ReadFirstPngPixelRgba(mrPath);
+        Expect(
+            mrPixel[0] == 255 && mrPixel[1] == 127 &&
+                mrPixel[2] == 192 && mrPixel[3] == 255,
+            "Metallic-roughness conversion is incorrect; metallic must use source blue directly.");
+
+        std::vector<uint8_t> aoPayload(16 * 4);
+        for (size_t i = 0; i < 16; ++i)
+        {
+            const size_t idx = i * 4;
+            aoPayload[idx + 0] = 42;
+            aoPayload[idx + 1] = 42;
+            aoPayload[idx + 2] = 42;
+            aoPayload[idx + 3] = 255;
+        }
+
+        const std::filesystem::path aoPackPath = tempRoot / "ao_validation.pack";
+        WriteFileBytes(aoPackPath, aoPayload);
+        SubAssetRecord aoEntry = entry;
+        aoEntry.name = "test_ao";
+        aoEntry.size = static_cast<uint32_t>(aoPayload.size());
+
+        TextureMapExportOptions mapOptions;
+        mapOptions.outputDir = options.outputDir;
+        mapOptions.format = "PNG";
+        const std::vector<TextureExportResult> bulkMapResults =
+            TextureExporter::ExportTextureMaps(
+                packPath,
+                entry,
+                { TextureMapKind::Roughness, TextureMapKind::Metallic },
+                mapOptions);
+        Expect(
+            bulkMapResults.size() == 2 &&
+                bulkMapResults[0].success &&
+                bulkMapResults[1].success,
+            "Bulk material-map export did not return two successful outputs.");
+        const std::array<uint8_t, 4> bulkRoughnessPixel =
+            ReadFirstPngPixelRgba(bulkMapResults[0].outputPath);
+        const std::array<uint8_t, 4> bulkMetallicPixel =
+            ReadFirstPngPixelRgba(bulkMapResults[1].outputPath);
+        Expect(
+            bulkRoughnessPixel[0] == 127 &&
+                bulkRoughnessPixel[1] == 127 &&
+                bulkRoughnessPixel[2] == 127,
+            "Bulk roughness export did not invert the packed smoothness channel.");
+        Expect(
+            bulkMetallicPixel[0] == 192 &&
+                bulkMetallicPixel[1] == 192 &&
+                bulkMetallicPixel[2] == 192,
+            "Bulk metallic export did not preserve the packed metallic channel.");
+
+        const TextureExportResult aoResult = TextureExporter::ExportTextureMap(
+            aoPackPath,
+            aoEntry,
+            TextureMapKind::AmbientOcclusion,
+            mapOptions);
+        Expect(aoResult.success, "AO map export failed: " + aoResult.error);
+
+        const std::filesystem::path ormPath = options.outputDir / "test_normal_n_orm.png";
+        std::string composeError;
+        Expect(
+            TextureExporter::ComposeOrmTexture(
+                mrPath,
+                aoResult.outputPath,
+                ormPath,
+                composeError),
+            "ORM composition failed: " + composeError);
+        const std::array<uint8_t, 4> ormPixel = ReadFirstPngPixelRgba(ormPath);
+        Expect(
+            ormPixel[0] == 42 && ormPixel[1] == 127 &&
+                ormPixel[2] == 192 && ormPixel[3] == 255,
+            "Composed ORM channels are incorrect.");
+
+        std::vector<uint8_t> rmaPayload(16 * 4);
+        for (size_t i = 0; i < 16; ++i)
+        {
+            const size_t idx = i * 4;
+            rmaPayload[idx + 0] = 10; // R: roughness
+            rmaPayload[idx + 1] = 20; // G: metallic
+            rmaPayload[idx + 2] = 30; // B: AO
+            rmaPayload[idx + 3] = 255;
+        }
+
+        const std::filesystem::path rmaPackPath = tempRoot / "rma_validation.pack";
+        WriteFileBytes(rmaPackPath, rmaPayload);
+        SubAssetRecord rmaEntry = entry;
+        rmaEntry.name = "test_rma";
+        rmaEntry.size = static_cast<uint32_t>(rmaPayload.size());
+        const TextureExportResult rmaResult =
+            TextureExporter::ExportTexture(rmaPackPath, rmaEntry, options);
+        Expect(rmaResult.success, "RMA normalization failed: " + rmaResult.error);
+        Expect(
+            FindMapOutput(rmaResult, TextureMapKind::OcclusionRoughnessMetallic) ==
+                rmaResult.outputPath,
+            "Normalized RMA output was not tracked as ORM.");
+        const std::array<uint8_t, 4> normalizedRmaPixel =
+            ReadFirstPngPixelRgba(rmaResult.outputPath);
+        Expect(
+            normalizedRmaPixel[0] == 30 &&
+                normalizedRmaPixel[1] == 10 &&
+                normalizedRmaPixel[2] == 20,
+            "RMA texture was not reordered to standard ORM.");
     }
 
     void RunVromfsValidation()
@@ -1488,6 +1742,8 @@ namespace
 
 int main()
 {
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitializeCom = SUCCEEDED(comHr);
     try
     {
         const std::filesystem::path tempRoot = MakeTempRoot();
@@ -1545,10 +1801,12 @@ int main()
             std::cout << "==========================================\n" << std::endl;
         }
 
+        if (uninitializeCom) CoUninitialize();
         return 0;
     }
     catch (const std::exception& ex)
     {
+        if (uninitializeCom) CoUninitialize();
         std::cerr << "Validation failed: " << ex.what() << std::endl;
         return 1;
     }

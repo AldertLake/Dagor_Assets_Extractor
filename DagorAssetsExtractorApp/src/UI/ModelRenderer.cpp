@@ -2,6 +2,7 @@
 #include "Platform/Platform.h"
 
 #include <d3d11.h>
+#include <dxgi1_4.h>
 #include <d3dcompiler.h>
 #include <DirectXMath.h>
 #include <cmath>
@@ -252,6 +253,43 @@ namespace DagorAssetsExtractor::UI
         dsDesc.StencilEnable = FALSE;
         m_device->CreateDepthStencilState(&dsDesc, &m_depthStencilState);
 
+        // Create Depth Stencil State with Depth disabled (always on top)
+        dsDesc.DepthEnable = FALSE;
+        dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        dsDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+        m_device->CreateDepthStencilState(&dsDesc, &m_depthStencilStateNoDepth);
+
+        // Create Ground Grid Vertices (unit size centered at origin)
+        std::vector<App::ModelPreviewVertex> gridVertices;
+        int gridDivisions = 20;
+        for (int i = 0; i <= gridDivisions; ++i)
+        {
+            float t = static_cast<float>(i) / static_cast<float>(gridDivisions) - 0.5f;
+            
+            // X line (parallel to X axis)
+            gridVertices.push_back({ { -0.5f, 0.0f, t }, { 0.0f, 1.0f, 0.0f } });
+            gridVertices.push_back({ { 0.5f, 0.0f, t }, { 0.0f, 1.0f, 0.0f } });
+            
+            // Z line (parallel to Z axis)
+            gridVertices.push_back({ { t, 0.0f, -0.5f }, { 0.0f, 1.0f, 0.0f } });
+            gridVertices.push_back({ { t, 0.0f, 0.5f }, { 0.0f, 1.0f, 0.0f } });
+        }
+        m_groundVertexCount = static_cast<uint32_t>(gridVertices.size());
+
+        D3D11_BUFFER_DESC vtxDesc = {};
+        vtxDesc.ByteWidth = static_cast<UINT>(sizeof(App::ModelPreviewVertex) * gridVertices.size());
+        vtxDesc.Usage = D3D11_USAGE_IMMUTABLE;
+        vtxDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        
+        D3D11_SUBRESOURCE_DATA initData = {};
+        initData.pSysMem = gridVertices.data();
+        
+        hr = m_device->CreateBuffer(&vtxDesc, &initData, &m_groundVertexBuffer);
+        if (FAILED(hr))
+        {
+            return false;
+        }
+
         return true;
     }
 
@@ -260,6 +298,7 @@ namespace DagorAssetsExtractor::UI
         ClearModelData();
         CleanupRenderTarget();
 
+        if (m_groundVertexBuffer) { m_groundVertexBuffer->Release(); m_groundVertexBuffer = nullptr; }
         if (m_vertexShader) { m_vertexShader->Release(); m_vertexShader = nullptr; }
         if (m_pixelShader) { m_pixelShader->Release(); m_pixelShader = nullptr; }
         if (m_inputLayout) { m_inputLayout->Release(); m_inputLayout = nullptr; }
@@ -267,6 +306,7 @@ namespace DagorAssetsExtractor::UI
         if (m_rasterizerStateSolid) { m_rasterizerStateSolid->Release(); m_rasterizerStateSolid = nullptr; }
         if (m_rasterizerStateWireframe) { m_rasterizerStateWireframe->Release(); m_rasterizerStateWireframe = nullptr; }
         if (m_depthStencilState) { m_depthStencilState->Release(); m_depthStencilState = nullptr; }
+        if (m_depthStencilStateNoDepth) { m_depthStencilStateNoDepth->Release(); m_depthStencilStateNoDepth = nullptr; }
     }
 
     bool ModelRenderer::SetModelData(const std::vector<App::ModelPreviewVertex>& vertices, const std::vector<uint32_t>& indices)
@@ -387,14 +427,17 @@ namespace DagorAssetsExtractor::UI
         float yaw,
         float pitch,
         float zoom,
-        float panX,
-        float panY,
-        bool wireframe,
+        float panWorldX,
+        float panWorldY,
+        float panWorldZ,
+        int renderMode,
         const float bboxMin[3],
         const float bboxMax[3],
         uint32_t width,
         uint32_t height,
-        const App::ModelPreviewLighting& lighting)
+        const App::ModelPreviewLighting& lighting,
+        int hoveredSubmeshIndex,
+        const std::vector<App::ModelPreviewSubmesh>& submeshes)
     {
         if (m_device == nullptr || m_context == nullptr || width == 0 || height == 0)
         {
@@ -445,7 +488,6 @@ namespace DagorAssetsExtractor::UI
             m_context->PSSetShader(m_pixelShader, nullptr, 0);
             m_context->PSSetConstantBuffers(0, 1, &m_constantBuffer);
 
-            m_context->RSSetState(wireframe ? m_rasterizerStateWireframe : m_rasterizerStateSolid);
             m_context->OMSetDepthStencilState(m_depthStencilState, 0);
 
             // Matrix calculations using DirectXMath
@@ -453,7 +495,13 @@ namespace DagorAssetsExtractor::UI
             float centerY = (bboxMin[1] + bboxMax[1]) * 0.5f;
             float centerZ = (bboxMin[2] + bboxMax[2]) * 0.5f;
 
-            XMVECTOR target = XMVectorSet(centerX, centerY, centerZ, 1.0f);
+            // Apply world-space pan offsets directly to the rotation target (origin)
+            XMVECTOR target = XMVectorSet(
+                centerX + panWorldX,
+                centerY + panWorldY,
+                centerZ + panWorldZ,
+                1.0f
+            );
 
             float theta = yaw * XM_PI / 180.0f;
             float phi = pitch * XM_PI / 180.0f;
@@ -471,14 +519,12 @@ namespace DagorAssetsExtractor::UI
                 0.0f
             );
 
-            // Compute look, right, and up vectors for camera viewport alignment
-            XMVECTOR look = XMVector3Normalize(offsetVec);
-            XMVECTOR right = XMVector3Normalize(XMVector3Cross(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), look));
-            XMVECTOR up = XMVector3Normalize(XMVector3Cross(look, right));
-
-            // Apply horizontal/vertical pan offsets
-            target += right * panX + up * panY;
             XMVECTOR cameraPos = target + offsetVec;
+
+            // Compute up vector for lookat matrix
+            XMVECTOR look = XMVector3Normalize(offsetVec);
+            XMVECTOR right = XMVector3Normalize(XMVector3Cross(look, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f)));
+            XMVECTOR up = XMVector3Normalize(XMVector3Cross(right, look));
 
             // View and Projection matrices
             XMMATRIX view = XMMatrixLookAtLH(cameraPos, target, up);
@@ -513,10 +559,95 @@ namespace DagorAssetsExtractor::UI
             cb.baseColor = XMFLOAT4(lighting.baseColor[0], lighting.baseColor[1], lighting.baseColor[2], 1.0f);
             cb.specParams = XMFLOAT4(lighting.specIntensity, lighting.specPower, 0.0f, 0.0f);
 
-            m_context->UpdateSubresource(m_constantBuffer, 0, nullptr, &cb, 0, 0);
+            // Render Ground Grid if enabled
+            if (lighting.showGround && m_groundVertexBuffer != nullptr && m_groundVertexCount > 0)
+            {
+                float sizeX = bboxMax[0] - bboxMin[0];
+                float sizeZ = bboxMax[2] - bboxMin[2];
+                float maxModelSize = std::max(sizeX, sizeZ);
+                float gridScale = std::max(20.0f, maxModelSize * 5.0f);
 
-            // Render
-            m_context->DrawIndexed(m_indexCount, 0, 0);
+                XMMATRIX groundWorld = XMMatrixScaling(gridScale, 1.0f, gridScale) * XMMatrixTranslation(centerX, bboxMin[1], centerZ);
+                XMMATRIX groundMvp = groundWorld * view * proj;
+
+                CBData cbGround;
+                XMStoreFloat4x4(&cbGround.mvp, groundMvp);
+                XMStoreFloat4x4(&cbGround.world, groundWorld);
+                XMStoreFloat4(&cbGround.keyLightDir, keyLight);
+                cbGround.keyLightColor = XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
+                cbGround.fillLightColor = XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
+                cbGround.ambientColor = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+                cbGround.baseColor = XMFLOAT4(0.35f, 0.38f, 0.42f, 1.0f); // Slate gray grid lines
+                cbGround.specParams = XMFLOAT4(0.0f, 1.0f, 0.0f, 0.0f);
+
+                m_context->IASetVertexBuffers(0, 1, &m_groundVertexBuffer, &stride, &offset);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                m_context->RSSetState(m_rasterizerStateSolid);
+
+                m_context->UpdateSubresource(m_constantBuffer, 0, nullptr, &cbGround, 0, 0);
+                m_context->Draw(m_groundVertexCount, 0);
+
+                // Restore model buffers & topology for drawing the model
+                m_context->IASetVertexBuffers(0, 1, &m_vertexBuffer, &stride, &offset);
+                m_context->IASetIndexBuffer(m_indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            }
+
+            if (renderMode == 1) // Wireframe only
+            {
+                m_context->RSSetState(m_rasterizerStateWireframe);
+                m_context->UpdateSubresource(m_constantBuffer, 0, nullptr, &cb, 0, 0);
+                m_context->DrawIndexed(m_indexCount, 0, 0);
+            }
+            else if (renderMode == 2) // Solid + Wireframe
+            {
+                // First pass: Solid
+                m_context->RSSetState(m_rasterizerStateSolid);
+                m_context->UpdateSubresource(m_constantBuffer, 0, nullptr, &cb, 0, 0);
+                m_context->DrawIndexed(m_indexCount, 0, 0);
+
+                // Second pass: Wireframe on top
+                m_context->RSSetState(m_rasterizerStateWireframe);
+                
+                CBData cbWire = cb;
+                float luminance = 0.2126f * cb.baseColor.x + 0.7152f * cb.baseColor.y + 0.0722f * cb.baseColor.z;
+                if (luminance < 0.4f)
+                {
+                    cbWire.baseColor = XMFLOAT4(0.9f, 0.92f, 0.95f, 1.0f); // Light lines on dark solid
+                }
+                else
+                {
+                    cbWire.baseColor = XMFLOAT4(0.08f, 0.08f, 0.1f, 1.0f); // Dark lines on light solid
+                }
+                cbWire.specParams = XMFLOAT4(0.0f, 1.0f, 0.0f, 0.0f); // No specular on wireframe lines
+
+                m_context->UpdateSubresource(m_constantBuffer, 0, nullptr, &cbWire, 0, 0);
+                m_context->DrawIndexed(m_indexCount, 0, 0);
+            }
+            else // Solid only
+            {
+                m_context->RSSetState(m_rasterizerStateSolid);
+                m_context->UpdateSubresource(m_constantBuffer, 0, nullptr, &cb, 0, 0);
+                m_context->DrawIndexed(m_indexCount, 0, 0);
+            }
+
+            // Outline highlight pass: render hovered submesh in wireframe ALWAYS on top (yellow)
+            if (hoveredSubmeshIndex >= 0 && hoveredSubmeshIndex < static_cast<int>(submeshes.size()))
+            {
+                const auto& submesh = submeshes[hoveredSubmeshIndex];
+                if (submesh.indexCount > 0)
+                {
+                    m_context->RSSetState(m_rasterizerStateWireframe);
+                    m_context->OMSetDepthStencilState(m_depthStencilStateNoDepth, 0);
+
+                    CBData cbHighlight = cb;
+                    cbHighlight.baseColor = XMFLOAT4(1.0f, 1.0f, 0.0f, 1.0f); // Yellow
+                    cbHighlight.specParams = XMFLOAT4(0.0f, 1.0f, 0.0f, 0.0f); // No specular on outline lines
+
+                    m_context->UpdateSubresource(m_constantBuffer, 0, nullptr, &cbHighlight, 0, 0);
+                    m_context->DrawIndexed(submesh.indexCount, submesh.startIndex, 0);
+                }
+            }
         }
 
         // Unbind target views to make the texture available as a shader resource for ImGui
@@ -524,6 +655,78 @@ namespace DagorAssetsExtractor::UI
         m_context->OMSetRenderTargets(1, &nullRTV, nullptr);
 
         return m_shaderResourceView;
+    }
+
+    std::string ModelRenderer::GetGPUName() const
+    {
+        if (!m_device) return "Unknown GPU";
+
+        IDXGIDevice* dxgiDevice = nullptr;
+        if (SUCCEEDED(m_device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDevice))))
+        {
+            IDXGIAdapter* dxgiAdapter = nullptr;
+            if (SUCCEEDED(dxgiDevice->GetAdapter(&dxgiAdapter)))
+            {
+                DXGI_ADAPTER_DESC desc;
+                if (SUCCEEDED(dxgiAdapter->GetDesc(&desc)))
+                {
+                    char buffer[128];
+                    int len = WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, buffer, sizeof(buffer), nullptr, nullptr);
+                    dxgiAdapter->Release();
+                    dxgiDevice->Release();
+                    if (len > 0)
+                    {
+                        return std::string(buffer);
+                    }
+                    return "Unknown GPU";
+                }
+                dxgiAdapter->Release();
+            }
+            dxgiDevice->Release();
+        }
+        return "Unknown GPU";
+    }
+
+    void ModelRenderer::GetVRAMInfo(uint64_t& usageBytes, uint64_t& budgetBytes) const
+    {
+        usageBytes = 0;
+        budgetBytes = 0;
+        if (!m_device) return;
+
+        IDXGIDevice* dxgiDevice = nullptr;
+        if (SUCCEEDED(m_device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDevice))))
+        {
+            IDXGIAdapter* dxgiAdapter = nullptr;
+            if (SUCCEEDED(dxgiDevice->GetAdapter(&dxgiAdapter)))
+            {
+                IDXGIAdapter3* dxgiAdapter3 = nullptr;
+                if (SUCCEEDED(dxgiAdapter->QueryInterface(__uuidof(IDXGIAdapter3), reinterpret_cast<void**>(&dxgiAdapter3))))
+                {
+                    DXGI_QUERY_VIDEO_MEMORY_INFO memInfo;
+                    if (SUCCEEDED(dxgiAdapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memInfo)))
+                    {
+                        usageBytes = memInfo.CurrentUsage;
+                        budgetBytes = memInfo.Budget;
+                    }
+                    dxgiAdapter3->Release();
+                }
+                else
+                {
+                    DXGI_ADAPTER_DESC desc;
+                    if (SUCCEEDED(dxgiAdapter->GetDesc(&desc)))
+                    {
+                        budgetBytes = desc.DedicatedVideoMemory;
+                        uint64_t vbSize = m_vertexBuffer ? sizeof(App::ModelPreviewVertex) * m_indexCount : 0;
+                        uint64_t ibSize = m_indexBuffer ? sizeof(uint32_t) * m_indexCount : 0;
+                        uint64_t rtSize = m_rtWidth * m_rtHeight * 4;
+                        uint64_t dsSize = m_rtWidth * m_rtHeight * 4;
+                        usageBytes = vbSize + ibSize + rtSize + dsSize;
+                    }
+                }
+                dxgiAdapter->Release();
+            }
+            dxgiDevice->Release();
+        }
     }
 
     namespace

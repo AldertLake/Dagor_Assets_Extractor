@@ -2,10 +2,12 @@
 #include "UI/UiAssets.h"
 #include "UI/ModelRenderer.h"
 #include "App/AppState.h"
+#include <DirectXMath.h>
 #include "Platform/Platform.h"
 #include "AssetIndex/AssetIndex.h"
 #include "AssetIndex/PackContents.h"
 #include "DagorFormats/BlkReader.h"
+#include "Export/MaterialTextureResolver.h"
 
 #include "imgui.h"
 
@@ -27,6 +29,96 @@ namespace DagorAssetsExtractor::UI
     using App::LogEntry;
     using AssetIndex::ResourceRecord;
     using AssetIndex::AssetType;
+
+    struct Ray
+    {
+        DirectX::XMVECTOR origin;
+        DirectX::XMVECTOR direction;
+    };
+
+    static bool RayAABBIntersection(const Ray& ray, const float bboxMin[3], const float bboxMax[3], float& tNearOut)
+    {
+        using namespace DirectX;
+        XMFLOAT3 origin, dir;
+        XMStoreFloat3(&origin, ray.origin);
+        XMStoreFloat3(&dir, ray.direction);
+
+        float tMin = -FLT_MAX;
+        float tMax = FLT_MAX;
+
+        float originArr[3] = { origin.x, origin.y, origin.z };
+        float dirArr[3] = { dir.x, dir.y, dir.z };
+
+        for (int i = 0; i < 3; ++i)
+        {
+            float o = originArr[i];
+            float d = dirArr[i];
+            float minVal = bboxMin[i];
+            float maxVal = bboxMax[i];
+
+            if (std::fabs(d) < 1e-6f)
+            {
+                if (o < minVal || o > maxVal)
+                    return false;
+            }
+            else
+            {
+                float invD = 1.0f / d;
+                float t1 = (minVal - o) * invD;
+                float t2 = (maxVal - o) * invD;
+
+                if (t1 > t2) std::swap(t1, t2);
+
+                tMin = std::max(tMin, t1);
+                tMax = std::min(tMax, t2);
+
+                if (tMin > tMax || tMax < 0.0f)
+                    return false;
+            }
+        }
+
+        tNearOut = std::max(0.0f, tMin);
+        return true;
+    }
+
+    static bool RayTriangleIntersection(const Ray& ray, const DirectX::XMVECTOR& v0, const DirectX::XMVECTOR& v1, const DirectX::XMVECTOR& v2, float& tOut)
+    {
+        using namespace DirectX;
+        XMVECTOR edge1 = v1 - v0;
+        XMVECTOR edge2 = v2 - v0;
+        XMVECTOR h = XMVector3Cross(ray.direction, edge2);
+        XMVECTOR aVec = XMVector3Dot(edge1, h);
+        float a = XMVectorGetX(aVec);
+
+        if (a > -1e-6f && a < 1e-6f)
+            return false;
+
+        float f = 1.0f / a;
+        XMVECTOR s = ray.origin - v0;
+        XMVECTOR uVec = XMVector3Dot(s, h) * f;
+        float u = XMVectorGetX(uVec);
+
+        if (u < 0.0f || u > 1.0f)
+            return false;
+
+        XMVECTOR q = XMVector3Cross(s, edge1);
+        XMVECTOR vVec = XMVector3Dot(ray.direction, q) * f;
+        float v = XMVectorGetX(vVec);
+
+        if (v < 0.0f || u + v > 1.0f)
+            return false;
+
+        XMVECTOR tVec = XMVector3Dot(edge2, q) * f;
+        float t = XMVectorGetX(tVec);
+
+        if (t > 1e-6f)
+        {
+            tOut = t;
+            return true;
+        }
+
+        return false;
+    }
 
     void SaveSettingsWithImGui(AppState& app)
     {
@@ -391,6 +483,15 @@ namespace DagorAssetsExtractor::UI
         return UiIconId::Invalid;
     }
 
+    void DrawWrappedBulletText(const std::string& text)
+    {
+        ImGui::Bullet();
+        ImGui::SameLine();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(text.c_str());
+        ImGui::PopTextWrapPos();
+    }
+
     void DrawValidationSummary(const AssetIndex::ValidationResult& validation)
     {
         ImGui::TextColored(validation.IsValid() ? ImVec4(0.43f, 0.86f, 0.55f, 1.0f) : ImVec4(1.0f, 0.49f, 0.42f, 1.0f),
@@ -398,7 +499,7 @@ namespace DagorAssetsExtractor::UI
 
         for (const std::string& message : validation.messages)
         {
-            ImGui::BulletText("%s", message.c_str());
+            DrawWrappedBulletText(message);
         }
     }
 
@@ -2221,6 +2322,8 @@ namespace DagorAssetsExtractor::UI
             return;
         }
 
+        ClearTexturePreview();
+        ClearTextureMapPreviews();
         if (!UpdateTexturePreview(
                 pending->bgraPixels.data(),
                 pending->width,
@@ -2232,7 +2335,31 @@ namespace DagorAssetsExtractor::UI
                 app,
                 pending->generation,
                 "D3D11 could not create the preview texture.");
+            app.texturePreview.uploadedGeneration = pending->generation;
+            return;
         }
+
+        for (const App::TexturePreviewImage::MapPreview& mapPreview :
+             pending->mapPreviews)
+        {
+            UpdateTextureMapPreview(
+                static_cast<uint32_t>(mapPreview.kind),
+                mapPreview.bgraPixels.data(),
+                mapPreview.width,
+                mapPreview.height,
+                mapPreview.stride);
+        }
+
+        if (!pending->mapPreviews.empty())
+        {
+            app.texturePreview.selectedMapMask =
+                1u << static_cast<uint32_t>(pending->mapPreviews.front().kind);
+        }
+        else
+        {
+            app.texturePreview.selectedMapMask = 0;
+        }
+        app.texturePreview.uploadedGeneration = pending->generation;
     }
 
     void DrawTextureDetailRow(const char* label, const std::string& value)
@@ -2244,7 +2371,10 @@ namespace DagorAssetsExtractor::UI
         ImGui::TextWrapped("%s", value.empty() ? "N/A" : value.c_str());
     }
 
-    void DrawTexturePreviewCanvas(AppState& app, const UiTexture* previewTexture)
+    void DrawTexturePreviewCanvas(
+        AppState& app,
+        const UiTexture* previewTexture,
+        const App::TexturePreviewSnapshot& preview)
     {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.055f, 0.06f, 0.072f, 1.0f));
         ImGui::BeginChild(
@@ -2256,7 +2386,11 @@ namespace DagorAssetsExtractor::UI
         if (previewTexture == nullptr || previewTexture->view == nullptr)
         {
             const ImVec2 available = ImGui::GetContentRegionAvail();
-            const char* message = "Select a texture from a DXP pack to preview it.";
+            const char* message = preview.loading
+                ? "Decoding texture preview..."
+                : !preview.error.empty()
+                    ? "Texture preview is unavailable."
+                    : "No texture preview is available.";
             const ImVec2 textSize = ImGui::CalcTextSize(message);
             ImGui::SetCursorPos(ImVec2(
                 ImGui::GetCursorPosX() + std::max(0.0f, (available.x - textSize.x) * 0.5f),
@@ -2267,7 +2401,9 @@ namespace DagorAssetsExtractor::UI
             return;
         }
 
-        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+        const bool canvasHovered =
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+        if (canvasHovered &&
             ImGui::GetIO().MouseWheel != 0.0f)
         {
             app.texturePreview.fitToWindow = false;
@@ -2345,6 +2481,20 @@ namespace DagorAssetsExtractor::UI
             imageMax,
             IM_COL32(120, 128, 143, 255));
 
+        if (canvasHovered)
+        {
+            ImGui::SetMouseCursor(
+                ImGui::IsMouseDown(ImGuiMouseButton_Left)
+                    ? ImGuiMouseCursor_Hand
+                    : ImGuiMouseCursor_ResizeAll);
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f))
+            {
+                const ImVec2 dragDelta = ImGui::GetIO().MouseDelta;
+                ImGui::SetScrollX(ImGui::GetScrollX() - dragDelta.x);
+                ImGui::SetScrollY(ImGui::GetScrollY() - dragDelta.y);
+            }
+        }
+
         ImGui::EndChild();
         ImGui::PopStyleColor();
     }
@@ -2363,6 +2513,13 @@ namespace DagorAssetsExtractor::UI
             app.texturePreview.windowOpen = false;
             return;
         }
+        if (app.texturePreview.uploadedGeneration != preview.generation)
+        {
+            ClearTexturePreview();
+            ClearTextureMapPreviews();
+            app.texturePreview.selectedMapMask = 0;
+            app.texturePreview.uploadedGeneration = preview.generation;
+        }
 
         std::optional<AssetIndex::SubAssetRecord> currentEntry;
         if (const auto contents = app.packContentsCache.Get(preview.packPath))
@@ -2379,13 +2536,27 @@ namespace DagorAssetsExtractor::UI
                 currentEntry = *entryIt;
             }
         }
+        const Export::TextureMapAnalysis mapAnalysis =
+            Export::AnalyzeTextureMaps(preview.entryName);
 
         ImGui::SetNextWindowSize(ImVec2(1080.0f, 720.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(720.0f, 480.0f), ImVec2(FLT_MAX, FLT_MAX));
         std::string title = "Texture Viewer - " + preview.entryName + "###TexturePreviewWindow";
         bool open = app.texturePreview.windowOpen;
 
-        if (ImGui::Begin(title.c_str(), &open))
+        if (!ImGui::IsPopupOpen(title.c_str()))
+        {
+            ImGui::OpenPopup(title.c_str());
+        }
+
+        ImGuiIO& io = ImGui::GetIO();
+        const bool previousMoveFromTitleBarOnly =
+            io.ConfigWindowsMoveFromTitleBarOnly;
+        io.ConfigWindowsMoveFromTitleBarOnly = true;
+        const bool viewerVisible = ImGui::BeginPopupModal(title.c_str(), &open);
+        io.ConfigWindowsMoveFromTitleBarOnly = previousMoveFromTitleBarOnly;
+
+        if (viewerVisible)
         {
             DrawPanelTitle(UiIconId::Texture, "Texture Viewer");
             ImGui::SameLine();
@@ -2458,10 +2629,10 @@ namespace DagorAssetsExtractor::UI
                 else
                 {
                     ImGui::TextDisabled(
-                        "Mouse wheel zooms. Scrollbars navigate images larger than the viewport.");
+                        "Mouse wheel zooms. Left-drag pans images larger than the viewport.");
                 }
 
-                DrawTexturePreviewCanvas(app, GetTexturePreview());
+                DrawTexturePreviewCanvas(app, GetTexturePreview(), preview);
                 ImGui::EndChild();
 
                 ImGui::TableSetColumnIndex(1);
@@ -2504,6 +2675,327 @@ namespace DagorAssetsExtractor::UI
                             "Color space",
                             preview.srgb ? "sRGB" : "Linear / unspecified");
                         ImGui::EndTable();
+                    }
+                }
+
+                if (ImGui::CollapsingHeader(
+                        "Detected Maps",
+                        ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    const ImVec4 detectionColor =
+                        mapAnalysis.confidence == Export::TextureDetectionConfidence::StrongNameBased
+                            ? ImVec4(0.48f, 0.86f, 0.58f, 1.0f)
+                            : mapAnalysis.confidence == Export::TextureDetectionConfidence::NameBased
+                                ? ImVec4(0.95f, 0.76f, 0.32f, 1.0f)
+                                : ImVec4(0.72f, 0.74f, 0.80f, 1.0f);
+                    ImGui::TextColored(
+                        detectionColor,
+                        "%s",
+                        mapAnalysis.summary.c_str());
+                    ImGui::TextWrapped("%s", mapAnalysis.caution.c_str());
+
+                    if (preview.loading)
+                    {
+                        ImGui::Spacing();
+                        ImGui::TextDisabled(
+                            "Map previews will be generated after the source texture is decoded.");
+                    }
+                    else if (!preview.error.empty())
+                    {
+                        ImGui::Spacing();
+                        ImGui::PushStyleColor(
+                            ImGuiCol_ChildBg,
+                            ImVec4(0.20f, 0.075f, 0.065f, 0.72f));
+                        ImGui::BeginChild(
+                            "TextureMapDecodeError",
+                            ImVec2(0.0f, 0.0f),
+                            ImGuiChildFlags_Borders |
+                                ImGuiChildFlags_AutoResizeY);
+                        ImGui::TextColored(
+                            ImVec4(1.0f, 0.49f, 0.42f, 1.0f),
+                            "Map previews unavailable");
+                        ImGui::TextWrapped(
+                            "The source texture is invalid or could not be decoded. "
+                            "No maps can be previewed or exported.");
+                        ImGui::TextDisabled("%s", preview.error.c_str());
+                        ImGui::EndChild();
+                        ImGui::PopStyleColor();
+                    }
+                    else if (mapAnalysis.maps.empty())
+                    {
+                        ImGui::Spacing();
+                        ImGui::TextDisabled(
+                            "No individual-map export is offered because the channel layout "
+                            "could not be identified safely.");
+                    }
+                    else
+                    {
+                        ImGui::Spacing();
+                        if (ImGui::SmallButton("Select All"))
+                        {
+                            for (const Export::DetectedTextureMap& map :
+                                 mapAnalysis.maps)
+                            {
+                                const UiTexture* mapTexture =
+                                    GetTextureMapPreview(
+                                        static_cast<uint32_t>(map.kind));
+                                if (mapTexture != nullptr &&
+                                    mapTexture->view != nullptr)
+                                {
+                                    app.texturePreview.selectedMapMask |=
+                                        1u << static_cast<uint32_t>(map.kind);
+                                }
+                            }
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Clear Selection"))
+                        {
+                            app.texturePreview.selectedMapMask = 0;
+                        }
+                        ImGui::Spacing();
+                        constexpr float tileSpacing = 7.0f;
+                        const float availableWidth = ImGui::GetContentRegionAvail().x;
+                        const int columnCount = std::clamp(
+                            static_cast<int>((availableWidth + tileSpacing) / 92.0f),
+                            2,
+                            3);
+                        const float tileSize = std::max(
+                            72.0f,
+                            (availableWidth -
+                                tileSpacing * static_cast<float>(columnCount - 1)) /
+                                static_cast<float>(columnCount));
+
+                        for (size_t mapIndex = 0;
+                             mapIndex < mapAnalysis.maps.size();
+                             ++mapIndex)
+                        {
+                            const Export::DetectedTextureMap& map =
+                                mapAnalysis.maps[mapIndex];
+                            if (mapIndex % static_cast<size_t>(columnCount) != 0)
+                            {
+                                ImGui::SameLine(0.0f, tileSpacing);
+                            }
+
+                            ImGui::PushID(static_cast<int>(map.kind));
+                            const UiTexture* mapTexture = GetTextureMapPreview(
+                                static_cast<uint32_t>(map.kind));
+                            const bool mapPreviewAvailable =
+                                mapTexture != nullptr &&
+                                mapTexture->view != nullptr;
+                            const ImVec2 tileMin = ImGui::GetCursorScreenPos();
+                            ImGui::InvisibleButton(
+                                "##TextureMapTile",
+                                ImVec2(tileSize, tileSize),
+                                ImGuiButtonFlags_MouseButtonLeft |
+                                    ImGuiButtonFlags_MouseButtonRight);
+                            const bool hovered = ImGui::IsItemHovered();
+                            const uint32_t selectionBit =
+                                1u << static_cast<uint32_t>(map.kind);
+                            if (mapPreviewAvailable &&
+                                ImGui::IsItemClicked(ImGuiMouseButton_Left))
+                            {
+                                app.texturePreview.selectedMapMask ^=
+                                    selectionBit;
+                            }
+                            else if (
+                                mapPreviewAvailable &&
+                                ImGui::IsItemClicked(ImGuiMouseButton_Right) &&
+                                (app.texturePreview.selectedMapMask &
+                                    selectionBit) == 0)
+                            {
+                                app.texturePreview.selectedMapMask |=
+                                    selectionBit;
+                            }
+
+                            const bool selected =
+                                (app.texturePreview.selectedMapMask &
+                                    selectionBit) != 0;
+                            const ImVec2 tileMax(
+                                tileMin.x + tileSize,
+                                tileMin.y + tileSize);
+                            ImDrawList* drawList = ImGui::GetWindowDrawList();
+                            drawList->AddRectFilled(
+                                tileMin,
+                                tileMax,
+                                hovered
+                                    ? IM_COL32(50, 56, 68, 255)
+                                    : IM_COL32(34, 39, 48, 255),
+                                4.0f);
+
+                            if (mapPreviewAvailable)
+                            {
+                                const float imagePadding = 5.0f;
+                                const float contentSize =
+                                    std::max(1.0f, tileSize - imagePadding * 2.0f);
+                                const float imageScale = std::min(
+                                    contentSize /
+                                        static_cast<float>(mapTexture->width),
+                                    contentSize /
+                                        static_cast<float>(mapTexture->height));
+                                const ImVec2 imageSize(
+                                    std::max(
+                                        1.0f,
+                                        static_cast<float>(mapTexture->width) *
+                                            imageScale),
+                                    std::max(
+                                        1.0f,
+                                        static_cast<float>(mapTexture->height) *
+                                            imageScale));
+                                const ImVec2 imageMin(
+                                    tileMin.x + (tileSize - imageSize.x) * 0.5f,
+                                    tileMin.y + (tileSize - imageSize.y) * 0.5f);
+                                drawList->AddImage(
+                                    reinterpret_cast<ImTextureID>(
+                                        mapTexture->view),
+                                    imageMin,
+                                    ImVec2(
+                                        imageMin.x + imageSize.x,
+                                        imageMin.y + imageSize.y));
+                            }
+                            else
+                            {
+                                const ImVec2 textSize =
+                                    ImGui::CalcTextSize("Unavailable");
+                                drawList->AddText(
+                                    ImVec2(
+                                        tileMin.x +
+                                            (tileSize - textSize.x) * 0.5f,
+                                        tileMin.y +
+                                            (tileSize - textSize.y) * 0.5f),
+                                    IM_COL32(148, 154, 166, 255),
+                                    "Unavailable");
+                            }
+
+                            drawList->AddRect(
+                                tileMin,
+                                tileMax,
+                                selected
+                                    ? IM_COL32(55, 142, 255, 255)
+                                    : hovered
+                                        ? IM_COL32(118, 135, 162, 255)
+                                        : IM_COL32(75, 83, 98, 255),
+                                4.0f,
+                                0,
+                                selected ? 3.0f : 1.0f);
+
+                            if (hovered)
+                            {
+                                ImGui::BeginTooltip();
+                                ImGui::TextUnformatted(map.label.c_str());
+                                ImGui::TextDisabled("%s", map.channels.c_str());
+                                if (!mapPreviewAvailable)
+                                {
+                                    ImGui::TextColored(
+                                        ImVec4(1.0f, 0.62f, 0.42f, 1.0f),
+                                        "Thumbnail generation failed.");
+                                }
+                                ImGui::EndTooltip();
+                            }
+
+                            if (ImGui::BeginPopupContextItem("TextureMapDetails"))
+                            {
+                                ImGui::TextUnformatted(map.label.c_str());
+                                ImGui::Separator();
+                                ImGui::Text("Type: %s", map.label.c_str());
+                                ImGui::TextWrapped(
+                                    "Channels: %s",
+                                    map.channels.c_str());
+                                ImGui::Text(
+                                    "Source size: %u x %u",
+                                    preview.sourceWidth,
+                                    preview.sourceHeight);
+                                if (mapTexture != nullptr)
+                                {
+                                    ImGui::Text(
+                                        "Thumbnail: %u x %u",
+                                        mapTexture->width,
+                                        mapTexture->height);
+                                }
+                                else
+                                {
+                                    ImGui::TextColored(
+                                        ImVec4(1.0f, 0.62f, 0.42f, 1.0f),
+                                        "Preview: Unavailable");
+                                }
+                                ImGui::Text(
+                                    "Generated: %s",
+                                    map.derived ? "Yes" : "No");
+                                const std::string outputSuffix =
+                                    std::string(
+                                        Export::TextureMapKindFileSuffix(
+                                            map.kind)) +
+                                    ".png";
+                                ImGui::Text(
+                                    "Output suffix: %s",
+                                    outputSuffix.c_str());
+                                ImGui::Text(
+                                    "Source format: %s",
+                                    preview.format.empty()
+                                        ? "Unknown"
+                                        : preview.format.c_str());
+                                ImGui::Text(
+                                    "Mip levels: %u",
+                                    static_cast<unsigned>(preview.mipCount));
+                                ImGui::TextWrapped(
+                                    "Data space: %s",
+                                    map.kind == Export::TextureMapKind::BaseColor
+                                        ? "sRGB color"
+                                        : "Linear material data");
+                                ImGui::EndPopup();
+                            }
+                            ImGui::PopID();
+                        }
+
+                        ImGui::Spacing();
+                        const bool exportBusy = app.exportProgress.running.load();
+                        std::vector<Export::TextureMapKind> selectedMaps;
+                        selectedMaps.reserve(mapAnalysis.maps.size());
+                        for (const Export::DetectedTextureMap& map :
+                             mapAnalysis.maps)
+                        {
+                            const uint32_t selectionBit =
+                                1u << static_cast<uint32_t>(map.kind);
+                            const UiTexture* mapTexture =
+                                GetTextureMapPreview(
+                                    static_cast<uint32_t>(map.kind));
+                            if ((app.texturePreview.selectedMapMask &
+                                    selectionBit) != 0 &&
+                                mapTexture != nullptr &&
+                                mapTexture->view != nullptr)
+                            {
+                                selectedMaps.push_back(map.kind);
+                            }
+                        }
+                        ImGui::TextDisabled(
+                            "Selected: %zu map%s",
+                            selectedMaps.size(),
+                            selectedMaps.size() == 1 ? "" : "s");
+                        ImGui::BeginDisabled(
+                            !currentEntry.has_value() ||
+                            selectedMaps.empty() ||
+                            exportBusy);
+                        const std::string exportLabel =
+                            selectedMaps.size() == 1
+                                ? "Export Selected Map"
+                                : "Export Selected Maps (" +
+                                    std::to_string(selectedMaps.size()) + ")";
+                        if (ImGui::Button(
+                                exportLabel.c_str(),
+                                ImVec2(-1.0f, 0.0f)) &&
+                            currentEntry &&
+                            !selectedMaps.empty())
+                        {
+                            App::RequestTextureMapsExport(
+                                app,
+                                preview.packPath,
+                                *currentEntry,
+                                std::move(selectedMaps));
+                        }
+                        ImGui::EndDisabled();
+                        if (exportBusy)
+                        {
+                            ImGui::TextDisabled("Another export is currently running.");
+                        }
                     }
                 }
 
@@ -2571,7 +3063,7 @@ namespace DagorAssetsExtractor::UI
                             preview.warnings.size() == 1 ? "" : "s");
                         for (const std::string& warning : preview.warnings)
                         {
-                            ImGui::BulletText("%s", warning.c_str());
+                            DrawWrappedBulletText(warning);
                         }
                     }
                 }
@@ -2601,8 +3093,8 @@ namespace DagorAssetsExtractor::UI
 
                 ImGui::EndTable();
             }
+            ImGui::EndPopup();
         }
-        ImGui::End();
 
         app.texturePreview.windowOpen = open;
     }
@@ -2630,6 +3122,11 @@ namespace DagorAssetsExtractor::UI
                     app.modelPreview.fileSize = pendingData->fileSize;
                     std::copy(std::begin(pendingData->bboxMin), std::end(pendingData->bboxMin), std::begin(app.modelPreview.bboxMin));
                     std::copy(std::begin(pendingData->bboxMax), std::end(pendingData->bboxMax), std::begin(app.modelPreview.bboxMax));
+                    app.modelPreview.submeshes = std::move(pendingData->submeshes);
+                    app.modelPreview.hoveredSubmeshIndex = -1;
+                    app.modelPreview.vertices = std::move(pendingData->vertices);
+                    app.modelPreview.indices = std::move(pendingData->indices);
+                    app.modelPreview.bones = std::move(pendingData->bones);
 
                     // Auto-fit camera zoom
                     float dx = app.modelPreview.bboxMax[0] - app.modelPreview.bboxMin[0];
@@ -2637,8 +3134,9 @@ namespace DagorAssetsExtractor::UI
                     float dz = app.modelPreview.bboxMax[2] - app.modelPreview.bboxMin[2];
                     float bboxSize = std::sqrt(dx * dx + dy * dy + dz * dz);
                     app.modelPreview.zoom = bboxSize > 0.0f ? bboxSize * 1.5f : 5.0f;
-                    app.modelPreview.panX = 0.0f;
-                    app.modelPreview.panY = 0.0f;
+                    app.modelPreview.panWorldX = 0.0f;
+                    app.modelPreview.panWorldY = 0.0f;
+                    app.modelPreview.panWorldZ = 0.0f;
                     app.modelPreview.yaw = 45.0f;
                     app.modelPreview.pitch = 30.0f;
                 }
@@ -2654,10 +3152,17 @@ namespace DagorAssetsExtractor::UI
         }
 
         ImGui::SetNextWindowSize(ImVec2(950.0f, 600.0f), ImGuiCond_FirstUseEver);
-        std::string windowTitle = "Model Preview - " + app.modelPreview.entryName + "###ModelPreviewWindow";
+        std::string popupName = "Model Preview - " + app.modelPreview.entryName + "###ModelPreviewModal";
+        
+        static bool wasOpen = false;
+        if (!wasOpen)
+        {
+            ImGui::OpenPopup(popupName.c_str());
+            wasOpen = true;
+        }
 
         bool isOpen = true;
-        if (ImGui::Begin(windowTitle.c_str(), &isOpen))
+        if (ImGui::BeginPopupModal(popupName.c_str(), &isOpen))
         {
             if (app.modelPreview.loading)
             {
@@ -2692,20 +3197,173 @@ namespace DagorAssetsExtractor::UI
                     ID3D11ShaderResourceView* srv = nullptr;
                     if (renderer)
                     {
+                        // Mouse Raycasting and Hover Detection (only when right-click is held to save performance)
+                        ImGuiIO& io = ImGui::GetIO();
+                        bool rightMouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+                        int bestSubmeshIndex = -1;
+
+                        if (rightMouseDown)
+                        {
+                            ImVec2 imagePos = ImGui::GetCursorScreenPos();
+                            ImVec2 mousePos = io.MousePos;
+
+                            float mx = mousePos.x - imagePos.x;
+                            float my = mousePos.y - imagePos.y;
+                            bool mouseInside = (mx >= 0.0f && mx < viewportSize.x && my >= 0.0f && my < viewportSize.y);
+
+                            if (mouseInside && !app.modelPreview.vertices.empty())
+                            {
+                                using namespace DirectX;
+                                float bboxMin[3];
+                                float bboxMax[3];
+                                std::copy(std::begin(app.modelPreview.bboxMin), std::end(app.modelPreview.bboxMin), bboxMin);
+                                std::copy(std::begin(app.modelPreview.bboxMax), std::end(app.modelPreview.bboxMax), bboxMax);
+
+                                float centerX = (bboxMin[0] + bboxMax[0]) * 0.5f;
+                                float centerY = (bboxMin[1] + bboxMax[1]) * 0.5f;
+                                float centerZ = (bboxMin[2] + bboxMax[2]) * 0.5f;
+
+                                XMVECTOR target = XMVectorSet(
+                                    centerX + app.modelPreview.panWorldX,
+                                    centerY + app.modelPreview.panWorldY,
+                                    centerZ + app.modelPreview.panWorldZ,
+                                    1.0f
+                                );
+
+                                float theta = app.modelPreview.yaw * XM_PI / 180.0f;
+                                float phi = app.modelPreview.pitch * XM_PI / 180.0f;
+
+                                float cosP = cosf(phi);
+                                float sinP = sinf(phi);
+                                float cosY = cosf(theta);
+                                float sinY = sinf(theta);
+
+                                XMVECTOR offsetVec = XMVectorSet(
+                                    app.modelPreview.zoom * cosP * sinY,
+                                    app.modelPreview.zoom * sinP,
+                                    -app.modelPreview.zoom * cosP * cosY,
+                                    0.0f
+                                );
+
+                                XMVECTOR cameraPos = target + offsetVec;
+                                XMVECTOR look = XMVector3Normalize(offsetVec);
+                                XMVECTOR right = XMVector3Normalize(XMVector3Cross(look, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f)));
+                                XMVECTOR up = XMVector3Normalize(XMVector3Cross(right, look));
+
+                                XMMATRIX view = XMMatrixLookAtLH(cameraPos, target, up);
+                                float aspect = static_cast<float>(viewportSize.x) / static_cast<float>(viewportSize.y);
+                                float nearPlane = std::max(0.01f, app.modelPreview.zoom * 0.01f);
+                                float farPlane = std::max(10.0f, app.modelPreview.zoom * 10.0f);
+                                XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, nearPlane, farPlane);
+                                XMMATRIX viewProj = view * proj;
+
+                                XMMATRIX invViewProj = XMMatrixInverse(nullptr, viewProj);
+
+                                float ndcX = (2.0f * mx) / viewportSize.x - 1.0f;
+                                float ndcY = 1.0f - (2.0f * my) / viewportSize.y;
+
+                                XMVECTOR ndcNear = XMVectorSet(ndcX, ndcY, 0.0f, 1.0f);
+                                XMVECTOR ndcFar = XMVectorSet(ndcX, ndcY, 1.0f, 1.0f);
+
+                                XMVECTOR worldNear = XMVector3TransformCoord(ndcNear, invViewProj);
+                                XMVECTOR worldFar = XMVector3TransformCoord(ndcFar, invViewProj);
+
+                                XMVECTOR rayDir = XMVector3Normalize(worldFar - worldNear);
+
+                                Ray ray;
+                                ray.origin = worldNear;
+                                ray.direction = rayDir;
+
+                                static auto lastLogTime = std::chrono::steady_clock::now();
+                                auto now = std::chrono::steady_clock::now();
+                                bool shouldLog = std::chrono::duration_cast<std::chrono::seconds>(now - lastLogTime).count() >= 1;
+                                if (shouldLog)
+                                {
+                                    lastLogTime = now;
+                                    App::AddLog(app, App::LogLevel::Info, "Raycast check: mouse=" + std::to_string(mx) + "," + std::to_string(my) +
+                                        " submeshes=" + std::to_string(app.modelPreview.submeshes.size()) +
+                                        " vertices=" + std::to_string(app.modelPreview.vertices.size()) +
+                                        " ndc=(" + std::to_string(ndcX) + "," + std::to_string(ndcY) + ")");
+                                }
+
+                                float bestT = FLT_MAX;
+
+                                for (size_t subIdx = 0; subIdx < app.modelPreview.submeshes.size(); ++subIdx)
+                                {
+                                    const auto& submesh = app.modelPreview.submeshes[subIdx];
+                                    float tNearBox = 0.0f;
+                                    if (RayAABBIntersection(ray, submesh.bboxMin, submesh.bboxMax, tNearBox))
+                                    {
+                                        if (shouldLog)
+                                        {
+                                            App::AddLog(app, App::LogLevel::Info, "Box check hit: " + submesh.name + " tNear=" + std::to_string(tNearBox));
+                                        }
+
+                                        if (tNearBox < bestT)
+                                        {
+                                            bool hitTriangle = false;
+                                            float submeshBestT = FLT_MAX;
+
+                                            for (uint32_t i = 0; i + 2 < submesh.indexCount; i += 3)
+                                            {
+                                                uint32_t idx0 = app.modelPreview.indices[submesh.startIndex + i];
+                                                uint32_t idx1 = app.modelPreview.indices[submesh.startIndex + i + 1];
+                                                uint32_t idx2 = app.modelPreview.indices[submesh.startIndex + i + 2];
+
+                                                if (idx0 < app.modelPreview.vertices.size() &&
+                                                    idx1 < app.modelPreview.vertices.size() &&
+                                                    idx2 < app.modelPreview.vertices.size())
+                                                {
+                                                    XMVECTOR v0 = XMVectorSet(app.modelPreview.vertices[idx0].pos[0], app.modelPreview.vertices[idx0].pos[1], app.modelPreview.vertices[idx0].pos[2], 1.0f);
+                                                    XMVECTOR v1 = XMVectorSet(app.modelPreview.vertices[idx1].pos[0], app.modelPreview.vertices[idx1].pos[1], app.modelPreview.vertices[idx1].pos[2], 1.0f);
+                                                    XMVECTOR v2 = XMVectorSet(app.modelPreview.vertices[idx2].pos[0], app.modelPreview.vertices[idx2].pos[1], app.modelPreview.vertices[idx2].pos[2], 1.0f);
+
+                                                    float tTriangle = 0.0f;
+                                                    if (RayTriangleIntersection(ray, v0, v1, v2, tTriangle))
+                                                    {
+                                                        hitTriangle = true;
+                                                        if (tTriangle < submeshBestT)
+                                                        {
+                                                            submeshBestT = tTriangle;
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if (hitTriangle && submeshBestT < bestT)
+                                            {
+                                                bestT = submeshBestT;
+                                                bestSubmeshIndex = static_cast<int>(subIdx);
+                                                if (shouldLog)
+                                                {
+                                                    App::AddLog(app, App::LogLevel::Info, "New best hit: " + submesh.name + " t=" + std::to_string(bestT));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        app.modelPreview.hoveredSubmeshIndex = bestSubmeshIndex;
+
                         auto start = std::chrono::high_resolution_clock::now();
 
                         srv = renderer->Render(
                             app.modelPreview.yaw,
                             app.modelPreview.pitch,
                             app.modelPreview.zoom,
-                            app.modelPreview.panX,
-                            app.modelPreview.panY,
-                            app.modelPreview.wireframe,
+                            app.modelPreview.panWorldX,
+                            app.modelPreview.panWorldY,
+                            app.modelPreview.panWorldZ,
+                            app.modelPreview.renderMode,
                             app.modelPreview.bboxMin,
                             app.modelPreview.bboxMax,
                             static_cast<uint32_t>(viewportSize.x),
                             static_cast<uint32_t>(viewportSize.y),
-                            app.modelPreview.lighting
+                            app.modelPreview.lighting,
+                            app.modelPreview.hoveredSubmeshIndex,
+                            app.modelPreview.submeshes
                         );
 
                         auto end = std::chrono::high_resolution_clock::now();
@@ -2713,20 +3371,168 @@ namespace DagorAssetsExtractor::UI
                         float latency = duration.count();
                         app.modelPreview.renderLatencyMs = latency;
 
-                        ImGuiIO& io = ImGui::GetIO();
-                        app.modelPreview.frameTimes[app.modelPreview.statOffset] = io.Framerate;
-                        app.modelPreview.latencyTimes[app.modelPreview.statOffset] = latency;
+                        app.modelPreview.fpsHistory[app.modelPreview.statOffset] = io.Framerate;
+                        app.modelPreview.latencyHistory[app.modelPreview.statOffset] = latency;
+                        app.modelPreview.frameTimeHistory[app.modelPreview.statOffset] = io.DeltaTime * 1000.0f;
                         app.modelPreview.statOffset = (app.modelPreview.statOffset + 1) % 90;
                     }
 
                     if (srv)
                     {
+                        ImVec2 startCursorPos = ImGui::GetCursorPos();
                         ImGui::Image(reinterpret_cast<ImTextureID>(srv), viewportSize);
+
+                        // Capture the correct viewport image rect in screen space right after rendering the Image.
+                        // This prevents later ImGui elements (like overlays) from overriding GetItemRectMin().
+                        ImVec2 imageMin = ImGui::GetItemRectMin();
+                        ImVec2 imageMax = ImGui::GetItemRectMax();
+
+                        { // Scope for projection and bone overlay drawing to prevent redefinition conflicts below
+                            // Compute camera/projection vectors once for viewport overlays
+                            using namespace DirectX;
+                            float bboxMin[3];
+                            float bboxMax[3];
+                            std::copy(std::begin(app.modelPreview.bboxMin), std::end(app.modelPreview.bboxMin), bboxMin);
+                            std::copy(std::begin(app.modelPreview.bboxMax), std::end(app.modelPreview.bboxMax), bboxMax);
+
+                            float centerX = (bboxMin[0] + bboxMax[0]) * 0.5f;
+                            float centerY = (bboxMin[1] + bboxMax[1]) * 0.5f;
+                            float centerZ = (bboxMin[2] + bboxMax[2]) * 0.5f;
+
+                            XMVECTOR target = XMVectorSet(
+                                centerX + app.modelPreview.panWorldX,
+                                centerY + app.modelPreview.panWorldY,
+                                centerZ + app.modelPreview.panWorldZ,
+                                1.0f
+                            );
+
+                            float theta = app.modelPreview.yaw * XM_PI / 180.0f;
+                            float phi = app.modelPreview.pitch * XM_PI / 180.0f;
+
+                            float cosP = cosf(phi);
+                            float sinP = sinf(phi);
+                            float cosY = cosf(theta);
+                            float sinY = sinf(theta);
+
+                            XMVECTOR offsetVec = XMVectorSet(
+                                app.modelPreview.zoom * cosP * sinY,
+                                app.modelPreview.zoom * sinP,
+                                -app.modelPreview.zoom * cosP * cosY,
+                                0.0f
+                            );
+
+                            XMVECTOR cameraPos = target + offsetVec;
+                            XMVECTOR look = XMVector3Normalize(offsetVec);
+                            XMVECTOR right = XMVector3Normalize(XMVector3Cross(look, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f)));
+                            XMVECTOR up = XMVector3Normalize(XMVector3Cross(right, look));
+
+                            XMMATRIX view = XMMatrixLookAtLH(cameraPos, target, up);
+                            float aspect = static_cast<float>(viewportSize.x) / static_cast<float>(viewportSize.y);
+                            float nearPlane = std::max(0.01f, app.modelPreview.zoom * 0.01f);
+                            float farPlane = std::max(10.0f, app.modelPreview.zoom * 10.0f);
+                            XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, nearPlane, farPlane);
+                            XMMATRIX viewProj = view * proj;
+
+                            // Project and draw the submesh hover name label in the center of the outline (yellow)
+                            bool rightMouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+                            if (rightMouseDown &&
+                                app.modelPreview.hoveredSubmeshIndex >= 0 && 
+                                app.modelPreview.hoveredSubmeshIndex < static_cast<int>(app.modelPreview.submeshes.size()))
+                            {
+                                const auto& submesh = app.modelPreview.submeshes[app.modelPreview.hoveredSubmeshIndex];
+                                
+                                float submeshCenterX = (submesh.bboxMin[0] + submesh.bboxMax[0]) * 0.5f;
+                                float submeshCenterY = (submesh.bboxMin[1] + submesh.bboxMax[1]) * 0.5f;
+                                float submeshCenterZ = (submesh.bboxMin[2] + submesh.bboxMax[2]) * 0.5f;
+
+                                XMVECTOR center3D = XMVectorSet(submeshCenterX, submeshCenterY, submeshCenterZ, 1.0f);
+                                XMVECTOR cameraToCenter = center3D - cameraPos;
+                                XMVECTOR dotProduct = XMVector3Dot(cameraToCenter, look);
+
+                                if (XMVectorGetX(dotProduct) < 0.0f)
+                                {
+                                    XMVECTOR projected = XMVector3TransformCoord(center3D, viewProj);
+                                    float projX = XMVectorGetX(projected);
+                                    float projY = XMVectorGetY(projected);
+
+                                    if (projX >= -1.1f && projX <= 1.1f && projY >= -1.1f && projY <= 1.1f)
+                                    {
+                                        float screenX = imageMin.x + (projX + 1.0f) * 0.5f * viewportSize.x;
+                                        float screenY = imageMin.y + (1.0f - projY) * 0.5f * viewportSize.y;
+
+                                        ImDrawList* drawList = ImGui::GetWindowDrawList();
+                                        std::string partName = submesh.name;
+                                        ImGui::SetWindowFontScale(1.3f);
+                                        ImVec2 textSize = ImGui::CalcTextSize(partName.c_str());
+                                        ImVec2 textPos = ImVec2(screenX - textSize.x * 0.5f, screenY - textSize.y * 0.5f);
+
+                                        // Shadow
+                                        drawList->AddText(ImVec2(textPos.x + 1.0f, textPos.y + 1.0f), IM_COL32(0, 0, 0, 255), partName.c_str());
+                                        // Text in white
+                                        drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), partName.c_str());
+                                        ImGui::SetWindowFontScale(1.0f);
+                                    }
+                                }
+                            }
+
+                            // Project and draw the bone armature overlay (cyan lines and green joint circles) if enabled
+                            if (app.modelPreview.showBones && !app.modelPreview.bones.empty())
+                            {
+                                std::vector<ImVec2> boneScreenCoords(app.modelPreview.bones.size());
+                                std::vector<bool> boneValid(app.modelPreview.bones.size(), false);
+
+                                for (size_t i = 0; i < app.modelPreview.bones.size(); ++i)
+                                {
+                                    const auto& bone = app.modelPreview.bones[i];
+                                    XMVECTOR center3D = XMVectorSet(bone.worldPos[0], bone.worldPos[1], bone.worldPos[2], 1.0f);
+                                    XMVECTOR cameraToCenter = center3D - cameraPos;
+                                    XMVECTOR dotProduct = XMVector3Dot(cameraToCenter, look);
+
+                                    if (XMVectorGetX(dotProduct) < 0.0f)
+                                    {
+                                        XMVECTOR projected = XMVector3TransformCoord(center3D, viewProj);
+                                        float projX = XMVectorGetX(projected);
+                                        float projY = XMVectorGetY(projected);
+
+                                        if (projX >= -2.0f && projX <= 2.0f && projY >= -2.0f && projY <= 2.0f)
+                                        {
+                                            boneScreenCoords[i].x = imageMin.x + (projX + 1.0f) * 0.5f * viewportSize.x;
+                                            boneScreenCoords[i].y = imageMin.y + (1.0f - projY) * 0.5f * viewportSize.y;
+                                            boneValid[i] = true;
+                                        }
+                                    }
+                                }
+
+                                ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+                                // 1. Draw parent-child bone line connections
+                                for (size_t i = 0; i < app.modelPreview.bones.size(); ++i)
+                                {
+                                    const auto& bone = app.modelPreview.bones[i];
+                                    if (bone.parentIndex != 0xFFFFu && bone.parentIndex < app.modelPreview.bones.size())
+                                    {
+                                        if (boneValid[i] && boneValid[bone.parentIndex])
+                                        {
+                                            drawList->AddLine(boneScreenCoords[i], boneScreenCoords[bone.parentIndex], IM_COL32(0, 255, 255, 180), 2.0f);
+                                        }
+                                    }
+                                }
+
+                                // 2. Draw joint circle nodes
+                                for (size_t i = 0; i < app.modelPreview.bones.size(); ++i)
+                                {
+                                    if (boneValid[i])
+                                    {
+                                        drawList->AddCircleFilled(boneScreenCoords[i], 3.0f, IM_COL32(0, 255, 0, 220));
+                                    }
+                                }
+                            }
+                        }
 
                         // Draw transparent performance overlay on top-left of the viewport image
                         ImVec2 oldCursorPos = ImGui::GetCursorPos();
-                        ImVec2 localPos = ImVec2(ImGui::GetItemRectMin().x - ImGui::GetWindowPos().x + ImGui::GetScrollX(),
-                                                 ImGui::GetItemRectMin().y - ImGui::GetWindowPos().y + ImGui::GetScrollY());
+                        ImVec2 localPos = ImVec2(imageMin.x - ImGui::GetWindowPos().x + ImGui::GetScrollX(),
+                                                 imageMin.y - ImGui::GetWindowPos().y + ImGui::GetScrollY());
 
                         ImGui::SetCursorPos(ImVec2(localPos.x + 8.0f, localPos.y + 8.0f));
                         ImGui::BeginGroup();
@@ -2736,39 +3542,245 @@ namespace DagorAssetsExtractor::UI
                             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
                             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(5.0f, 5.0f));
 
-                            if (ImGui::BeginChild("PerfOverlay", ImVec2(170.0f, 112.0f), true, ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoScrollbar))
+                            if (ImGui::BeginChild("PerfOverlay", ImVec2(300.0f, 220.0f), true, ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
                             {
                                 ImGuiIO& io = ImGui::GetIO();
-                                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "FPS: %.1f", io.Framerate);
+                                
+                                ImGui::TextDisabled("PERFORMANCE OVERLAY");
+                                
+                                ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "FPS: %.1f", io.Framerate);
                                 ImGui::SameLine();
-                                ImGui::TextDisabled("(%.1fms)", io.DeltaTime * 1000.0f);
+                                ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "GPU: %.2f ms", app.modelPreview.renderLatencyMs);
+                                ImGui::SameLine();
+                                ImGui::TextColored(ImVec4(0.3f, 0.6f, 1.0f, 1.0f), "CPU: %.1f ms", io.DeltaTime * 1000.0f);
 
-                                // Micro FPS graph
-                                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.13f, 0.15f, 0.4f));
-                                float maxFps = 0.0f;
-                                for (float f : app.modelPreview.frameTimes) if (f > maxFps) maxFps = f;
-                                ImGui::PlotLines("##MicroFPS", app.modelPreview.frameTimes, 90, app.modelPreview.statOffset, nullptr, 0.0f, maxFps * 1.1f, ImVec2(-1.0f, 22.0f));
+                                float maxMs = 0.01f;
+                                float maxFps = 0.01f;
+                                for (int i = 0; i < 90; ++i)
+                                {
+                                    if (app.modelPreview.frameTimeHistory[i] > maxMs) maxMs = app.modelPreview.frameTimeHistory[i];
+                                    if (app.modelPreview.latencyHistory[i] > maxMs) maxMs = app.modelPreview.latencyHistory[i];
+                                    if (app.modelPreview.fpsHistory[i] > maxFps) maxFps = app.modelPreview.fpsHistory[i];
+                                }
+                                maxMs *= 1.15f;
+                                maxFps *= 1.15f;
 
-                                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "Render: %.2f ms", app.modelPreview.renderLatencyMs);
+                                ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+                                ImVec2 canvasSize = ImVec2(ImGui::GetContentRegionAvail().x, 70.0f);
+                                ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-                                // Micro Latency graph
-                                float maxLatency = 0.0f;
-                                for (float l : app.modelPreview.latencyTimes) if (l > maxLatency) maxLatency = l;
-                                ImGui::PlotLines("##MicroLatency", app.modelPreview.latencyTimes, 90, app.modelPreview.statOffset, nullptr, 0.0f, maxLatency * 1.1f, ImVec2(-1.0f, 22.0f));
+                                drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(15, 17, 20, 230));
+                                drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(50, 55, 62, 255));
 
-                                ImGui::PopStyleColor(); // FrameBg
+                                for (int i = 1; i < 4; ++i)
+                                {
+                                    float gridY = canvasPos.y + (canvasSize.y / 4.0f) * i;
+                                    drawList->AddLine(ImVec2(canvasPos.x, gridY), ImVec2(canvasPos.x + canvasSize.x, gridY), IM_COL32(40, 45, 50, 100));
+                                }
+
+                                // 1. CPU Frame Time (Blue)
+                                for (int i = 0; i < 89; ++i)
+                                {
+                                    int idx0 = (app.modelPreview.statOffset + i) % 90;
+                                    int idx1 = (app.modelPreview.statOffset + i + 1) % 90;
+
+                                    float val0 = app.modelPreview.frameTimeHistory[idx0];
+                                    float val1 = app.modelPreview.frameTimeHistory[idx1];
+
+                                    float x0 = canvasPos.x + (static_cast<float>(i) / 89.0f) * canvasSize.x;
+                                    float x1 = canvasPos.x + (static_cast<float>(i + 1) / 89.0f) * canvasSize.x;
+
+                                    float y0 = canvasPos.y + canvasSize.y - (val0 / maxMs) * canvasSize.y;
+                                    float y1 = canvasPos.y + canvasSize.y - (val1 / maxMs) * canvasSize.y;
+
+                                    drawList->AddQuadFilled(
+                                        ImVec2(x0, canvasPos.y + canvasSize.y),
+                                        ImVec2(x0, y0),
+                                        ImVec2(x1, y1),
+                                        ImVec2(x1, canvasPos.y + canvasSize.y),
+                                        IM_COL32(65, 105, 225, 45)
+                                    );
+                                }
+
+                                // 2. GPU Render Latency (Cyan)
+                                for (int i = 0; i < 89; ++i)
+                                {
+                                    int idx0 = (app.modelPreview.statOffset + i) % 90;
+                                    int idx1 = (app.modelPreview.statOffset + i + 1) % 90;
+
+                                    float val0 = app.modelPreview.latencyHistory[idx0];
+                                    float val1 = app.modelPreview.latencyHistory[idx1];
+
+                                    float x0 = canvasPos.x + (static_cast<float>(i) / 89.0f) * canvasSize.x;
+                                    float x1 = canvasPos.x + (static_cast<float>(i + 1) / 89.0f) * canvasSize.x;
+
+                                    float y0 = canvasPos.y + canvasSize.y - (val0 / maxMs) * canvasSize.y;
+                                    float y1 = canvasPos.y + canvasSize.y - (val1 / maxMs) * canvasSize.y;
+
+                                    drawList->AddQuadFilled(
+                                        ImVec2(x0, canvasPos.y + canvasSize.y),
+                                        ImVec2(x0, y0),
+                                        ImVec2(x1, y1),
+                                        ImVec2(x1, canvasPos.y + canvasSize.y),
+                                        IM_COL32(0, 255, 255, 75)
+                                    );
+                                }
+
+                                // 3. FPS Line (Yellow)
+                                for (int i = 0; i < 89; ++i)
+                                {
+                                    int idx0 = (app.modelPreview.statOffset + i) % 90;
+                                    int idx1 = (app.modelPreview.statOffset + i + 1) % 90;
+
+                                    float val0 = app.modelPreview.fpsHistory[idx0];
+                                    float val1 = app.modelPreview.fpsHistory[idx1];
+
+                                    float x0 = canvasPos.x + (static_cast<float>(i) / 89.0f) * canvasSize.x;
+                                    float x1 = canvasPos.x + (static_cast<float>(i + 1) / 89.0f) * canvasSize.x;
+
+                                    float y0 = canvasPos.y + canvasSize.y - (val0 / maxFps) * canvasSize.y;
+                                    float y1 = canvasPos.y + canvasSize.y - (val1 / maxFps) * canvasSize.y;
+
+                                    drawList->AddLine(
+                                        ImVec2(x0, y0),
+                                        ImVec2(x1, y1),
+                                        IM_COL32(255, 215, 0, 240),
+                                        1.8f
+                                    );
+                                }
+
+                                ImGui::SetCursorScreenPos(ImVec2(canvasPos.x, canvasPos.y + canvasSize.y + 4.0f));
+
+                                std::string gpuName = renderer->GetGPUName();
+                                uint64_t vramUsage = 0;
+                                uint64_t vramBudget = 0;
+                                renderer->GetVRAMInfo(vramUsage, vramBudget);
+
+                                float usageMb = static_cast<float>(vramUsage) / (1024.0f * 1024.0f);
+                                float budgetMb = static_cast<float>(vramBudget) / (1024.0f * 1024.0f);
+
+                                if (gpuName.length() > 38)
+                                {
+                                    gpuName = gpuName.substr(0, 35) + "...";
+                                }
+
+                                ImGui::TextDisabled("GPU: %s", gpuName.c_str());
+
+                                char vramText[64];
+                                if (vramBudget > 0)
+                                {
+                                    float fraction = usageMb / budgetMb;
+                                    snprintf(vramText, sizeof(vramText), "VRAM: %.1f / %.0f MB (%.1f%%)", usageMb, budgetMb, fraction * 100.0f);
+                                    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.2f, 0.72f, 0.35f, 0.85f));
+                                    ImGui::ProgressBar(fraction, ImVec2(-1.0f, 15.0f), vramText);
+                                    ImGui::PopStyleColor();
+                                }
+                                else
+                                {
+                                    snprintf(vramText, sizeof(vramText), "VRAM Allocation: %.1f MB", usageMb);
+                                    ImGui::ProgressBar(0.0f, ImVec2(-1.0f, 15.0f), vramText);
+                                }
+
+                                uint32_t triangleCount = app.modelPreview.indexCount / 3;
+                                float throughput = (static_cast<float>(triangleCount) * io.Framerate) / 1000000.0f;
+                                ImGui::Text("Throughput: %.2f Mtris/sec (%u tris)", throughput, triangleCount);
+
                                 ImGui::EndChild();
                             }
                             ImGui::PopStyleVar(2);
                             ImGui::PopStyleColor(2);
                         }
                         ImGui::EndGroup();
-                        ImGui::SetCursorPos(oldCursorPos);
 
-                        // Handle mouse inputs over the image
+                        // Project and draw 3D Axis Gizmo in bottom left of the viewport image
+                        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+                        float gizmoSize = 30.0f;
+                        ImVec2 gizmoCenter = ImVec2(imageMin.x + gizmoSize + 15.0f, imageMax.y - gizmoSize - 15.0f);
+
+                        // Compute camera vectors for orientation projection
+                        float theta = app.modelPreview.yaw * 3.14159265f / 180.0f;
+                        float phi = app.modelPreview.pitch * 3.14159265f / 180.0f;
+
+                        float cosP = cosf(phi);
+                        float sinP = sinf(phi);
+                        float cosY = cosf(theta);
+                        float sinY = sinf(theta);
+
+                        // Look vector (from target to camera)
+                        float lookX = cosP * sinY;
+                        float lookY = sinP;
+                        float lookZ = -cosP * cosY;
+
+                        // Right vector: cross(look, (0,1,0))
+                        float rightX = -lookZ;
+                        float rightY = 0.0f;
+                        float rightZ = lookX;
+                        float rightLen = sqrtf(rightX * rightX + rightZ * rightZ);
+                        if (rightLen > 1e-5f)
+                        {
+                            rightX /= rightLen;
+                            rightZ /= rightLen;
+                        }
+
+                        // Up vector: cross(right, look)
+                        float upX = rightY * lookZ - rightZ * lookY;
+                        float upY = rightZ * lookX - rightX * lookZ;
+                        float upZ = rightX * lookY - rightY * lookX;
+                        float upLen = sqrtf(upX * upX + upY * upY + upZ * upZ);
+                        if (upLen > 1e-5f)
+                        {
+                            upX /= upLen;
+                            upY /= upLen;
+                            upZ /= upLen;
+                        }
+
+                        // Projection: projects 3D coords onto screen space relative to center
+                        auto ProjectAxis = [&](float x, float y, float z) -> ImVec2
+                        {
+                            float sx = x * rightX + y * rightY + z * rightZ;
+                            float sy = x * upX + y * upY + z * upZ;
+                            return ImVec2(sx * gizmoSize, -sy * gizmoSize); // Invert Y
+                        };
+
+                        ImVec2 endX = ImVec2(gizmoCenter.x + ProjectAxis(1.0f, 0.0f, 0.0f).x, gizmoCenter.y + ProjectAxis(1.0f, 0.0f, 0.0f).y);
+                        ImVec2 endY = ImVec2(gizmoCenter.x + ProjectAxis(0.0f, 1.0f, 0.0f).x, gizmoCenter.y + ProjectAxis(0.0f, 1.0f, 0.0f).y);
+                        ImVec2 endZ = ImVec2(gizmoCenter.x + ProjectAxis(0.0f, 0.0f, 1.0f).x, gizmoCenter.y + ProjectAxis(0.0f, 0.0f, 1.0f).y);
+
+                        // Back-to-front depth sort (Z-sorting relative to camera look vector)
+                        struct AxisDraw
+                        {
+                            ImVec2 end;
+                            ImU32 color;
+                            const char* label;
+                            float depth;
+                        };
+                        AxisDraw axes[3] = {
+                            { endX, IM_COL32(255, 64, 64, 255), "X", lookX }, // X (Red)
+                            { endY, IM_COL32(64, 255, 64, 255), "Y", lookY }, // Y (Green)
+                            { endZ, IM_COL32(64, 128, 255, 255), "Z", lookZ }  // Z (Blue)
+                        };
+                        std::sort(std::begin(axes), std::end(axes), [](const AxisDraw& a, const AxisDraw& b) {
+                            return a.depth > b.depth;
+                        });
+
+                        for (const auto& axis : axes)
+                        {
+                            drawList->AddLine(gizmoCenter, axis.end, axis.color, 2.0f);
+                            drawList->AddCircleFilled(axis.end, 7.5f, axis.color);
+                            ImVec2 textSize = ImGui::CalcTextSize(axis.label);
+                            drawList->AddText(ImVec2(axis.end.x - textSize.x * 0.5f, axis.end.y - textSize.y * 0.5f), IM_COL32(255, 255, 255, 255), axis.label);
+                        }
+
+                        // Overlay the invisible button exactly on top of the image to handle drag inputs and prevent window movement conflict
+                        ImGui::SetCursorPos(startCursorPos);
+                        ImGui::InvisibleButton("ViewportInteract", viewportSize);
+
                         const bool isHovered = ImGui::IsItemHovered();
+                        const bool isActive = ImGui::IsItemActive();
                         ImGuiIO& io = ImGui::GetIO();
 
+                        // Scroll Zoom
                         if (isHovered && io.MouseWheel != 0.0f)
                         {
                             float zoomSpeed = std::max(0.1f, app.modelPreview.zoom * 0.15f);
@@ -2776,39 +3788,56 @@ namespace DagorAssetsExtractor::UI
                             app.modelPreview.zoom = std::max(0.01f, app.modelPreview.zoom);
                         }
 
-                        static bool draggingLeft = false;
-                        static bool draggingRight = false;
+                        // Middle Mouse Button Drag State
                         static bool draggingMiddle = false;
-
-                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && isHovered) draggingLeft = true;
-                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && isHovered) draggingRight = true;
                         if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) && isHovered) draggingMiddle = true;
-
-                        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) draggingLeft = false;
-                        if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) draggingRight = false;
                         if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) draggingMiddle = false;
 
-                        if (draggingLeft || draggingRight)
+                        if (draggingMiddle)
                         {
-                            if (io.KeyShift)
+                            if (io.KeyShift) // Pan in world-space using camera basis vectors
                             {
                                 float panSpeed = std::max(0.001f, app.modelPreview.zoom * 0.002f);
-                                app.modelPreview.panX -= io.MouseDelta.x * panSpeed;
-                                app.modelPreview.panY += io.MouseDelta.y * panSpeed;
+                                float dx = -io.MouseDelta.x * panSpeed;
+                                float dy = io.MouseDelta.y * panSpeed;
+                                app.modelPreview.panWorldX += rightX * dx + upX * dy;
+                                app.modelPreview.panWorldY += rightY * dx + upY * dy;
+                                app.modelPreview.panWorldZ += rightZ * dx + upZ * dy;
                             }
-                            else
+                            else if (io.KeyCtrl) // Zoom
+                            {
+                                float zoomSpeed = std::max(0.1f, app.modelPreview.zoom * 0.005f);
+                                app.modelPreview.zoom -= io.MouseDelta.y * zoomSpeed;
+                                app.modelPreview.zoom = std::max(0.01f, app.modelPreview.zoom);
+                            }
+                            else // Orbit/Rotate
                             {
                                 app.modelPreview.yaw -= io.MouseDelta.x * 0.5f;
                                 app.modelPreview.pitch += io.MouseDelta.y * 0.5f;
                                 app.modelPreview.pitch = std::clamp(app.modelPreview.pitch, -89.0f, 89.0f);
                             }
                         }
-                        else if (draggingMiddle)
+                        // Left Mouse Button Fallback Drag (Trackpad support, intercepts click so parent window doesn't move)
+                        else if (isActive)
                         {
-                            float panSpeed = std::max(0.001f, app.modelPreview.zoom * 0.002f);
-                            app.modelPreview.panX -= io.MouseDelta.x * panSpeed;
-                            app.modelPreview.panY += io.MouseDelta.y * panSpeed;
+                            if (io.KeyShift) // Pan in world-space using camera basis vectors
+                            {
+                                float panSpeed = std::max(0.001f, app.modelPreview.zoom * 0.002f);
+                                float dx = -io.MouseDelta.x * panSpeed;
+                                float dy = io.MouseDelta.y * panSpeed;
+                                app.modelPreview.panWorldX += rightX * dx + upX * dy;
+                                app.modelPreview.panWorldY += rightY * dx + upY * dy;
+                                app.modelPreview.panWorldZ += rightZ * dx + upZ * dy;
+                            }
+                            else // Orbit/Rotate
+                            {
+                                app.modelPreview.yaw -= io.MouseDelta.x * 0.5f;
+                                app.modelPreview.pitch += io.MouseDelta.y * 0.5f;
+                                app.modelPreview.pitch = std::clamp(app.modelPreview.pitch, -89.0f, 89.0f);
+                            }
                         }
+
+                        ImGui::SetCursorPos(oldCursorPos);
                     }
                     else
                     {
@@ -2817,20 +3846,55 @@ namespace DagorAssetsExtractor::UI
 
                     // Viewport controls toolbar
                     ImGui::Separator();
-                    ImGui::Checkbox("Wireframe", &app.modelPreview.wireframe);
+                    
+                    // Render mode dropdown combo
+                    ImGui::Text("Render Mode");
                     ImGui::SameLine();
+                    const char* renderModes[] = { "Solid", "Wireframe", "Solid + Wireframe" };
+                    ImGui::SetNextItemWidth(130.0f);
+                    ImGui::Combo("##RenderMode", &app.modelPreview.renderMode, renderModes, IM_ARRAYSIZE(renderModes));
+                    
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("|");
+                    ImGui::SameLine();
+                    
+                    // Show Armature (always Text first then toggle)
+                    ImGui::Text("Show Armature");
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(app.modelPreview.bones.empty());
+                    ImGui::Checkbox("##ShowArmature", &app.modelPreview.showBones);
+                    ImGui::EndDisabled();
+                    
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("|");
+                    ImGui::SameLine();
+                    
+                    // Ground Grid (always Text first then toggle)
+                    ImGui::Text("Ground Grid");
+                    ImGui::SameLine();
+                    ImGui::Checkbox("##GroundGrid", &app.modelPreview.lighting.showGround);
+                    
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("|");
+                    ImGui::SameLine();
+                    
                     if (ImGui::Button("Reset Camera"))
                     {
                         app.modelPreview.yaw = 45.0f;
                         app.modelPreview.pitch = 30.0f;
-                        app.modelPreview.panX = 0.0f;
-                        app.modelPreview.panY = 0.0f;
+                        app.modelPreview.panWorldX = 0.0f;
+                        app.modelPreview.panWorldY = 0.0f;
+                        app.modelPreview.panWorldZ = 0.0f;
                         float dx = app.modelPreview.bboxMax[0] - app.modelPreview.bboxMin[0];
                         float dy = app.modelPreview.bboxMax[1] - app.modelPreview.bboxMin[1];
                         float dz = app.modelPreview.bboxMax[2] - app.modelPreview.bboxMin[2];
                         float bboxSize = std::sqrt(dx * dx + dy * dy + dz * dz);
                         app.modelPreview.zoom = bboxSize > 0.0f ? bboxSize * 1.5f : 5.0f;
                     }
+
+                    // Input navigation map/legend
+                    ImGui::SameLine();
+                    ImGui::TextDisabled(" |  Middle Drag: Orbit  |  Shift + Middle Drag: Pan  |  Scroll: Zoom");
                 }
                 ImGui::EndChild();
 
@@ -2839,36 +3903,52 @@ namespace DagorAssetsExtractor::UI
                 // Detail Panel Child Window
                 ImGui::BeginChild("DetailPanelChild", ImVec2(0.0f, 0.0f), true);
                 {
-                    ImGui::TextDisabled("MODEL DETAILS");
+                    UiIconId iconId = UiIconId::Invalid;
+                    std::string className = AssetIndex::DescribeGrpClassId(app.modelPreview.grpClassId);
+                    if (className == "DynModel")
+                    {
+                        iconId = UiIconId::DynModel;
+                    }
+                    else if (className == "RendInst")
+                    {
+                        iconId = UiIconId::RendInst;
+                    }
+                    
+                    DrawPanelTitle(iconId, "Preview Model");
                     ImGui::Separator();
                     ImGui::Spacing();
 
-                    ImGui::Text("Name: %s", app.modelPreview.entryName.c_str());
-                    ImGui::Text("Class: %s", AssetIndex::DescribeGrpClassId(app.modelPreview.grpClassId).c_str());
-                    ImGui::Text("File Size: %s", FormatBytes(app.modelPreview.fileSize).c_str());
-                    ImGui::Text("Submeshes: %u", app.modelPreview.subMeshCount);
+                    if (ImGui::CollapsingHeader("MODEL DETAILS", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        ImGui::Spacing();
+                        ImGui::Text("Name: %s", app.modelPreview.entryName.c_str());
+                        ImGui::Text("Class: %s", AssetIndex::DescribeGrpClassId(app.modelPreview.grpClassId).c_str());
+                        ImGui::Text("File Size: %s", FormatBytes(app.modelPreview.fileSize).c_str());
+                        ImGui::Text("Submeshes: %u", app.modelPreview.subMeshCount);
+                        ImGui::Spacing();
+                    }
 
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("GEOMETRY STATS");
-                    ImGui::Separator();
-                    ImGui::Spacing();
+                    if (ImGui::CollapsingHeader("GEOMETRY STATS", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        ImGui::Spacing();
+                        ImGui::Text("Vertices: %u", app.modelPreview.vertexCount);
+                        ImGui::Text("Indices:  %u", app.modelPreview.indexCount);
+                        ImGui::Text("Triangles: %u", app.modelPreview.indexCount / 3);
+                        ImGui::Spacing();
+                    }
 
-                    ImGui::Text("Vertices: %u", app.modelPreview.vertexCount);
-                    ImGui::Text("Indices:  %u", app.modelPreview.indexCount);
-                    ImGui::Text("Triangles: %u", app.modelPreview.indexCount / 3);
+                    if (ImGui::CollapsingHeader("BOUNDING BOX", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        ImGui::Spacing();
+                        float sizeX = app.modelPreview.bboxMax[0] - app.modelPreview.bboxMin[0];
+                        float sizeY = app.modelPreview.bboxMax[1] - app.modelPreview.bboxMin[1];
+                        float sizeZ = app.modelPreview.bboxMax[2] - app.modelPreview.bboxMin[2];
 
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("BOUNDING BOX");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    float sizeX = app.modelPreview.bboxMax[0] - app.modelPreview.bboxMin[0];
-                    float sizeY = app.modelPreview.bboxMax[1] - app.modelPreview.bboxMin[1];
-                    float sizeZ = app.modelPreview.bboxMax[2] - app.modelPreview.bboxMin[2];
-
-                    ImGui::Text("Min: (%.3f, %.3f, %.3f)", app.modelPreview.bboxMin[0], app.modelPreview.bboxMin[1], app.modelPreview.bboxMin[2]);
-                    ImGui::Text("Max: (%.3f, %.3f, %.3f)", app.modelPreview.bboxMax[0], app.modelPreview.bboxMax[1], app.modelPreview.bboxMax[2]);
-                    ImGui::Text("Size: %.3f x %.3f x %.3f", sizeX, sizeY, sizeZ);
+                        ImGui::Text("Min: (%.3f, %.3f, %.3f)", app.modelPreview.bboxMin[0], app.modelPreview.bboxMin[1], app.modelPreview.bboxMin[2]);
+                        ImGui::Text("Max: (%.3f, %.3f, %.3f)", app.modelPreview.bboxMax[0], app.modelPreview.bboxMax[1], app.modelPreview.bboxMax[2]);
+                        ImGui::Text("Size: %.3f x %.3f x %.3f", sizeX, sizeY, sizeZ);
+                        ImGui::Spacing();
+                    }
 
                     ImGui::Spacing();
                     if (ImGui::CollapsingHeader("LIGHTING & SCENE", ImGuiTreeNodeFlags_DefaultOpen))
@@ -2918,12 +3998,13 @@ namespace DagorAssetsExtractor::UI
                 }
                 ImGui::EndChild();
             }
+            ImGui::EndPopup();
         }
-        ImGui::End();
 
         if (!isOpen)
         {
             app.modelPreview.popupOpen = false;
+            wasOpen = false;
             App::ClearModelPreview(app);
             ModelRenderer* renderer = GetModelRenderer();
             if (renderer)
@@ -3054,8 +4135,8 @@ namespace DagorAssetsExtractor::UI
         DrawProgressJobWindow(app);
         DrawRebuildProgressModal(app);
         DrawBlkRebuildProgressModal(app);
-        DrawExportProgressModal(app);
-        DrawTexturePreviewWindow(app);
         DrawModelPreviewPopup(app);
+        DrawTexturePreviewWindow(app);
+        DrawExportProgressModal(app);
     }
 }

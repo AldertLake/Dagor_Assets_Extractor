@@ -1608,6 +1608,128 @@ namespace DagorAssetsExtractor::Export
             return true;
         }
 
+        bool LoadWicBgra(
+            const std::filesystem::path& inputPath,
+            RasterImage& image,
+            std::string& error)
+        {
+            ScopedComInitializer com;
+            if (!com.IsReady())
+            {
+                error = "Could not initialize COM for image loading (" +
+                    FormatHresult(com.Result()) + ").";
+                return false;
+            }
+
+            IWICImagingFactory* factory = nullptr;
+            IWICBitmapDecoder* decoder = nullptr;
+            IWICBitmapFrameDecode* frame = nullptr;
+            IWICFormatConverter* converter = nullptr;
+            auto releaseAll = [&]() {
+                if (converter) converter->Release();
+                if (frame) frame->Release();
+                if (decoder) decoder->Release();
+                if (factory) factory->Release();
+            };
+
+            HRESULT hr = CoCreateInstance(
+                CLSID_WICImagingFactory,
+                nullptr,
+                CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&factory));
+            if (FAILED(hr))
+            {
+                error = "Could not create WIC imaging factory (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = factory->CreateDecoderFromFilename(
+                inputPath.c_str(),
+                nullptr,
+                GENERIC_READ,
+                WICDecodeMetadataCacheOnLoad,
+                &decoder);
+            if (FAILED(hr))
+            {
+                error = "Could not open image " + Platform::PathToUtf8(inputPath) +
+                    " (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = decoder->GetFrame(0, &frame);
+            if (FAILED(hr))
+            {
+                error = "Could not read the first image frame (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            UINT width = 0;
+            UINT height = 0;
+            hr = frame->GetSize(&width, &height);
+            if (FAILED(hr) || width == 0 || height == 0)
+            {
+                error = "Image has invalid dimensions.";
+                releaseAll();
+                return false;
+            }
+
+            hr = factory->CreateFormatConverter(&converter);
+            if (FAILED(hr))
+            {
+                error = "Could not create WIC format converter (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            hr = converter->Initialize(
+                frame,
+                GUID_WICPixelFormat32bppBGRA,
+                WICBitmapDitherTypeNone,
+                nullptr,
+                0.0,
+                WICBitmapPaletteTypeCustom);
+            if (FAILED(hr))
+            {
+                error = "Could not convert image to BGRA8 (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            const uint64_t stride64 = static_cast<uint64_t>(width) * 4ull;
+            const uint64_t bytes64 = stride64 * static_cast<uint64_t>(height);
+            if (stride64 > std::numeric_limits<uint32_t>::max() ||
+                bytes64 > std::numeric_limits<UINT>::max() ||
+                bytes64 > std::numeric_limits<size_t>::max())
+            {
+                error = "Image is too large to load safely.";
+                releaseAll();
+                return false;
+            }
+
+            image.width = width;
+            image.height = height;
+            image.stride = static_cast<uint32_t>(stride64);
+            image.format = RasterPixelFormat::Bgra8;
+            image.pixels.resize(static_cast<size_t>(bytes64));
+            hr = converter->CopyPixels(
+                nullptr,
+                image.stride,
+                static_cast<UINT>(image.pixels.size()),
+                image.pixels.data());
+            if (FAILED(hr))
+            {
+                error = "Could not copy decoded image pixels (" + FormatHresult(hr) + ").";
+                releaseAll();
+                return false;
+            }
+
+            releaseAll();
+            return true;
+        }
+
         bool WriteTga(const std::filesystem::path& outputPath, const RasterImage& image, std::string& error)
         {
             std::ofstream out(outputPath, std::ios::binary);
@@ -1657,7 +1779,199 @@ namespace DagorAssetsExtractor::Export
             return false;
         }
 
-        bool SplitNormalMapIfNeeded(
+        bool NormalizeRasterToTightBgra(RasterImage& image, std::string& error);
+
+        bool BuildTextureMapImage(
+            const RasterImage& source,
+            TextureContentLayout layout,
+            TextureMapKind mapKind,
+            RasterImage& output,
+            std::string& error)
+        {
+            if (source.format != RasterPixelFormat::Bgra8 ||
+                source.stride < source.width * 4 ||
+                source.pixels.size() < static_cast<size_t>(source.stride) * source.height)
+            {
+                error = "Decoded texture is not a valid BGRA8 image.";
+                return false;
+            }
+
+            const auto supportsMap = [&]() {
+                switch (layout)
+                {
+                case TextureContentLayout::BaseColor:
+                    return mapKind == TextureMapKind::BaseColor;
+                case TextureContentLayout::ConventionalNormal:
+                    return mapKind == TextureMapKind::Normal;
+                case TextureContentLayout::WarThunderPackedNormalPbr:
+                    return mapKind == TextureMapKind::Normal ||
+                        mapKind == TextureMapKind::Smoothness ||
+                        mapKind == TextureMapKind::Roughness ||
+                        mapKind == TextureMapKind::Metallic ||
+                        mapKind == TextureMapKind::MetallicRoughness;
+                case TextureContentLayout::AmbientOcclusion:
+                    return mapKind == TextureMapKind::AmbientOcclusion;
+                case TextureContentLayout::PackedOrm:
+                case TextureContentLayout::PackedRma:
+                case TextureContentLayout::PackedMra:
+                    return mapKind == TextureMapKind::AmbientOcclusion ||
+                        mapKind == TextureMapKind::Roughness ||
+                        mapKind == TextureMapKind::Metallic ||
+                        mapKind == TextureMapKind::OcclusionRoughnessMetallic;
+                case TextureContentLayout::Unknown:
+                    return false;
+                }
+                return false;
+            };
+
+            if (!supportsMap())
+            {
+                error = "The requested " + std::string(TextureMapKindName(mapKind)) +
+                    " map is not present in the detected texture layout.";
+                return false;
+            }
+
+            const bool grayscale =
+                mapKind == TextureMapKind::AmbientOcclusion ||
+                mapKind == TextureMapKind::Smoothness ||
+                mapKind == TextureMapKind::Roughness ||
+                mapKind == TextureMapKind::Metallic;
+
+            output.width = source.width;
+            output.height = source.height;
+            output.format = grayscale ? RasterPixelFormat::Gray8 : RasterPixelFormat::Bgra8;
+            output.stride = grayscale ? source.width : source.width * 4;
+            output.pixels.resize(static_cast<size_t>(output.stride) * output.height);
+
+            for (uint32_t y = 0; y < source.height; ++y)
+            {
+                const uint8_t* srcRow =
+                    source.pixels.data() + static_cast<size_t>(y) * source.stride;
+                uint8_t* dstRow =
+                    output.pixels.data() + static_cast<size_t>(y) * output.stride;
+
+                for (uint32_t x = 0; x < source.width; ++x)
+                {
+                    const size_t srcOffset = static_cast<size_t>(x) * 4;
+                    const uint8_t sourceB = srcRow[srcOffset + 0];
+                    const uint8_t sourceG = srcRow[srcOffset + 1];
+                    const uint8_t sourceR = srcRow[srcOffset + 2];
+                    const uint8_t sourceA = srcRow[srcOffset + 3];
+
+                    uint8_t ao = 255;
+                    uint8_t roughness = 255;
+                    uint8_t metallic = 0;
+                    bool hasAo = false;
+                    bool hasRoughness = false;
+                    bool hasMetallic = false;
+
+                    switch (layout)
+                    {
+                    case TextureContentLayout::WarThunderPackedNormalPbr:
+                        roughness = static_cast<uint8_t>(255u - sourceR);
+                        metallic = sourceB;
+                        hasRoughness = true;
+                        hasMetallic = true;
+                        break;
+                    case TextureContentLayout::AmbientOcclusion:
+                        ao = sourceR;
+                        hasAo = true;
+                        break;
+                    case TextureContentLayout::PackedOrm:
+                        ao = sourceR;
+                        roughness = sourceG;
+                        metallic = sourceB;
+                        hasAo = hasRoughness = hasMetallic = true;
+                        break;
+                    case TextureContentLayout::PackedRma:
+                        roughness = sourceR;
+                        metallic = sourceG;
+                        ao = sourceB;
+                        hasAo = hasRoughness = hasMetallic = true;
+                        break;
+                    case TextureContentLayout::PackedMra:
+                        metallic = sourceR;
+                        roughness = sourceG;
+                        ao = sourceB;
+                        hasAo = hasRoughness = hasMetallic = true;
+                        break;
+                    default:
+                        break;
+                    }
+
+                    if (grayscale)
+                    {
+                        uint8_t value = 0;
+                        switch (mapKind)
+                        {
+                        case TextureMapKind::AmbientOcclusion:
+                            value = hasAo ? ao : 255;
+                            break;
+                        case TextureMapKind::Smoothness:
+                            value = sourceR;
+                            break;
+                        case TextureMapKind::Roughness:
+                            value = hasRoughness ? roughness : 255;
+                            break;
+                        case TextureMapKind::Metallic:
+                            value = hasMetallic ? metallic : 0;
+                            break;
+                        default:
+                            break;
+                        }
+                        dstRow[x] = value;
+                        continue;
+                    }
+
+                    const size_t dstOffset = static_cast<size_t>(x) * 4;
+                    if (mapKind == TextureMapKind::BaseColor)
+                    {
+                        dstRow[dstOffset + 0] = sourceB;
+                        dstRow[dstOffset + 1] = sourceG;
+                        dstRow[dstOffset + 2] = sourceR;
+                        dstRow[dstOffset + 3] = sourceA;
+                    }
+                    else if (mapKind == TextureMapKind::Normal)
+                    {
+                        if (layout == TextureContentLayout::WarThunderPackedNormalPbr)
+                        {
+                            const float normalX =
+                                (static_cast<float>(sourceA) / 255.0f) * 2.0f - 1.0f;
+                            const float normalY =
+                                (static_cast<float>(sourceG) / 255.0f) * 2.0f - 1.0f;
+                            const float normalZ = std::sqrt(std::max(
+                                0.0f,
+                                1.0f - normalX * normalX - normalY * normalY));
+                            dstRow[dstOffset + 0] = FloatToUnormByte(normalZ * 0.5f + 0.5f);
+                            dstRow[dstOffset + 1] = sourceG;
+                            dstRow[dstOffset + 2] = sourceA;
+                            dstRow[dstOffset + 3] = 255;
+                        }
+                        else
+                        {
+                            dstRow[dstOffset + 0] = sourceB;
+                            dstRow[dstOffset + 1] = sourceG;
+                            dstRow[dstOffset + 2] = sourceR;
+                            dstRow[dstOffset + 3] = 255;
+                        }
+                    }
+                    else
+                    {
+                        dstRow[dstOffset + 0] = metallic;
+                        dstRow[dstOffset + 1] = roughness;
+                        dstRow[dstOffset + 2] =
+                            mapKind == TextureMapKind::OcclusionRoughnessMetallic
+                                ? ao
+                                : 255;
+                        dstRow[dstOffset + 3] = 255;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        bool GenerateMaterialMapsIfNeeded(
             RasterImage& image,
             std::string_view entryName,
             const std::filesystem::path& outputPath,
@@ -1666,68 +1980,91 @@ namespace DagorAssetsExtractor::Export
             TextureExportResult& result,
             std::string& error)
         {
-            if (!options.splitPackedNormalMap)
+            if (!options.generateMaterialMaps)
             {
                 return true;
             }
 
-            if (!LooksLikePackedNormalMap(entryName))
+            const TextureMapAnalysis analysis = AnalyzeTextureMaps(entryName);
+            if (analysis.layout == TextureContentLayout::Unknown)
             {
                 return true;
             }
 
-            if (image.format != RasterPixelFormat::Bgra8)
+            if (!NormalizeRasterToTightBgra(image, error))
             {
-                return true;
-            }
-
-            RasterImage mrImage;
-            mrImage.width = image.width;
-            mrImage.height = image.height;
-            mrImage.stride = image.stride;
-            mrImage.format = RasterPixelFormat::Bgra8;
-            mrImage.pixels.resize(image.pixels.size());
-
-            for (size_t i = 0; i < image.pixels.size(); i += 4)
-            {
-                uint8_t origB = image.pixels[i + 0]; // Metallic
-                uint8_t origG = image.pixels[i + 1]; // Normal Y
-                uint8_t origR = image.pixels[i + 2]; // Roughness
-                uint8_t origA = image.pixels[i + 3]; // Normal X
-
-                float x = (static_cast<float>(origA) / 255.0f) * 2.0f - 1.0f;
-                float y = (static_cast<float>(origG) / 255.0f) * 2.0f - 1.0f;
-                float zSq = 1.0f - x * x - y * y;
-                float z = (zSq > 0.0f) ? std::sqrt(zSq) : 0.0f;
-
-                uint8_t normalX = origA;
-                uint8_t normalY = origG;
-                uint8_t normalZ = static_cast<uint8_t>(std::clamp(std::round((z + 1.0f) * 0.5f * 255.0f), 0.0f, 255.0f));
-
-                image.pixels[i + 0] = normalZ; // B
-                image.pixels[i + 1] = normalY; // G
-                image.pixels[i + 2] = normalX; // R
-                image.pixels[i + 3] = 255;     // A
-
-                mrImage.pixels[i + 0] = static_cast<uint8_t>(255 - origB); // B (Metallic = 255 - Insulator)
-                mrImage.pixels[i + 1] = static_cast<uint8_t>(255 - origR); // G (Roughness = 255 - Smoothness)
-                mrImage.pixels[i + 2] = 255;                               // R (Occlusion)
-                mrImage.pixels[i + 3] = 255;                               // A
-            }
-
-            std::filesystem::path mrOutputPath = outputPath;
-            std::string stem = mrOutputPath.stem().string();
-            std::string ext = mrOutputPath.extension().string();
-            mrOutputPath.replace_filename(stem + "_metalrough" + ext);
-
-            std::string mrError;
-            if (!WriteReadableImage(mrOutputPath, mrImage, normalizedFormat, mrError))
-            {
-                error = "Failed to write split metallic-roughness image: " + mrError;
                 return false;
             }
 
-            result.warnings.push_back("Split packed normal map channels: normal (RGB) and metallic-roughness (ORM)");
+            TextureMapKind mainKind = TextureMapKind::BaseColor;
+            switch (analysis.layout)
+            {
+            case TextureContentLayout::BaseColor:
+                mainKind = TextureMapKind::BaseColor;
+                break;
+            case TextureContentLayout::ConventionalNormal:
+            case TextureContentLayout::WarThunderPackedNormalPbr:
+                mainKind = TextureMapKind::Normal;
+                break;
+            case TextureContentLayout::AmbientOcclusion:
+                mainKind = TextureMapKind::AmbientOcclusion;
+                break;
+            case TextureContentLayout::PackedOrm:
+            case TextureContentLayout::PackedRma:
+            case TextureContentLayout::PackedMra:
+                mainKind = TextureMapKind::OcclusionRoughnessMetallic;
+                break;
+            case TextureContentLayout::Unknown:
+                return true;
+            }
+
+            RasterImage source = image;
+            if (!BuildTextureMapImage(source, analysis.layout, mainKind, image, error))
+            {
+                return false;
+            }
+            result.mapOutputs.push_back({ mainKind, outputPath });
+
+            if (analysis.layout == TextureContentLayout::WarThunderPackedNormalPbr)
+            {
+                RasterImage metallicRoughnessImage;
+                if (!BuildTextureMapImage(
+                        source,
+                        analysis.layout,
+                        TextureMapKind::MetallicRoughness,
+                        metallicRoughnessImage,
+                        error))
+                {
+                    return false;
+                }
+
+                std::filesystem::path mrOutputPath = outputPath;
+                mrOutputPath.replace_filename(
+                    mrOutputPath.stem().string() +
+                    std::string(TextureMapKindFileSuffix(TextureMapKind::MetallicRoughness)) +
+                    mrOutputPath.extension().string());
+
+                if (!WriteReadableImage(
+                        mrOutputPath,
+                        metallicRoughnessImage,
+                        normalizedFormat,
+                        error))
+                {
+                    std::error_code cleanupError;
+                    std::filesystem::remove(mrOutputPath, cleanupError);
+                    error = "Failed to write generated metallic-roughness image: " + error;
+                    return false;
+                }
+
+                result.mapOutputs.push_back({
+                    TextureMapKind::MetallicRoughness,
+                    mrOutputPath,
+                });
+                result.warnings.push_back(
+                    "Generated a standard normal map and glTF metallic-roughness map from "
+                    "War Thunder channels. Metallic uses source blue directly; roughness is 1 - source red.");
+            }
+
             return true;
         }
 
@@ -2153,6 +2490,19 @@ namespace DagorAssetsExtractor::Export
                     return result;
                 }
 
+                auto cleanupGeneratedMapFiles = [&]() {
+                    std::error_code cleanupError;
+                    for (const TextureMapOutput& mapOutput : result.mapOutputs)
+                    {
+                        if (mapOutput.outputPath != outputPath)
+                        {
+                            std::filesystem::remove(mapOutput.outputPath, cleanupError);
+                            cleanupError.clear();
+                        }
+                    }
+                    result.mapOutputs.clear();
+                };
+
                 auto finalizeReadableSuccess = [&]() {
                     result.success = true;
                     result.outputPath = outputPath;
@@ -2167,13 +2517,13 @@ namespace DagorAssetsExtractor::Export
                     manifest.sourceResource = entry.name;
                     manifest.assetType = "Texture (" + normalizedFormat + ")";
                     manifest.outputFiles.push_back(Platform::PathToUtf8(outputPath.filename()));
-                    if (options.splitPackedNormalMap && LooksLikePackedNormalMap(entry.name))
+                    for (const TextureMapOutput& mapOutput : result.mapOutputs)
                     {
-                        std::filesystem::path mrPath = outputPath;
-                        std::string stem = mrPath.stem().string();
-                        std::string ext = mrPath.extension().string();
-                        mrPath.replace_filename(stem + "_metalrough" + ext);
-                        manifest.outputFiles.push_back(Platform::PathToUtf8(mrPath.filename()));
+                        if (mapOutput.outputPath != outputPath)
+                        {
+                            manifest.outputFiles.push_back(
+                                Platform::PathToUtf8(mapOutput.outputPath.filename()));
+                        }
                     }
                     manifest.appVersion = "0.1.0-alpha";
                     manifest.formatDecoderVersion = "DdsxReader v1.0";
@@ -2195,19 +2545,20 @@ namespace DagorAssetsExtractor::Export
                 RasterImage image;
                 std::string readableError;
                 if (DecodeTopMipToRaster(exportHeader, payload, image, readableError) &&
-                    SplitNormalMapIfNeeded(image, entry.name, outputPath, normalizedFormat, options, result, readableError) &&
+                    GenerateMaterialMapsIfNeeded(image, entry.name, outputPath, normalizedFormat, options, result, readableError) &&
                     WriteReadableImage(outputPath, image, normalizedFormat, readableError))
                 {
                     finalizeReadableSuccess();
                     return result;
                 }
 
+                cleanupGeneratedMapFiles();
                 std::vector<uint8_t> ddsData;
                 std::string directXTexError;
                 RasterImage directXTexImage;
                 if (BuildDdsBuffer(exportHeader, payload, ddsData, directXTexError) &&
                     DecodeRasterWithDirectXTex(ddsData, directXTexImage, directXTexError) &&
-                    SplitNormalMapIfNeeded(directXTexImage, entry.name, outputPath, normalizedFormat, options, result, directXTexError) &&
+                    GenerateMaterialMapsIfNeeded(directXTexImage, entry.name, outputPath, normalizedFormat, options, result, directXTexError) &&
                     WriteReadableImage(outputPath, directXTexImage, normalizedFormat, directXTexError))
                 {
                     result.warnings.push_back("Readable export transcoded via DirectXTex.");
@@ -2224,10 +2575,12 @@ namespace DagorAssetsExtractor::Export
 
                 if (!options.preserveOriginalDDS)
                 {
+                    cleanupGeneratedMapFiles();
                     result.error = readableError;
                     return result;
                 }
 
+                cleanupGeneratedMapFiles();
                 result.warnings.push_back(
                     "Requested " + normalizedFormat + " export is unavailable for this DDSx texture. " +
                     readableError + " Falling back to DDS.");
@@ -2362,6 +2715,346 @@ namespace DagorAssetsExtractor::Export
         }
 
         return result;
+    }
+
+    std::vector<TextureMapPreviewImage> TextureExporter::BuildMapPreviews(
+        std::string_view textureName,
+        const uint8_t* bgraPixels,
+        uint32_t width,
+        uint32_t height,
+        uint32_t stride,
+        uint32_t maxDimension)
+    {
+        std::vector<TextureMapPreviewImage> previews;
+        const TextureMapAnalysis analysis = AnalyzeTextureMaps(textureName);
+        if (analysis.maps.empty() || bgraPixels == nullptr ||
+            width == 0 || height == 0 || stride < width * 4u ||
+            maxDimension == 0)
+        {
+            return previews;
+        }
+
+        const double scale = std::min(
+            1.0,
+            static_cast<double>(maxDimension) /
+                static_cast<double>(std::max(width, height)));
+        const uint32_t thumbnailWidth = std::max(
+            1u,
+            static_cast<uint32_t>(std::round(static_cast<double>(width) * scale)));
+        const uint32_t thumbnailHeight = std::max(
+            1u,
+            static_cast<uint32_t>(std::round(static_cast<double>(height) * scale)));
+
+        RasterImage thumbnailSource;
+        thumbnailSource.width = thumbnailWidth;
+        thumbnailSource.height = thumbnailHeight;
+        thumbnailSource.stride = thumbnailWidth * 4u;
+        thumbnailSource.format = RasterPixelFormat::Bgra8;
+        thumbnailSource.pixels.resize(
+            static_cast<size_t>(thumbnailSource.stride) * thumbnailHeight);
+
+        for (uint32_t y = 0; y < thumbnailHeight; ++y)
+        {
+            const uint32_t sourceY = std::min(
+                height - 1,
+                static_cast<uint32_t>(
+                    (static_cast<uint64_t>(y) * height) / thumbnailHeight));
+            const uint8_t* sourceRow =
+                bgraPixels + static_cast<size_t>(sourceY) * stride;
+            uint8_t* destinationRow =
+                thumbnailSource.pixels.data() +
+                static_cast<size_t>(y) * thumbnailSource.stride;
+
+            for (uint32_t x = 0; x < thumbnailWidth; ++x)
+            {
+                const uint32_t sourceX = std::min(
+                    width - 1,
+                    static_cast<uint32_t>(
+                        (static_cast<uint64_t>(x) * width) / thumbnailWidth));
+                std::memcpy(
+                    destinationRow + static_cast<size_t>(x) * 4u,
+                    sourceRow + static_cast<size_t>(sourceX) * 4u,
+                    4u);
+            }
+        }
+
+        previews.reserve(analysis.maps.size());
+        for (const DetectedTextureMap& detectedMap : analysis.maps)
+        {
+            RasterImage mapImage;
+            std::string error;
+            if (!BuildTextureMapImage(
+                    thumbnailSource,
+                    analysis.layout,
+                    detectedMap.kind,
+                    mapImage,
+                    error))
+            {
+                continue;
+            }
+
+            if (!NormalizeRasterToTightBgra(mapImage, error))
+            {
+                continue;
+            }
+
+            TextureMapPreviewImage preview;
+            preview.kind = detectedMap.kind;
+            preview.width = mapImage.width;
+            preview.height = mapImage.height;
+            preview.stride = mapImage.stride;
+            preview.bgraPixels = std::move(mapImage.pixels);
+            previews.push_back(std::move(preview));
+        }
+
+        return previews;
+    }
+
+    TextureExportResult TextureExporter::ExportTextureMap(
+        const std::filesystem::path& packPath,
+        const AssetIndex::SubAssetRecord& entry,
+        TextureMapKind mapKind,
+        const TextureMapExportOptions& options)
+    {
+        std::vector<TextureExportResult> results =
+            ExportTextureMaps(packPath, entry, { mapKind }, options);
+        if (results.empty())
+        {
+            TextureExportResult result;
+            result.error = "The map exporter returned no result.";
+            return result;
+        }
+        return std::move(results.front());
+    }
+
+    std::vector<TextureExportResult> TextureExporter::ExportTextureMaps(
+        const std::filesystem::path& packPath,
+        const AssetIndex::SubAssetRecord& entry,
+        const std::vector<TextureMapKind>& mapKinds,
+        const TextureMapExportOptions& options)
+    {
+        std::vector<TextureExportResult> results(mapKinds.size());
+        if (mapKinds.empty())
+        {
+            return results;
+        }
+
+        auto failAll = [&](std::string error) {
+            for (TextureExportResult& result : results)
+            {
+                result.error = error;
+            }
+        };
+
+        if (options.outputDir.empty())
+        {
+            failAll("Export output directory is not configured.");
+            return results;
+        }
+
+        const TextureMapAnalysis analysis = AnalyzeTextureMaps(entry.name);
+        if (analysis.layout == TextureContentLayout::Unknown)
+        {
+            failAll(analysis.caution);
+            return results;
+        }
+
+        const std::string normalizedFormat = NormalizeTextureFormat(options.format);
+        if (normalizedFormat == "DDS")
+        {
+            failAll("Individual material maps must be exported as PNG or TGA.");
+            return results;
+        }
+
+        TexturePreviewOptions previewOptions;
+        previewOptions.gameRoot = options.gameRoot;
+        previewOptions.oodleDllPath = options.oodleDllPath;
+        previewOptions.useOodleFromGameFolder = options.useOodleFromGameFolder;
+        TexturePreviewResult preview = DecodePreview(packPath, entry, previewOptions);
+        if (!preview.success)
+        {
+            failAll(std::move(preview.error));
+            return results;
+        }
+
+        RasterImage source;
+        source.width = preview.width;
+        source.height = preview.height;
+        source.stride = preview.stride;
+        source.format = RasterPixelFormat::Bgra8;
+        source.pixels = std::move(preview.bgraPixels);
+
+        std::error_code ec;
+        std::filesystem::create_directories(options.outputDir, ec);
+        if (ec)
+        {
+            failAll("Could not create output directory: " + ec.message());
+            return results;
+        }
+
+        for (size_t index = 0; index < mapKinds.size(); ++index)
+        {
+            TextureExportResult& result = results[index];
+            result.warnings = preview.warnings;
+
+            RasterImage mapImage;
+            if (!BuildTextureMapImage(
+                    source,
+                    analysis.layout,
+                    mapKinds[index],
+                    mapImage,
+                    result.error))
+            {
+                continue;
+            }
+
+            std::filesystem::path outputPath = BuildSafeOutputPath(
+                options.outputDir,
+                entry.name,
+                TextureFormatExtension(normalizedFormat));
+            outputPath.replace_filename(
+                outputPath.stem().string() +
+                std::string(TextureMapKindFileSuffix(mapKinds[index])) +
+                outputPath.extension().string());
+
+            std::filesystem::create_directories(outputPath.parent_path(), ec);
+            if (ec)
+            {
+                result.error = "Could not create output directory: " + ec.message();
+                ec.clear();
+                continue;
+            }
+            if (!options.overwrite && std::filesystem::exists(outputPath))
+            {
+                result.error =
+                    "Output file already exists: " + Platform::PathToUtf8(outputPath);
+                continue;
+            }
+
+            if (!WriteReadableImage(
+                    outputPath,
+                    mapImage,
+                    normalizedFormat,
+                    result.error))
+            {
+                continue;
+            }
+
+            result.success = true;
+            result.outputPath = outputPath;
+            result.mapOutputs.push_back({ mapKinds[index], outputPath });
+            if (entry.texMips > 1)
+            {
+                result.warnings.push_back(
+                    std::string(normalizedFormat) +
+                    " material-map export writes only the top mip level.");
+            }
+        }
+
+        return results;
+    }
+
+    bool TextureExporter::ComposeOrmTexture(
+        const std::filesystem::path& metallicRoughnessPath,
+        const std::filesystem::path& ambientOcclusionPath,
+        const std::filesystem::path& outputPath,
+        std::string& error,
+        std::vector<std::string>* warnings)
+    {
+        RasterImage metallicRoughness;
+        RasterImage ambientOcclusion;
+        if (!LoadWicBgra(metallicRoughnessPath, metallicRoughness, error) ||
+            !LoadWicBgra(ambientOcclusionPath, ambientOcclusion, error))
+        {
+            return false;
+        }
+
+        if (metallicRoughness.width == 0 || metallicRoughness.height == 0 ||
+            ambientOcclusion.width == 0 || ambientOcclusion.height == 0)
+        {
+            error = "ORM composition input has invalid dimensions.";
+            return false;
+        }
+
+        if (ambientOcclusion.width != metallicRoughness.width ||
+            ambientOcclusion.height != metallicRoughness.height)
+        {
+            if (warnings != nullptr)
+            {
+                warnings->push_back(
+                    "AO was resized from " +
+                    std::to_string(ambientOcclusion.width) + "x" +
+                    std::to_string(ambientOcclusion.height) + " to " +
+                    std::to_string(metallicRoughness.width) + "x" +
+                    std::to_string(metallicRoughness.height) + " for ORM composition.");
+            }
+        }
+
+        RasterImage orm = metallicRoughness;
+        const auto sampleAo = [&](uint32_t outputX, uint32_t outputY) {
+            const double sourceX =
+                (static_cast<double>(outputX) + 0.5) *
+                    static_cast<double>(ambientOcclusion.width) /
+                    static_cast<double>(orm.width) -
+                0.5;
+            const double sourceY =
+                (static_cast<double>(outputY) + 0.5) *
+                    static_cast<double>(ambientOcclusion.height) /
+                    static_cast<double>(orm.height) -
+                0.5;
+
+            const double clampedX = std::clamp(
+                sourceX,
+                0.0,
+                static_cast<double>(ambientOcclusion.width - 1));
+            const double clampedY = std::clamp(
+                sourceY,
+                0.0,
+                static_cast<double>(ambientOcclusion.height - 1));
+            const uint32_t x0 = static_cast<uint32_t>(std::floor(clampedX));
+            const uint32_t y0 = static_cast<uint32_t>(std::floor(clampedY));
+            const uint32_t x1 = std::min(x0 + 1, ambientOcclusion.width - 1);
+            const uint32_t y1 = std::min(y0 + 1, ambientOcclusion.height - 1);
+            const double tx = clampedX - static_cast<double>(x0);
+            const double ty = clampedY - static_cast<double>(y0);
+
+            const auto redAt = [&](uint32_t x, uint32_t y) {
+                const size_t offset =
+                    static_cast<size_t>(y) * ambientOcclusion.stride +
+                    static_cast<size_t>(x) * 4;
+                return static_cast<double>(ambientOcclusion.pixels[offset + 2]);
+            };
+
+            const double top = redAt(x0, y0) * (1.0 - tx) + redAt(x1, y0) * tx;
+            const double bottom = redAt(x0, y1) * (1.0 - tx) + redAt(x1, y1) * tx;
+            return static_cast<uint8_t>(std::clamp(
+                std::round(top * (1.0 - ty) + bottom * ty),
+                0.0,
+                255.0));
+        };
+
+        for (uint32_t y = 0; y < orm.height; ++y)
+        {
+            uint8_t* dstRow = orm.pixels.data() + static_cast<size_t>(y) * orm.stride;
+            for (uint32_t x = 0; x < orm.width; ++x)
+            {
+                const size_t offset = static_cast<size_t>(x) * 4;
+                dstRow[offset + 2] = sampleAo(x, y); // R: ambient occlusion
+                dstRow[offset + 3] = 255;
+            }
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories(outputPath.parent_path(), ec);
+        if (ec)
+        {
+            error = "Could not create ORM output directory: " + ec.message();
+            return false;
+        }
+
+        const std::string extension = ToUpperAscii(outputPath.extension().string());
+        const std::string format = extension == ".TGA" ? "TGA" : "PNG";
+        return WriteReadableImage(outputPath, orm, format, error);
     }
 
     BatchTextureExportResult TextureExporter::ExportAllTextures(

@@ -52,4 +52,12 @@ namespace DagorAssetsExtractor::UI
         bool srgb);
     void ClearTexturePreview();
     const UiTexture* GetTexturePreview();
+    bool UpdateTextureMapPreview(
+        uint32_t mapKind,
+        const uint8_t* bgraPixels,
+        uint32_t width,
+        uint32_t height,
+        uint32_t stride);
+    void ClearTextureMapPreviews();
+    const UiTexture* GetTextureMapPreview(uint32_t mapKind);
 }

@@ -3,9 +3,11 @@
 #include "AssetIndex/AssetIndex.h"
 #include "AssetIndex/PackContents.h"
 #include "DagorFormats/DdsxReader.h"
+#include "Export/MaterialTextureResolver.h"
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <functional>
 
@@ -21,7 +23,13 @@ namespace DagorAssetsExtractor::Export
         bool overwrite = true;
         bool useOodleFromGameFolder = true;
         bool exportJsonManifest = false;
-        bool splitPackedNormalMap = false;
+        bool generateMaterialMaps = false;
+    };
+
+    struct TextureMapOutput
+    {
+        TextureMapKind kind = TextureMapKind::BaseColor;
+        std::filesystem::path outputPath;
     };
 
     struct TextureExportResult
@@ -30,6 +38,17 @@ namespace DagorAssetsExtractor::Export
         std::string error;
         std::filesystem::path outputPath;
         std::vector<std::string> warnings;
+        std::vector<TextureMapOutput> mapOutputs;
+    };
+
+    struct TextureMapExportOptions
+    {
+        std::filesystem::path outputDir;
+        std::filesystem::path gameRoot;
+        std::filesystem::path oodleDllPath;
+        std::string format = "PNG";
+        bool overwrite = true;
+        bool useOodleFromGameFolder = true;
     };
 
     struct TexturePreviewOptions
@@ -49,6 +68,15 @@ namespace DagorAssetsExtractor::Export
         uint32_t stride = 0;
         std::vector<uint8_t> bgraPixels;
         bool srgb = false;
+    };
+
+    struct TextureMapPreviewImage
+    {
+        TextureMapKind kind = TextureMapKind::BaseColor;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t stride = 0;
+        std::vector<uint8_t> bgraPixels;
     };
 
     struct BatchTextureExportResult
@@ -76,6 +104,33 @@ namespace DagorAssetsExtractor::Export
             const std::filesystem::path& packPath,
             const AssetIndex::SubAssetRecord& entry,
             const TexturePreviewOptions& options);
+
+        static std::vector<TextureMapPreviewImage> BuildMapPreviews(
+            std::string_view textureName,
+            const uint8_t* bgraPixels,
+            uint32_t width,
+            uint32_t height,
+            uint32_t stride,
+            uint32_t maxDimension = 192);
+
+        static TextureExportResult ExportTextureMap(
+            const std::filesystem::path& packPath,
+            const AssetIndex::SubAssetRecord& entry,
+            TextureMapKind mapKind,
+            const TextureMapExportOptions& options);
+
+        static std::vector<TextureExportResult> ExportTextureMaps(
+            const std::filesystem::path& packPath,
+            const AssetIndex::SubAssetRecord& entry,
+            const std::vector<TextureMapKind>& mapKinds,
+            const TextureMapExportOptions& options);
+
+        static bool ComposeOrmTexture(
+            const std::filesystem::path& metallicRoughnessPath,
+            const std::filesystem::path& ambientOcclusionPath,
+            const std::filesystem::path& outputPath,
+            std::string& error,
+            std::vector<std::string>* warnings = nullptr);
 
         static BatchTextureExportResult ExportAllTextures(
             const std::filesystem::path& packPath,

@@ -33,6 +33,10 @@ namespace DagorAssetsExtractor::UI
         std::array<UiIcon, kIconCount> g_publicIcons;
         ComPtr<ID3D11ShaderResourceView> g_texturePreviewView;
         UiTexture g_texturePreview;
+        constexpr size_t kTextureMapPreviewCount = 8;
+        std::array<ComPtr<ID3D11ShaderResourceView>, kTextureMapPreviewCount>
+            g_textureMapPreviewViews;
+        std::array<UiTexture, kTextureMapPreviewCount> g_textureMapPreviews;
         ID3D11Device* g_device = nullptr;
 
         size_t ToIndex(UiIconId id)
@@ -254,6 +258,7 @@ namespace DagorAssetsExtractor::UI
     void ShutdownUiAssets()
     {
         ClearTexturePreview();
+        ClearTextureMapPreviews();
         ClearIcons();
         g_device = nullptr;
     }
@@ -299,10 +304,63 @@ namespace DagorAssetsExtractor::UI
     {
         g_texturePreviewView.Reset();
         g_texturePreview = {};
+        ClearTextureMapPreviews();
     }
 
     const UiTexture* GetTexturePreview()
     {
         return g_texturePreview.view != nullptr ? &g_texturePreview : nullptr;
+    }
+
+    bool UpdateTextureMapPreview(
+        uint32_t mapKind,
+        const uint8_t* bgraPixels,
+        uint32_t width,
+        uint32_t height,
+        uint32_t stride)
+    {
+        const size_t index = static_cast<size_t>(mapKind);
+        if (index >= kTextureMapPreviewCount)
+        {
+            return false;
+        }
+
+        ComPtr<ID3D11ShaderResourceView> view;
+        if (!CreateTextureFromBgra(
+                bgraPixels,
+                width,
+                height,
+                stride,
+                false,
+                view))
+        {
+            return false;
+        }
+
+        g_textureMapPreviewViews[index] = std::move(view);
+        g_textureMapPreviews[index].view = g_textureMapPreviewViews[index].Get();
+        g_textureMapPreviews[index].width = width;
+        g_textureMapPreviews[index].height = height;
+        return true;
+    }
+
+    void ClearTextureMapPreviews()
+    {
+        for (size_t index = 0; index < kTextureMapPreviewCount; ++index)
+        {
+            g_textureMapPreviewViews[index].Reset();
+            g_textureMapPreviews[index] = {};
+        }
+    }
+
+    const UiTexture* GetTextureMapPreview(uint32_t mapKind)
+    {
+        const size_t index = static_cast<size_t>(mapKind);
+        if (index >= kTextureMapPreviewCount ||
+            g_textureMapPreviews[index].view == nullptr)
+        {
+            return nullptr;
+        }
+        return &g_textureMapPreviews[index];
     }
 }

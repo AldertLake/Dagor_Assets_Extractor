@@ -92,6 +92,40 @@ namespace DagorAssetsExtractor::Export
             return false;
         }
 
+        std::vector<std::string_view> SemanticTokens(std::string_view textureName, std::string& storage)
+        {
+            storage = NormalizeTextureSemanticName(textureName);
+            std::vector<std::string_view> tokens = SplitTokens(storage);
+            while (!tokens.empty() &&
+                   (tokens.back() == "hq" ||
+                    tokens.back() == "uhq" ||
+                    tokens.back() == "tq" ||
+                    tokens.back() == "lq"))
+            {
+                tokens.pop_back();
+            }
+            return tokens;
+        }
+
+        std::string_view LastSemanticToken(std::string_view textureName, std::string& storage)
+        {
+            const std::vector<std::string_view> tokens = SemanticTokens(textureName, storage);
+            return tokens.empty() ? std::string_view{} : tokens.back();
+        }
+
+        DetectedTextureMap MakeDetectedMap(
+            TextureMapKind kind,
+            std::string channels,
+            bool derived = false)
+        {
+            DetectedTextureMap map;
+            map.kind = kind;
+            map.label = std::string(TextureMapKindName(kind));
+            map.channels = std::move(channels);
+            map.derived = derived;
+            return map;
+        }
+
         bool TextureNameLooksLikeOcclusion(std::string_view textureName)
         {
             const std::string normalized = NormalizeTextureSemanticName(textureName);
@@ -100,22 +134,7 @@ namespace DagorAssetsExtractor::Export
 
         bool TextureNameLooksLikeMetallicRoughness(std::string_view textureName)
         {
-            const std::string normalized = NormalizeTextureSemanticName(textureName);
-            if (normalized.empty())
-            {
-                return false;
-            }
-
-            if (HasAnyToken(normalized, { "orm", "rma", "mra", "mrao", "arm" }))
-            {
-                return true;
-            }
-
-            const bool hasMetal =
-                HasAnyToken(normalized, { "metal", "metallic", "metalness", "mtl" });
-            const bool hasRough =
-                HasAnyToken(normalized, { "rough", "roughness", "rgh" });
-            return hasMetal && hasRough;
+            return LooksLikePackedOrm(textureName);
         }
 
         std::vector<std::string> BuildBaseColorSlotPreference(std::string_view shaderClass)
@@ -257,6 +276,11 @@ namespace DagorAssetsExtractor::Export
         resolved.normalTextureName = SelectTextureFromSlotPreference(
             material,
             BuildNormalMapSlotPreference(material.shaderClass));
+        if (AnalyzeTextureMaps(resolved.normalTextureName).layout ==
+            TextureContentLayout::WarThunderPackedNormalPbr)
+        {
+            resolved.packedNormalPbrTextureName = resolved.normalTextureName;
+        }
         resolved.occlusionTextureName = SelectTextureFromSlotPreference(
             material,
             BuildOcclusionSlotPreference(material.shaderClass));
@@ -358,30 +382,175 @@ namespace DagorAssetsExtractor::Export
         return normalized;
     }
 
+    TextureMapAnalysis AnalyzeTextureMaps(std::string_view textureName)
+    {
+        TextureMapAnalysis analysis;
+        std::string normalized;
+        const std::string_view suffix = LastSemanticToken(textureName, normalized);
+
+        if (suffix == "n")
+        {
+            analysis.layout = TextureContentLayout::WarThunderPackedNormalPbr;
+            analysis.confidence = TextureDetectionConfidence::StrongNameBased;
+            analysis.summary = "War Thunder packed normal/PBR texture";
+            analysis.caution =
+                "AO is not stored in this texture. Red is smoothness, green is normal Y, "
+                "blue is metallic, and alpha is normal X.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::Normal, "A -> X, G -> Y, reconstructed Z", true),
+                MakeDetectedMap(TextureMapKind::Smoothness, "R"),
+                MakeDetectedMap(TextureMapKind::Roughness, "1 - R", true),
+                MakeDetectedMap(TextureMapKind::Metallic, "B"),
+                MakeDetectedMap(TextureMapKind::MetallicRoughness, "G = 1 - R, B = metallic", true),
+            };
+            return analysis;
+        }
+
+        if (suffix == "ao" || suffix == "occlusion" || suffix == "occ")
+        {
+            analysis.layout = TextureContentLayout::AmbientOcclusion;
+            analysis.confidence = TextureDetectionConfidence::StrongNameBased;
+            analysis.summary = "Ambient occlusion texture";
+            analysis.caution = "Detected from the texture suffix; the red channel is exported as linear AO.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::AmbientOcclusion, "R"),
+            };
+            return analysis;
+        }
+
+        if (suffix == "orm" || suffix == "arm")
+        {
+            analysis.layout = TextureContentLayout::PackedOrm;
+            analysis.confidence = TextureDetectionConfidence::StrongNameBased;
+            analysis.summary = "Packed occlusion/roughness/metallic texture";
+            analysis.caution = "R = AO, G = roughness, B = metallic.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::AmbientOcclusion, "R"),
+                MakeDetectedMap(TextureMapKind::Roughness, "G"),
+                MakeDetectedMap(TextureMapKind::Metallic, "B"),
+                MakeDetectedMap(TextureMapKind::OcclusionRoughnessMetallic, "R = AO, G = roughness, B = metallic"),
+            };
+            return analysis;
+        }
+
+        if (suffix == "rma")
+        {
+            analysis.layout = TextureContentLayout::PackedRma;
+            analysis.confidence = TextureDetectionConfidence::StrongNameBased;
+            analysis.summary = "Packed roughness/metallic/occlusion texture";
+            analysis.caution = "R = roughness, G = metallic, B = AO; ORM export reorders these channels.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::AmbientOcclusion, "B"),
+                MakeDetectedMap(TextureMapKind::Roughness, "R"),
+                MakeDetectedMap(TextureMapKind::Metallic, "G"),
+                MakeDetectedMap(TextureMapKind::OcclusionRoughnessMetallic, "Reordered to R = AO, G = roughness, B = metallic", true),
+            };
+            return analysis;
+        }
+
+        if (suffix == "mra" || suffix == "mrao")
+        {
+            analysis.layout = TextureContentLayout::PackedMra;
+            analysis.confidence = TextureDetectionConfidence::StrongNameBased;
+            analysis.summary = "Packed metallic/roughness/occlusion texture";
+            analysis.caution = "R = metallic, G = roughness, B = AO; ORM export reorders these channels.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::AmbientOcclusion, "B"),
+                MakeDetectedMap(TextureMapKind::Roughness, "G"),
+                MakeDetectedMap(TextureMapKind::Metallic, "R"),
+                MakeDetectedMap(TextureMapKind::OcclusionRoughnessMetallic, "Reordered to R = AO, G = roughness, B = metallic", true),
+            };
+            return analysis;
+        }
+
+        if (suffix == "c")
+        {
+            analysis.layout = TextureContentLayout::BaseColor;
+            analysis.confidence = TextureDetectionConfidence::StrongNameBased;
+            analysis.summary = "Color/albedo texture";
+            analysis.caution = "RGB is treated as sRGB base color; alpha remains shader-dependent.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::BaseColor, "RGB, optional A"),
+            };
+            return analysis;
+        }
+
+        if (suffix == "d")
+        {
+            analysis.layout = TextureContentLayout::BaseColor;
+            analysis.confidence = TextureDetectionConfidence::NameBased;
+            analysis.summary = "Probable diffuse/detail color texture";
+            analysis.caution =
+                "The _d suffix is shader-dependent. It may be base color, detail diffuse, "
+                "damage, or decal data; verify the model material before treating it as albedo.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::BaseColor, "RGB, shader-dependent"),
+            };
+            return analysis;
+        }
+
+        if (suffix == "normal" || suffix == "norm")
+        {
+            analysis.layout = TextureContentLayout::ConventionalNormal;
+            analysis.confidence = TextureDetectionConfidence::NameBased;
+            analysis.summary = "Probable conventional RGB normal texture";
+            analysis.caution = "Detected by name only; no packed War Thunder PBR channels are assumed.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::Normal, "RGB"),
+            };
+            return analysis;
+        }
+
+        analysis.summary = "Map layout not detected safely";
+        analysis.caution =
+            "The filename does not identify a supported channel layout. The source can still be "
+            "exported, but individual maps are disabled to avoid writing incorrect data.";
+        return analysis;
+    }
+
+    std::string_view TextureMapKindName(TextureMapKind kind)
+    {
+        switch (kind)
+        {
+        case TextureMapKind::BaseColor: return "Base Color";
+        case TextureMapKind::Normal: return "Normal";
+        case TextureMapKind::AmbientOcclusion: return "Ambient Occlusion";
+        case TextureMapKind::Smoothness: return "Smoothness";
+        case TextureMapKind::Roughness: return "Roughness";
+        case TextureMapKind::Metallic: return "Metallic";
+        case TextureMapKind::MetallicRoughness: return "Metallic-Roughness";
+        case TextureMapKind::OcclusionRoughnessMetallic: return "ORM";
+        }
+        return "Unknown";
+    }
+
+    std::string_view TextureMapKindFileSuffix(TextureMapKind kind)
+    {
+        switch (kind)
+        {
+        case TextureMapKind::BaseColor: return "_basecolor";
+        case TextureMapKind::Normal: return "_normal";
+        case TextureMapKind::AmbientOcclusion: return "_ao";
+        case TextureMapKind::Smoothness: return "_smoothness";
+        case TextureMapKind::Roughness: return "_roughness";
+        case TextureMapKind::Metallic: return "_metallic";
+        case TextureMapKind::MetallicRoughness: return "_metalrough";
+        case TextureMapKind::OcclusionRoughnessMetallic: return "_orm";
+        }
+        return "_map";
+    }
+
     bool LooksLikePackedOrm(std::string_view textureName)
     {
-        const std::string normalized = NormalizeTextureSemanticName(textureName);
-        return HasAnyToken(normalized, { "orm", "rma", "mra", "mrao", "arm" });
+        const TextureContentLayout layout = AnalyzeTextureMaps(textureName).layout;
+        return layout == TextureContentLayout::PackedOrm ||
+            layout == TextureContentLayout::PackedRma ||
+            layout == TextureContentLayout::PackedMra;
     }
 
     bool LooksLikePackedNormalMap(std::string_view textureName)
     {
-        const std::string normalized = NormalizeTextureSemanticName(textureName);
-        if (normalized.empty())
-        {
-            return false;
-        }
-
-        if (normalized.size() >= 2 && normalized.compare(normalized.size() - 2, 2, "_n") == 0)
-        {
-            return true;
-        }
-
-        if (normalized.find("_n_") != std::string::npos)
-        {
-            return true;
-        }
-
-        return false;
+        return AnalyzeTextureMaps(textureName).layout ==
+            TextureContentLayout::WarThunderPackedNormalPbr;
     }
 }
