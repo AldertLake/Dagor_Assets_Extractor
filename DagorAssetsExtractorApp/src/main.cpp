@@ -259,7 +259,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         return 1;
     }
 
-    ShowWindow(hwnd, SW_SHOWDEFAULT);
+    ShowWindow(hwnd, SW_SHOWMAXIMIZED);
     UpdateWindow(hwnd);
 
     IMGUI_CHECKVERSION();

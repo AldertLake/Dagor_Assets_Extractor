@@ -24,6 +24,8 @@ namespace DagorAssetsExtractor::Export
         std::filesystem::path metallicRoughnessTextureSourcePath; // Exported metallic/roughness texture to embed
         std::string occlusionTexturePath; // Path relative to GLB or empty
         std::filesystem::path occlusionTextureSourcePath; // Exported occlusion texture to embed
+        std::string nativePackedNormalPbrTexturePath; // Native War Thunder _n image for custom extension metadata
+        std::filesystem::path nativePackedNormalPbrTextureSourcePath; // Native packed image to embed
     };
 
     struct GlbExportOptions

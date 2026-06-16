@@ -34,7 +34,7 @@ namespace DagorAssetsExtractor::Export
         BaseColor = 0,
         Normal,
         AmbientOcclusion,
-        Smoothness,
+        InvertedRoughness,
         Roughness,
         Metallic,
         MetallicRoughness,

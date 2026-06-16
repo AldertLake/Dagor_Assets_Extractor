@@ -1,6 +1,7 @@
 #include "AssetIndex/DependencyGraph.h"
 
 #include "AssetIndex/PackContents.h"
+#include "AssetIndex/TextureQuality.h"
 #include "Platform/Platform.h"
 #include "DagorFormats/GrpReader.h"
 
@@ -30,7 +31,7 @@ namespace DagorAssetsExtractor::AssetIndex
         constexpr size_t MaxWarnings = 12;
         constexpr size_t MaxDescriptorIndexThreads = 8;
         constexpr size_t ScopedDxpCandidateLimit = 48;
-        constexpr int DescriptorLinkerVersion = 8;
+        constexpr int DescriptorLinkerVersion = 9;
         constexpr int DescriptorLinkCacheVersion = 4;
 
         std::string Trim(std::string value)
@@ -1052,45 +1053,7 @@ namespace DagorAssetsExtractor::AssetIndex
 
         bool PathLooksLikeHq(const fs::path& path)
         {
-            const std::string key = FullPathKey(Platform::PathToUtf8(path));
-            return ContainsAscii(key, "content.hq") || ContainsAscii(key, "/hq_tex/");
-        }
-
-        int TexturePackQualityScore(const fs::path& path, std::string_view entryName = {})
-        {
-            const std::string pathKey = FullPathKey(Platform::PathToUtf8(path));
-            const std::string entryKey = ToLowerAscii(std::string(entryName));
-            int score = 0;
-
-            if (ContainsAscii(pathKey, "/content.hq/"))
-            {
-                score += 140;
-            }
-            if (ContainsAscii(pathKey, "/uhq_vehicles/"))
-            {
-                score += 120;
-            }
-            if (ContainsAscii(pathKey, "/hq_tex/"))
-            {
-                score += 100;
-            }
-
-            const std::string packName = BasenameKey(Platform::PathToUtf8(path.filename()));
-            if (EndsWith(packName, "-hq") || EndsWith(packName, "_hq"))
-            {
-                score += 80;
-            }
-
-            if (ContainsAscii(entryKey, "$hq"))
-            {
-                score += 60;
-            }
-            if (ContainsAscii(entryKey, "$tq") || ContainsAscii(entryKey, "$lq"))
-            {
-                score -= 140;
-            }
-
-            return score;
+            return ClassifyTextureQuality(path, {}) >= TextureQualityTier::High;
         }
 
         int CommonPathScore(const fs::path& left, const fs::path& right)
@@ -1242,8 +1205,6 @@ namespace DagorAssetsExtractor::AssetIndex
             {
                 score += 4;
             }
-            score += TexturePackQualityScore(record.path) / 10;
-
             if (packStem.find("shared") != std::string::npos ||
                 packStem.find("common") != std::string::npos ||
                 packStem.find("base") != std::string::npos ||
@@ -1684,6 +1645,7 @@ namespace DagorAssetsExtractor::AssetIndex
             }
 
             const LightweightDxpEntry* best = nullptr;
+            int bestQuality = std::numeric_limits<int>::min();
             int bestScore = std::numeric_limits<int>::min();
             for (const size_t candidate : candidates)
             {
@@ -1711,22 +1673,16 @@ namespace DagorAssetsExtractor::AssetIndex
                 {
                     score += 15;
                 }
-                if (PathLooksLikeHq(entry.path))
-                {
-                    score += 5;
-                }
-                if (ContainsAscii(BasenameKey(entry.name), "$hq"))
-                {
-                    score += 5;
-                }
-                score += TexturePackQualityScore(entry.path, entry.name);
                 if (IsPackRelatedToAnyName(entry.path, { std::string(textureName), link.resourceName }))
                 {
                     score += 10;
                 }
 
-                if (score > bestScore)
+                const int quality = TextureQualityPriority(entry.path, entry.name);
+                if (quality > bestQuality ||
+                    (quality == bestQuality && score > bestScore))
                 {
+                    bestQuality = quality;
                     bestScore = score;
                     best = &entry;
                 }
@@ -2204,6 +2160,7 @@ namespace DagorAssetsExtractor::AssetIndex
             {
                 const ResourceRecord* record;
                 int score;
+                int quality;
             };
             std::vector<ScoredRecord> scoredRecords;
             scoredRecords.reserve(dxpRecords.size());
@@ -2211,7 +2168,11 @@ namespace DagorAssetsExtractor::AssetIndex
             {
                 const std::string packStem = PackStemKey(record->path);
                 const int score = ScoreDxpRecordForFocus(*record, *focusRecord, focusedResourceNameKeys, focusedTextureNameKeys, packStem);
-                scoredRecords.push_back({ record, score });
+                scoredRecords.push_back({
+                    record,
+                    score,
+                    TextureQualityPriority(record->path, {}),
+                });
             }
 
             std::stable_sort(scoredRecords.begin(), scoredRecords.end(), [&](const ScoredRecord& left, const ScoredRecord& right) {
@@ -2219,7 +2180,7 @@ namespace DagorAssetsExtractor::AssetIndex
                 {
                     return left.score > right.score;
                 }
-                return PathLooksLikeHq(left.record->path) && !PathLooksLikeHq(right.record->path);
+                return left.quality > right.quality;
             });
 
             dxpRecords.clear();

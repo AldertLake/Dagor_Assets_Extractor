@@ -24,6 +24,7 @@ namespace DagorAssetsExtractor::Export
         bool useOodleFromGameFolder = true;
         bool exportJsonManifest = false;
         bool generateMaterialMaps = false;
+        bool convertWarThunderPackedMaps = true;
     };
 
     struct TextureMapOutput
@@ -39,6 +40,7 @@ namespace DagorAssetsExtractor::Export
         std::filesystem::path outputPath;
         std::vector<std::string> warnings;
         std::vector<TextureMapOutput> mapOutputs;
+        bool nativeWarThunderPackedMap = false;
     };
 
     struct TextureMapExportOptions

@@ -253,6 +253,9 @@ namespace DagorAssetsExtractor::UI
         LoadUiTextureByName("Character.png", UiIconId::Character);
         LoadUiTextureByName("AnimGraph.png", UiIconId::AnimGraph);
         LoadUiTextureByName("patreon.png", UiIconId::Patreon);
+        LoadUiTextureByName("Priview.png", UiIconId::Preview);
+        LoadUiTextureByName("Export.png", UiIconId::Export);
+        LoadUiTextureByName("Debug.png", UiIconId::Debug);
     }
 
     void ShutdownUiAssets()

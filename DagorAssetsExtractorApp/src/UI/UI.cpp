@@ -10,6 +10,7 @@
 #include "Export/MaterialTextureResolver.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -397,29 +398,38 @@ namespace DagorAssetsExtractor::UI
         return ImGui::Selectable(label, selected);
     }
 
-    bool DrawIconTextButton(const char* id, UiIconId iconId, const char* label)
+    bool DrawIconTextButton(const char* id, UiIconId iconId, const char* label, const ImVec2& sizeArg = ImVec2(0.0f, 0.0f))
     {
         const UiIcon* icon = GetUiIcon(iconId);
         const bool hasIcon = icon != nullptr && icon->view != nullptr;
         const float iconSize = hasIcon ? GetInlineIconSize() : 0.0f;
-        const ImVec2 size = CalcIconButtonSize(label, hasIcon);
+        const ImVec2 calculatedSize = CalcIconButtonSize(label, hasIcon);
+
+        ImVec2 size = sizeArg;
+        if (size.x == 0.0f) size.x = calculatedSize.x;
+        else if (size.x < 0.0f) size.x = ImGui::GetContentRegionAvail().x;
+
+        if (size.y == 0.0f) size.y = calculatedSize.y;
+
         const bool pressed = ImGui::Button(id, size);
 
         const ImVec2 min = ImGui::GetItemRectMin();
-        const ImGuiStyle& style = ImGui::GetStyle();
         const ImVec2 textSize = ImGui::CalcTextSize(label);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        const float contentWidth = (hasIcon ? iconSize + kButtonIconSpacing : 0.0f) + textSize.x;
+        const float startX = min.x + (size.x - contentWidth) * 0.5f;
 
         if (hasIcon)
         {
             const float iconY = min.y + (size.y - iconSize) * 0.5f;
             drawList->AddImage(
                 reinterpret_cast<ImTextureID>(icon->view),
-                ImVec2(min.x + style.FramePadding.x, iconY),
-                ImVec2(min.x + style.FramePadding.x + iconSize, iconY + iconSize));
+                ImVec2(startX, iconY),
+                ImVec2(startX + iconSize, iconY + iconSize));
         }
 
-        const float textX = min.x + style.FramePadding.x + (hasIcon ? iconSize + kButtonIconSpacing : 0.0f);
+        const float textX = startX + (hasIcon ? iconSize + kButtonIconSpacing : 0.0f);
         const float textY = min.y + (size.y - textSize.y) * 0.5f;
         drawList->AddText(ImVec2(textX, textY), ImGui::GetColorU32(ImGuiCol_Text), label);
         return pressed;
@@ -483,13 +493,41 @@ namespace DagorAssetsExtractor::UI
         return UiIconId::Invalid;
     }
 
-    void DrawWrappedBulletText(const std::string& text)
+    void DrawWrappedText(std::string_view text)
+    {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(text.data(), text.data() + text.size());
+        ImGui::PopTextWrapPos();
+    }
+
+    void DrawWrappedDisabledText(std::string_view text)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        DrawWrappedText(text);
+        ImGui::PopStyleColor();
+    }
+
+    void DrawWrappedColoredText(const ImVec4& color, std::string_view text)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        DrawWrappedText(text);
+        ImGui::PopStyleColor();
+    }
+
+    void DrawWrappedBulletText(std::string_view text)
     {
         ImGui::Bullet();
         ImGui::SameLine();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(text.c_str());
+        DrawWrappedText(text);
+    }
+
+    void DrawWrappedTooltip(std::string_view text)
+    {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+        ImGui::TextUnformatted(text.data(), text.data() + text.size());
         ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
     }
 
     void DrawValidationSummary(const AssetIndex::ValidationResult& validation)
@@ -588,39 +626,7 @@ namespace DagorAssetsExtractor::UI
         ImGui::EndMenuBar();
     }
 
-    void DrawHeader(AppState& app)
-    {
-        ImGui::TextUnformatted("Dagor Assets Extractor");
-        ImGui::SameLine();
-        ImGui::TextColored(
-            app.validation.IsValid() ? ImVec4(0.43f, 0.86f, 0.55f, 1.0f) : ImVec4(1.0f, 0.49f, 0.42f, 1.0f),
-            app.validation.IsValid() ? "Ready" : "Game folder required");
 
-        const UiIcon* rebuildIcon = GetUiIcon(UiIconId::Rebuild);
-        const bool rebuildHasIcon = rebuildIcon != nullptr && rebuildIcon->view != nullptr;
-        const ImVec2 rebuildButtonSize = CalcIconButtonSize("Rebuild Resources", rebuildHasIcon);
-        const UiIcon* patreonIcon = GetUiIcon(UiIconId::Patreon);
-        const bool patreonHasIcon = patreonIcon != nullptr && patreonIcon->view != nullptr;
-        const ImVec2 patreonButtonSize = CalcIconButtonSize("Donate", patreonHasIcon);
-
-        const float buttonsWidth = rebuildButtonSize.x + ImGui::GetStyle().ItemSpacing.x + patreonButtonSize.x;
-        ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x - buttonsWidth));
-
-        if (DrawIconTextButton("##donate", UiIconId::Patreon, "Donate"))
-        {
-            Platform::OpenUrl(L"https://www.patreon.com/AldertLake");
-        }
-
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!app.validation.IsValid() || app.scan.running.load());
-        if (DrawIconTextButton("##rebuild_resources", UiIconId::Rebuild, "Rebuild Resources"))
-        {
-            App::StartScan(app);
-        }
-        ImGui::EndDisabled();
-
-        ImGui::Separator();
-    }
 
     bool RecordPassesTypeFilter(const AppState& app, AssetType type)
     {
@@ -724,32 +730,8 @@ namespace DagorAssetsExtractor::UI
 
     void DrawLeftPanel(AppState& app, const std::vector<ResourceRecord>& records)
     {
-        DrawPanelTitle(UiIconId::GameInstall, "Game Install");
+        DrawPanelTitle(UiIconId::ContentBrowser, "Resource Filters");
         ImGui::Separator();
-        if (app.settings.gameRoot.empty())
-        {
-            ImGui::TextWrapped("No folder selected.");
-        }
-        else
-        {
-            ImGui::TextWrapped("%s", Platform::PathToUtf8(app.settings.gameRoot).c_str());
-        }
-
-        if (ImGui::Button("Choose Folder", ImVec2(-1.0f, 0.0f)))
-        {
-            if (const auto selected = Platform::BrowseForFolder(static_cast<HWND>(app.hwnd), L"Choose War Thunder Folder", app.settings.gameRoot))
-            {
-                App::SetGameRoot(app, *selected);
-                SaveSettingsWithImGui(app);
-            }
-        }
-
-        ImGui::Spacing();
-        DrawValidationSummary(app.validation);
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::TextUnformatted("Filters");
         bool filterChanged = false;
         filterChanged |= ImGui::Checkbox("VROMFS", &app.showVromfs);
         filterChanged |= ImGui::Checkbox("GRP", &app.showGrp);
@@ -798,11 +780,46 @@ namespace DagorAssetsExtractor::UI
         ImGui::TextWrapped("Cache: %s", App::GetCacheStatus(app.scan).c_str());
         ImGui::TextWrapped("BLK Links: %s", App::GetBlkResourceLinkStatus(app).c_str());
         ImGui::TextWrapped("Desc Links: %s", App::GetDescriptorResourceLinkStatus(app).c_str());
+
+        if (!app.validation.IsValid())
+        {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Game folder required.");
+            DrawWrappedDisabledText("Please configure and validate your game folder in Settings.");
+        }
     }
 
     void DrawContentBrowser(AppState& app, const std::shared_ptr<const std::vector<ResourceRecord>>& recordsPtr)
     {
         DrawPanelTitle(UiIconId::ContentBrowser, "Content Browser");
+
+        const UiIcon* rebuildIcon = GetUiIcon(UiIconId::Rebuild);
+        const bool rebuildHasIcon = rebuildIcon != nullptr && rebuildIcon->view != nullptr;
+        const ImVec2 rebuildButtonSize = CalcIconButtonSize("Rebuild Resources", rebuildHasIcon);
+        
+        const UiIcon* patreonIcon = GetUiIcon(UiIconId::Patreon);
+        const bool patreonHasIcon = patreonIcon != nullptr && patreonIcon->view != nullptr;
+        const ImVec2 patreonButtonSize = CalcIconButtonSize("Donate", patreonHasIcon);
+        
+        const float buttonsWidth = rebuildButtonSize.x + ImGui::GetStyle().ItemSpacing.x + patreonButtonSize.x;
+        
+        ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionMax().x - buttonsWidth));
+        
+        if (DrawIconTextButton("##donate", UiIconId::Patreon, "Donate"))
+        {
+            Platform::OpenUrl(L"https://www.patreon.com/AldertLake");
+        }
+        
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!app.validation.IsValid() || app.scan.running.load());
+        if (DrawIconTextButton("##rebuild_resources", UiIconId::Rebuild, "Rebuild Resources"))
+        {
+            App::StartScan(app);
+        }
+        ImGui::EndDisabled();
+
         ImGui::Separator();
 
         ImGui::SetNextItemWidth(-1.0f);
@@ -859,20 +876,41 @@ namespace DagorAssetsExtractor::UI
                     const std::wstring nativePath = record.path.wstring();
                     const bool selected = nativePath == app.selectedPath;
 
-                    ImGui::TableNextRow();
+                    float col2Width = 0.0f;
+                    if (ImGuiTable* table = ImGui::GetCurrentTable())
+                    {
+                        if (2 < table->ColumnsCount)
+                        {
+                            col2Width = table->Columns[2].WorkMaxX - table->Columns[2].WorkMinX;
+                        }
+                    }
+                    float cellPaddingY = ImGui::GetStyle().CellPadding.y;
+                    float rowHeight = ImGui::GetTextLineHeight() + cellPaddingY * 2.0f;
+                    if (col2Width > 0.0f)
+                    {
+                        std::string pathText = Platform::PathToUtf8(record.path.parent_path());
+                        ImVec2 pathTextSize = ImGui::CalcTextSize(pathText.c_str(), nullptr, false, col2Width);
+                        rowHeight = std::max(rowHeight, pathTextSize.y + cellPaddingY * 2.0f);
+                    }
+
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, rowHeight);
+                    
                     ImGui::TableSetColumnIndex(0);
+                    ImVec2 cursorReset = ImGui::GetCursorPos();
+                    if (ImGui::Selectable("##row", selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0, rowHeight - cellPaddingY * 2.0f)))
+                    {
+                        app.selectedPath = nativePath;
+                    }
+                    ImGui::SetCursorPos(cursorReset);
                     ImGui::TextUnformatted(AssetIndex::AssetTypeName(record.type));
 
                     ImGui::TableSetColumnIndex(1);
                     const std::string name = Platform::PathToUtf8(record.path.filename());
-                    ImGuiSelectableFlags selectableFlags = ImGuiSelectableFlags_SpanAllColumns;
-                    if (ImGui::Selectable(name.c_str(), selected, selectableFlags))
-                    {
-                        app.selectedPath = nativePath;
-                    }
+                    ImGui::TextUnformatted(name.c_str());
 
                     ImGui::TableSetColumnIndex(2);
-                    ImGui::TextUnformatted(Platform::PathToUtf8(record.path.parent_path()).c_str());
+                    DrawWrappedText(
+                        Platform::PathToUtf8(record.path.parent_path()));
 
                     ImGui::TableSetColumnIndex(3);
                     ImGui::TextUnformatted(FormatBytes(record.sizeBytes).c_str());
@@ -1022,7 +1060,7 @@ namespace DagorAssetsExtractor::UI
             {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(row->resourceName.c_str());
+                DrawWrappedText(row->resourceName);
 
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextUnformatted(AssetIndex::AssetTypeName(row->expectedType));
@@ -1030,7 +1068,7 @@ namespace DagorAssetsExtractor::UI
                 ImGui::TableSetColumnIndex(2);
                 if (row->matchedPath)
                 {
-                    ImGui::TextUnformatted(Platform::PathToUtf8(*row->matchedPath).c_str());
+                    DrawWrappedText(Platform::PathToUtf8(*row->matchedPath));
                 }
                 else
                 {
@@ -1058,7 +1096,7 @@ namespace DagorAssetsExtractor::UI
         }
         if (hasGlobalLinks && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         {
-            ImGui::SetTooltip("Descriptor links are already built globally.");
+            DrawWrappedTooltip("Descriptor links are already built globally.");
         }
         ImGui::EndDisabled();
 
@@ -1115,7 +1153,7 @@ namespace DagorAssetsExtractor::UI
                     ImGui::TableNextRow();
 
                     ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(link.resourceName.c_str());
+                    DrawWrappedText(link.resourceName);
 
                     ImGui::TableSetColumnIndex(1);
                     ImGui::Text("0x%X", link.resId);
@@ -1123,10 +1161,14 @@ namespace DagorAssetsExtractor::UI
                     ImGui::TableSetColumnIndex(2);
                     if (link.matchedGrpPath)
                     {
-                        ImGui::TextUnformatted(link.matchedGrpEntryName ? link.matchedGrpEntryName->c_str() : "Root");
+                        DrawWrappedText(
+                            link.matchedGrpEntryName
+                                ? *link.matchedGrpEntryName
+                                : "Root");
                         if (ImGui::IsItemHovered())
                         {
-                            ImGui::SetTooltip("%s", Platform::PathToUtf8(*link.matchedGrpPath).c_str());
+                            DrawWrappedTooltip(
+                                Platform::PathToUtf8(*link.matchedGrpPath));
                         }
                     }
                     else
@@ -1137,7 +1179,7 @@ namespace DagorAssetsExtractor::UI
                     ImGui::TableSetColumnIndex(3);
                     if (!link.matchedGrpClassName.empty())
                     {
-                        ImGui::TextUnformatted(link.matchedGrpClassName.c_str());
+                        DrawWrappedText(link.matchedGrpClassName);
                     }
                     else if (link.matchedGrpPath)
                     {
@@ -1152,8 +1194,11 @@ namespace DagorAssetsExtractor::UI
                     ImGui::Text("%zu/%zu", resolvedTextureCount, link.textureLinks.size());
                     if (ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("%zu resolved texture pack matches out of %zu descriptor texture references.",
-                            resolvedTextureCount, link.textureLinks.size());
+                        DrawWrappedTooltip(
+                            std::to_string(resolvedTextureCount) +
+                            " resolved texture pack matches out of " +
+                            std::to_string(link.textureLinks.size()) +
+                            " descriptor texture references.");
                     }
 
                     ImGui::TableSetColumnIndex(5);
@@ -1175,16 +1220,18 @@ namespace DagorAssetsExtractor::UI
                     {
                         if (!link.matchedGrpPath)
                         {
-                            ImGui::SetTooltip("This descriptor resource is not matched to any GRP entry yet.");
+                            DrawWrappedTooltip(
+                                "This descriptor resource is not matched to any GRP entry yet.");
                         }
                         else if (!link.matchedGrpEntryName)
                         {
-                            ImGui::SetTooltip("The matched GRP entry name is missing.");
+                            DrawWrappedTooltip(
+                                "The matched GRP entry name is missing.");
                         }
                         else
                         {
                             std::string tooltip = AssetIndex::GetUnsupportedExportTooltip(link.matchedGrpClassId, link.matchedGrpClassName);
-                            ImGui::SetTooltip("%s", tooltip.c_str());
+                            DrawWrappedTooltip(tooltip);
                         }
                     }
                     ImGui::EndDisabled();
@@ -1195,7 +1242,8 @@ namespace DagorAssetsExtractor::UI
             }
 
             const AssetIndex::DescriptorResourceLink& primaryLink = (*links)[app.descriptorUiDescriptorMatches.front()];
-            ImGui::Text("Primary resource preview: %s", primaryLink.resourceName.c_str());
+            DrawWrappedText(
+                "Primary resource preview: " + primaryLink.resourceName);
             ImGui::Text("Textures: %zu (Resolved: %zu)", primaryLink.textureLinks.size(),
                 std::count_if(primaryLink.textureLinks.begin(), primaryLink.textureLinks.end(), [](const auto& t) { return t.matchedDxpPath.has_value(); }));
             ImGui::Text("Materials: %zu", primaryLink.materialNames.size());
@@ -1219,15 +1267,19 @@ namespace DagorAssetsExtractor::UI
                         ImGui::Text("%u", texLink.textureIndex);
 
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::TextUnformatted(texLink.textureName.c_str());
+                        DrawWrappedText(texLink.textureName);
 
                         ImGui::TableSetColumnIndex(2);
                         if (texLink.matchedDxpPath)
                         {
-                            ImGui::TextUnformatted(Platform::PathToUtf8(texLink.matchedDxpPath->filename()).c_str());
+                            DrawWrappedText(
+                                Platform::PathToUtf8(
+                                    texLink.matchedDxpPath->filename()));
                             if (ImGui::IsItemHovered())
                             {
-                                ImGui::SetTooltip("%s", Platform::PathToUtf8(*texLink.matchedDxpPath).c_str());
+                                DrawWrappedTooltip(
+                                    Platform::PathToUtf8(
+                                        *texLink.matchedDxpPath));
                             }
                         }
                         else
@@ -1238,7 +1290,7 @@ namespace DagorAssetsExtractor::UI
                         ImGui::TableSetColumnIndex(3);
                         if (texLink.matchedDxpEntryName)
                         {
-                            ImGui::TextUnformatted(texLink.matchedDxpEntryName->c_str());
+                            DrawWrappedText(*texLink.matchedDxpEntryName);
                         }
                         else
                         {
@@ -1267,16 +1319,22 @@ namespace DagorAssetsExtractor::UI
                         const AssetIndex::DescriptorResourceLink& match = (*links)[linkIndex];
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted(match.resourceName.c_str());
+                        DrawWrappedText(match.resourceName);
 
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::TextUnformatted(match.matchedGrpEntryName ? match.matchedGrpEntryName->c_str() : "Root");
+                        DrawWrappedText(
+                            match.matchedGrpEntryName
+                                ? *match.matchedGrpEntryName
+                                : "Root");
 
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::TextUnformatted(Platform::PathToUtf8(match.descriptorPath.filename()).c_str());
+                        DrawWrappedText(
+                            Platform::PathToUtf8(
+                                match.descriptorPath.filename()));
                         if (ImGui::IsItemHovered())
                         {
-                            ImGui::SetTooltip("%s", Platform::PathToUtf8(match.descriptorPath).c_str());
+                            DrawWrappedTooltip(
+                                Platform::PathToUtf8(match.descriptorPath));
                         }
                     }
                     ImGui::EndTable();
@@ -1302,16 +1360,22 @@ namespace DagorAssetsExtractor::UI
                         const AssetIndex::DescriptorTextureLink& textureLink = match.textureLinks[matchIndex.second];
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted(textureLink.matchedDxpEntryName ? textureLink.matchedDxpEntryName->c_str() : "Root");
+                        DrawWrappedText(
+                            textureLink.matchedDxpEntryName
+                                ? *textureLink.matchedDxpEntryName
+                                : "Root");
 
                         ImGui::TableSetColumnIndex(1);
-                        ImGui::TextUnformatted(match.resourceName.c_str());
+                        DrawWrappedText(match.resourceName);
 
                         ImGui::TableSetColumnIndex(2);
-                        ImGui::TextUnformatted(Platform::PathToUtf8(match.descriptorPath.filename()).c_str());
+                        DrawWrappedText(
+                            Platform::PathToUtf8(
+                                match.descriptorPath.filename()));
                         if (ImGui::IsItemHovered())
                         {
-                            ImGui::SetTooltip("%s", Platform::PathToUtf8(match.descriptorPath).c_str());
+                            DrawWrappedTooltip(
+                                Platform::PathToUtf8(match.descriptorPath));
                         }
                     }
                     ImGui::EndTable();
@@ -1335,7 +1399,8 @@ namespace DagorAssetsExtractor::UI
         }
 
         ImGui::Text("Type: %s", AssetIndex::AssetTypeName(selected->type));
-        ImGui::Text("Name: %s", Platform::PathToUtf8(selected->path.filename()).c_str());
+        DrawWrappedText(
+            "Name: " + Platform::PathToUtf8(selected->path.filename()));
         ImGui::Text("Size: %s", FormatBytes(selected->sizeBytes).c_str());
         ImGui::Separator();
         ImGui::TextUnformatted("Full Path");
@@ -1422,12 +1487,9 @@ namespace DagorAssetsExtractor::UI
                 const bool isDxp = (selected->type == AssetType::Dxp);
                 const bool isGrp = (selected->type == AssetType::Grp);
                 const bool isDesc = (selected->type == AssetType::Descriptor);
-                const bool hasActions = (isDxp || isGrp);
 
                 int columnCount = 3;
-                if (isDxp) columnCount = 5;      // Name, Offset, Size, Format, Actions
-                else if (isGrp) columnCount = 5; // Name, Offset, Size, Class, Actions
-                else if (isDesc) columnCount = 4; // Resource Name, ID, Class, Deps
+                if (isDxp || isGrp || isDesc) columnCount = 4;
 
                 ImGuiTableFlags subFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
@@ -1438,27 +1500,23 @@ namespace DagorAssetsExtractor::UI
                 {
                     if (isDesc)
                     {
-                        ImGui::TableSetupColumn("Resource Name", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Resource Name", ImGuiTableColumnFlags_WidthStretch, 0.60f);
                         ImGui::TableSetupColumn("Resource ID", ImGuiTableColumnFlags_WidthFixed, 88.0f);
-                        ImGui::TableSetupColumn("Class Type", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                        ImGui::TableSetupColumn("Class Type", ImGuiTableColumnFlags_WidthStretch, 0.40f);
                         ImGui::TableSetupColumn("Deps", ImGuiTableColumnFlags_WidthFixed, 100.0f);
                     }
                     else
                     {
-                        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.60f);
                         ImGui::TableSetupColumn("Offset", ImGuiTableColumnFlags_WidthFixed, 80.0f);
                         ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 80.0f);
                         if (isDxp)
                         {
-                            ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+                            ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthStretch, 0.40f);
                         }
                         else if (isGrp)
                         {
-                            ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-                        }
-                        if (hasActions)
-                        {
-                            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                            ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthStretch, 0.40f);
                         }
                     }
                     ImGui::TableHeadersRow();
@@ -1472,73 +1530,135 @@ namespace DagorAssetsExtractor::UI
                             ImGui::PushID(row);
                             const size_t entryIndex = app.filteredSubAssetIndices[static_cast<size_t>(row)];
                             const AssetIndex::SubAssetRecord& entry = cachedContents->entries[entryIndex];
-                            ImGui::TableNextRow();
+                            float cellPaddingY = ImGui::GetStyle().CellPadding.y;
+                            float rowHeight = ImGui::GetTextLineHeight() + cellPaddingY * 2.0f;
+                            rowHeight = std::max(rowHeight, kRowIconSize + cellPaddingY * 2.0f);
 
                             if (isDesc)
                             {
-                                ImGui::TableSetColumnIndex(0);
-                                DrawInlineIconLabel(GetSubAssetIconId(entry, selected->type), entry.name.c_str());
-
-                                ImGui::TableSetColumnIndex(1);
-                                ImGui::Text("0x%X", entry.resId);
-
-                                ImGui::TableSetColumnIndex(2);
-                                if (!entry.formatInfo.empty())
+                                float col2Width = 0.0f;
+                                if (ImGuiTable* table = ImGui::GetCurrentTable())
                                 {
-                                    ImGui::TextUnformatted(entry.formatInfo.c_str());
-                                }
-                                else
-                                {
-                                    ImGui::TextDisabled("N/A");
-                                }
-
-                                ImGui::TableSetColumnIndex(3);
-                                const size_t depCount = entry.dependencyIds.size();
-                                const size_t texCount = entry.textureNames.size();
-                                const size_t matCount = entry.materialNames.size();
-                                ImGui::Text("%zu links", depCount + texCount + matCount);
-                                
-                                if (ImGui::IsItemHovered())
-                                {
-                                    ImGui::BeginTooltip();
-                                    ImGui::Text("Dependency Count: %zu", depCount);
-                                    ImGui::Text("Textures: %zu", texCount);
-                                    ImGui::Text("Materials: %zu", matCount);
-                                    
-                                    if (!entry.textureNames.empty())
+                                    if (2 < table->ColumnsCount)
                                     {
-                                        ImGui::Separator();
-                                        ImGui::TextUnformatted("Textures:");
-                                        for (size_t t = 0; t < std::min(entry.textureNames.size(), size_t(8)); ++t)
-                                        {
-                                            ImGui::BulletText("%s", entry.textureNames[t].c_str());
-                                        }
-                                        if (entry.textureNames.size() > 8) ImGui::BulletText("...and %zu more", entry.textureNames.size() - 8);
+                                        col2Width = table->Columns[2].WorkMaxX - table->Columns[2].WorkMinX;
                                     }
-                                    
-                                    if (!entry.materialNames.empty())
-                                    {
-                                        ImGui::Separator();
-                                        ImGui::TextUnformatted("Materials:");
-                                        for (size_t m = 0; m < std::min(entry.materialNames.size(), size_t(8)); ++m)
-                                        {
-                                            ImGui::BulletText("%s", entry.materialNames[m].c_str());
-                                        }
-                                        if (entry.materialNames.size() > 8) ImGui::BulletText("...and %zu more", entry.materialNames.size() - 8);
-                                    }
-                                    ImGui::EndTooltip();
+                                }
+                                if (col2Width > 0.0f && !entry.formatInfo.empty())
+                                {
+                                    ImVec2 wrapSize = ImGui::CalcTextSize(entry.formatInfo.c_str(), nullptr, false, col2Width);
+                                    rowHeight = std::max(rowHeight, wrapSize.y + cellPaddingY * 2.0f);
                                 }
                             }
                             else
                             {
-                                ImGui::TableSetColumnIndex(0);
-                                if (isDxp)
+                                float col3Width = 0.0f;
+                                if (ImGuiTable* table = ImGui::GetCurrentTable())
                                 {
-                                    const bool isSelectedTexture =
-                                        texturePreview.packPath == selected->path &&
-                                        texturePreview.entryName == entry.name &&
-                                        texturePreview.entryOffset == entry.offset;
-                                    if (ImGui::Selectable(entry.name.c_str(), isSelectedTexture))
+                                    if (3 < table->ColumnsCount)
+                                    {
+                                        col3Width = table->Columns[3].WorkMaxX - table->Columns[3].WorkMinX;
+                                    }
+                                }
+                                if (col3Width > 0.0f && !entry.formatInfo.empty())
+                                {
+                                    ImVec2 wrapSize = ImGui::CalcTextSize(entry.formatInfo.c_str(), nullptr, false, col3Width);
+                                    rowHeight = std::max(rowHeight, wrapSize.y + cellPaddingY * 2.0f);
+                                }
+                            }
+
+                            ImGui::TableNextRow(ImGuiTableRowFlags_None, rowHeight);
+
+                            ImGui::TableSetColumnIndex(0);
+                            ImVec2 cursorReset = ImGui::GetCursorPos();
+                            bool isSelected = false;
+                            if (!isDesc)
+                            {
+                                const bool isSelectableDxp = isDxp;
+                                const bool isSelectableGrp = isGrp && (AssetIndex::CanExportGrpEntryAsStaticModel(entry) || AssetIndex::CanExportGrpEntryAsSkinnedModel(entry));
+                                if (isSelectableDxp)
+                                {
+                                    isSelected = texturePreview.packPath == selected->path &&
+                                                 texturePreview.entryName == entry.name &&
+                                                 texturePreview.entryOffset == entry.offset;
+                                }
+                                else if (isSelectableGrp)
+                                {
+                                    isSelected = app.modelPreview.packPath == selected->path &&
+                                                 app.modelPreview.entryName == entry.name;
+                                }
+                            }
+                            
+                            // Style Selectable to be fully transparent, we draw custom highlights with TableSetBgColor
+                            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                            ImGui::Selectable("##subrow", isSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0, rowHeight - cellPaddingY * 2.0f));
+                            const bool isHovered = ImGui::IsItemHovered();
+                            ImGui::PopStyleColor(3);
+
+                            if (isSelected)
+                            {
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_Header));
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImGuiCol_Header));
+                            }
+                            else if (isHovered)
+                            {
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+                            }
+
+                            const bool supportsPreview = isDxp || (isGrp && (AssetIndex::CanExportGrpEntryAsStaticModel(entry) || AssetIndex::CanExportGrpEntryAsSkinnedModel(entry)));
+                            const bool exportSupported = AssetIndex::IsExportSupported(entry, selected->type);
+
+                            // Right-click context menu (only if asset supports preview or export)
+                            if ((isDxp || isGrp) && (supportsPreview || exportSupported) && ImGui::BeginPopupContextItem("subrow_context"))
+                            {
+                                ImGui::TextDisabled("Asset: %s", entry.name.c_str());
+                                ImGui::Separator();
+                                auto DrawContextMenuItem = [](UiIconId iconId, const char* label, bool enabled) -> bool {
+                                    const UiIcon* icon = GetUiIcon(iconId);
+                                    ImVec2 startPos = ImGui::GetCursorPos();
+                                    float rowHeight = ImGui::GetTextLineHeight() + ImGui::GetStyle().FramePadding.y * 2.0f;
+                                    
+                                    // Empty selectable spanning full width of the popup
+                                    bool pressed = ImGui::Selectable(
+                                        (std::string("##selectable_") + label).c_str(), 
+                                        false, 
+                                        (enabled ? 0 : ImGuiSelectableFlags_Disabled) | ImGuiSelectableFlags_AllowOverlap, 
+                                        ImVec2(0, rowHeight));
+                                    
+                                    ImVec2 endPos = ImGui::GetCursorPos();
+                                    
+                                    // Draw content on top of selectable background
+                                    if (icon && icon->view != nullptr)
+                                    {
+                                        if (!enabled) ImGui::BeginDisabled();
+                                        ImGui::SetCursorPos(ImVec2(startPos.x + ImGui::GetStyle().FramePadding.x, startPos.y + (rowHeight - 16.0f) * 0.5f));
+                                        ImGui::Image(reinterpret_cast<ImTextureID>(icon->view), ImVec2(16.0f, 16.0f));
+                                        if (!enabled) ImGui::EndDisabled();
+                                        
+                                        if (!enabled) ImGui::BeginDisabled();
+                                        ImGui::SetCursorPos(ImVec2(startPos.x + ImGui::GetStyle().FramePadding.x + 16.0f + 6.0f, startPos.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f));
+                                        ImGui::TextUnformatted(label);
+                                        if (!enabled) ImGui::EndDisabled();
+                                    }
+                                    else
+                                    {
+                                        if (!enabled) ImGui::BeginDisabled();
+                                        ImGui::SetCursorPos(ImVec2(startPos.x + ImGui::GetStyle().FramePadding.x, startPos.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f));
+                                        ImGui::TextUnformatted(label);
+                                        if (!enabled) ImGui::EndDisabled();
+                                    }
+                                    
+                                    ImGui::SetCursorPos(endPos);
+                                    ImGui::Dummy(ImVec2(0.0f, 0.0f));
+                                    return pressed;
+                                };
+
+                                if (DrawContextMenuItem(UiIconId::Preview, "Preview", supportsPreview))
+                                {
+                                    if (isDxp)
                                     {
                                         ClearTexturePreview();
                                         app.texturePreview.fitToWindow = true;
@@ -1547,93 +1667,250 @@ namespace DagorAssetsExtractor::UI
                                         App::RequestTexturePreview(app, selected->path, entry);
                                         texturePreview = App::SnapshotTexturePreview(app);
                                     }
-                                    if (ImGui::IsItemHovered())
-                                    {
-                                        ImGui::SetTooltip("Select to preview %s", entry.name.c_str());
-                                    }
-                                }
-                                else if (isGrp && (AssetIndex::CanExportGrpEntryAsStaticModel(entry) || AssetIndex::CanExportGrpEntryAsSkinnedModel(entry)))
-                                {
-                                    const bool isSelectedModel =
-                                        app.modelPreview.packPath == selected->path &&
-                                        app.modelPreview.entryName == entry.name;
-                                    if (DrawInlineIconSelectable(GetSubAssetIconId(entry, selected->type), entry.name.c_str(), isSelectedModel))
+                                    else if (isGrp)
                                     {
                                         App::RequestModelPreview(app, selected->path, entry);
                                     }
-                                    if (ImGui::IsItemHovered())
+                                }
+
+                                std::string exportLabel = "Export";
+                                if (isDxp)
+                                {
+                                    exportLabel = "Export (as " + app.settings.textureExportFormat + ")";
+                                }
+                                else if (isGrp)
+                                {
+                                    exportLabel = "Export (as GLB)";
+                                }
+
+                                if (DrawContextMenuItem(UiIconId::Export, exportLabel.c_str(), exportSupported))
+                                {
+                                    const bool canExportSkinned = AssetIndex::CanExportGrpEntryAsSkinnedModel(entry);
+                                    if (isDxp)
                                     {
-                                        ImGui::SetTooltip("Select to preview 3D model %s", entry.name.c_str());
+                                        App::RequestTextureExport(app, selected->path, entry);
+                                    }
+                                    else if (isGrp)
+                                    {
+                                        if (canExportSkinned)
+                                        {
+                                            App::OpenDynModelExportModal(app, selected->path, entry);
+                                        }
+                                        else
+                                        {
+                                            App::RequestModelExport(app, selected->path, entry);
+                                        }
                                     }
                                 }
-                                else
+
+                                ImGui::EndPopup();
+                            }
+
+                            // Double click trigger to preview
+                            if (isHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                            {
+                                if (supportsPreview)
                                 {
+                                    if (isDxp)
+                                    {
+                                        ClearTexturePreview();
+                                        app.texturePreview.fitToWindow = true;
+                                        app.texturePreview.zoom = 1.0f;
+                                        app.texturePreview.windowOpen = true;
+                                        App::RequestTexturePreview(app, selected->path, entry);
+                                        texturePreview = App::SnapshotTexturePreview(app);
+                                    }
+                                    else if (isGrp)
+                                    {
+                                        App::RequestModelPreview(app, selected->path, entry);
+                                    }
+                                }
+                            }
+
+                            // Hover tooltip helper to show user they can right-click
+                            if (isHovered && !ImGui::IsPopupOpen("subrow_context"))
+                            {
+                                if (supportsPreview || exportSupported)
+                                {
+                                    ImGui::BeginTooltip();
+                                    ImGui::TextDisabled("Right-click to Preview/Export");
+                                    ImGui::EndTooltip();
+                                }
+                            }
+                            
+                            ImGui::SetCursorPos(cursorReset);
+
+                            if (isDesc)
+                            {
+                                // COLUMN 0: Resource Name
+                                {
+                                    float centering_offset_y = (rowHeight - cellPaddingY * 2.0f - std::max(16.0f, ImGui::GetTextLineHeight())) * 0.5f;
+                                    if (centering_offset_y > 0.0f)
+                                    {
+                                        ImGui::SetCursorPosY(cursorReset.y + centering_offset_y);
+                                    }
                                     DrawInlineIconLabel(GetSubAssetIconId(entry, selected->type), entry.name.c_str());
                                 }
 
+                                // COLUMN 1: Resource ID
                                 ImGui::TableSetColumnIndex(1);
-                                ImGui::Text("0x%X", entry.offset);
-
-                                ImGui::TableSetColumnIndex(2);
-                                ImGui::TextUnformatted(FormatBytes(entry.size).c_str());
-
-                                if (isDxp || isGrp)
                                 {
-                                    ImGui::TableSetColumnIndex(3);
+                                    float cellTopY = ImGui::GetCursorPosY();
+                                    float centering_offset_y = (rowHeight - cellPaddingY * 2.0f - ImGui::GetTextLineHeight()) * 0.5f;
+                                    if (centering_offset_y > 0.0f)
+                                    {
+                                        ImGui::SetCursorPosY(cellTopY + centering_offset_y);
+                                    }
+                                    ImGui::Text("0x%X", entry.resId);
+                                }
+
+                                // COLUMN 2: Class Type (Format info)
+                                ImGui::TableSetColumnIndex(2);
+                                {
+                                    float cellTopY = ImGui::GetCursorPosY();
+                                    float textHeight = ImGui::GetTextLineHeight();
+                                    float col2Width = 0.0f;
+                                    if (ImGuiTable* table = ImGui::GetCurrentTable())
+                                    {
+                                        if (2 < table->ColumnsCount)
+                                        {
+                                            col2Width = table->Columns[2].WorkMaxX - table->Columns[2].WorkMinX;
+                                        }
+                                    }
+                                    if (col2Width > 0.0f && !entry.formatInfo.empty())
+                                    {
+                                        ImVec2 wrapSize = ImGui::CalcTextSize(entry.formatInfo.c_str(), nullptr, false, col2Width);
+                                        textHeight = wrapSize.y;
+                                    }
+                                    float centering_offset_y = (rowHeight - cellPaddingY * 2.0f - textHeight) * 0.5f;
+                                    if (centering_offset_y > 0.0f)
+                                    {
+                                        ImGui::SetCursorPosY(cellTopY + centering_offset_y);
+                                    }
                                     if (!entry.formatInfo.empty())
                                     {
-                                        ImGui::TextUnformatted(entry.formatInfo.c_str());
+                                        DrawWrappedText(entry.formatInfo);
                                     }
                                     else
                                     {
                                         ImGui::TextDisabled("N/A");
                                     }
                                 }
-                                
-                                if (hasActions)
+
+                                // COLUMN 3: Deps
+                                ImGui::TableSetColumnIndex(3);
                                 {
-                                    ImGui::TableSetColumnIndex((isDxp || isGrp) ? 4 : 3);
-                                    
-                                    const bool exportSupported = AssetIndex::IsExportSupported(entry, selected->type);
-                                    if (exportSupported)
+                                    float cellTopY = ImGui::GetCursorPosY();
+                                    float centering_offset_y = (rowHeight - cellPaddingY * 2.0f - ImGui::GetTextLineHeight()) * 0.5f;
+                                    if (centering_offset_y > 0.0f)
                                     {
-                                        std::string btnLabel = "Export##" + entry.name;
-                                        const bool canExportSkinned = AssetIndex::CanExportGrpEntryAsSkinnedModel(entry);
+                                        ImGui::SetCursorPosY(cellTopY + centering_offset_y);
+                                    }
+                                    const size_t depCount = entry.dependencyIds.size();
+                                    const size_t texCount = entry.textureNames.size();
+                                    const size_t matCount = entry.materialNames.size();
+                                    ImGui::Text("%zu links", depCount + texCount + matCount);
+                                    
+                                    if (ImGui::IsItemHovered())
+                                    {
+                                        ImGui::BeginTooltip();
+                                        ImGui::Text("Dependency Count: %zu", depCount);
+                                        ImGui::Text("Textures: %zu", texCount);
+                                        ImGui::Text("Materials: %zu", matCount);
                                         
-                                        if (ImGui::Button(btnLabel.c_str()))
+                                        if (!entry.textureNames.empty())
                                         {
-                                            if (isDxp)
+                                            ImGui::Separator();
+                                            ImGui::TextUnformatted("Textures:");
+                                            for (size_t t = 0; t < std::min(entry.textureNames.size(), size_t(8)); ++t)
                                             {
-                                                App::RequestTextureExport(app, selected->path, entry);
+                                                DrawWrappedBulletText(entry.textureNames[t]);
                                             }
-                                            else if (isGrp)
+                                            if (entry.textureNames.size() > 8) ImGui::BulletText("...and %zu more", entry.textureNames.size() - 8);
+                                        }
+                                        
+                                        if (!entry.materialNames.empty())
+                                        {
+                                            ImGui::Separator();
+                                            ImGui::TextUnformatted("Materials:");
+                                            for (size_t m = 0; m < std::min(entry.materialNames.size(), size_t(8)); ++m)
                                             {
-                                                if (canExportSkinned)
-                                                {
-                                                    App::OpenDynModelExportModal(app, selected->path, entry);
-                                                }
-                                                else
-                                                {
-                                                    App::RequestModelExport(app, selected->path, entry);
-                                                }
+                                                DrawWrappedBulletText(entry.materialNames[m]);
+                                            }
+                                            if (entry.materialNames.size() > 8) ImGui::BulletText("...and %zu more", entry.materialNames.size() - 8);
+                                        }
+                                        ImGui::EndTooltip();
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // COLUMN 0: Name
+                                {
+                                    float centering_offset_y = (rowHeight - cellPaddingY * 2.0f - std::max(16.0f, ImGui::GetTextLineHeight())) * 0.5f;
+                                    if (centering_offset_y > 0.0f)
+                                    {
+                                        ImGui::SetCursorPosY(cursorReset.y + centering_offset_y);
+                                    }
+                                    DrawInlineIconLabel(GetSubAssetIconId(entry, selected->type), entry.name.c_str());
+                                }
+
+                                // COLUMN 1: Offset
+                                ImGui::TableSetColumnIndex(1);
+                                {
+                                    float cellTopY = ImGui::GetCursorPosY();
+                                    float centering_offset_y = (rowHeight - cellPaddingY * 2.0f - ImGui::GetTextLineHeight()) * 0.5f;
+                                    if (centering_offset_y > 0.0f)
+                                    {
+                                        ImGui::SetCursorPosY(cellTopY + centering_offset_y);
+                                    }
+                                    ImGui::Text("0x%X", entry.offset);
+                                }
+
+                                // COLUMN 2: Size
+                                ImGui::TableSetColumnIndex(2);
+                                {
+                                    float cellTopY = ImGui::GetCursorPosY();
+                                    float centering_offset_y = (rowHeight - cellPaddingY * 2.0f - ImGui::GetTextLineHeight()) * 0.5f;
+                                    if (centering_offset_y > 0.0f)
+                                    {
+                                        ImGui::SetCursorPosY(cellTopY + centering_offset_y);
+                                    }
+                                    ImGui::TextUnformatted(FormatBytes(entry.size).c_str());
+                                }
+
+                                // COLUMN 3: Format / Class
+                                if (isDxp || isGrp)
+                                {
+                                    ImGui::TableSetColumnIndex(3);
+                                    {
+                                        float cellTopY = ImGui::GetCursorPosY();
+                                        float textHeight = ImGui::GetTextLineHeight();
+                                        float col3Width = 0.0f;
+                                        if (ImGuiTable* table = ImGui::GetCurrentTable())
+                                        {
+                                            if (3 < table->ColumnsCount)
+                                            {
+                                                col3Width = table->Columns[3].WorkMaxX - table->Columns[3].WorkMinX;
                                             }
                                         }
-                                    }
-                                    else
-                                    {
-                                        ImGui::AlignTextToFramePadding();
-                                        ImGui::TextUnformatted("Source");
-                                        if (ImGui::IsItemHovered())
+                                        if (col3Width > 0.0f && !entry.formatInfo.empty())
                                         {
-                                            if (isGrp)
-                                            {
-                                                std::string tooltip = AssetIndex::GetUnsupportedExportTooltip(entry);
-                                                ImGui::SetTooltip("%s", tooltip.c_str());
-                                            }
-                                            else if (isDxp)
-                                            {
-                                                ImGui::SetTooltip("Direct export from the list is not supported for textures. Use 'Batch Export All' above.");
-                                            }
+                                            ImVec2 wrapSize = ImGui::CalcTextSize(entry.formatInfo.c_str(), nullptr, false, col3Width);
+                                            textHeight = wrapSize.y;
+                                        }
+                                        float centering_offset_y = (rowHeight - cellPaddingY * 2.0f - textHeight) * 0.5f;
+                                        if (centering_offset_y > 0.0f)
+                                        {
+                                            ImGui::SetCursorPosY(cellTopY + centering_offset_y);
+                                        }
+                                        if (!entry.formatInfo.empty())
+                                        {
+                                            DrawWrappedText(entry.formatInfo);
+                                        }
+                                        else
+                                        {
+                                            ImGui::TextDisabled("N/A");
                                         }
                                     }
                                 }
@@ -1663,23 +1940,30 @@ namespace DagorAssetsExtractor::UI
         }
 
         ImGui::TextUnformatted("Current Support");
-        ImGui::BulletText("Discovery and metadata indexing.");
+        DrawWrappedBulletText("Discovery and metadata indexing.");
         if (isContainer)
         {
-            ImGui::BulletText("Sub-asset listing (lazy loaded on demand).");
+            DrawWrappedBulletText("Sub-asset listing (lazy loaded on demand).");
         }
         if (selected->type == AssetType::Blk)
         {
-            ImGui::BulletText("Text BLK preview for resource relationship metadata.");
+            DrawWrappedBulletText("Text BLK preview for resource relationship metadata.");
         }
         if (selected->type == AssetType::Dxp)
         {
-            ImGui::BulletText("DDS texture extraction with reversed-mip reordering, zlib/zstd/Oodle/LZMA decompression, and readable PNG/TGA export including DirectXTex fallback for BC6H/BC7-class textures.");
+            DrawWrappedBulletText(
+                "DDS texture extraction with reversed-mip reordering, "
+                "zlib/zstd/Oodle/LZMA decompression, and readable PNG/TGA export "
+                "including DirectXTex fallback for BC6H/BC7-class textures.");
         }
         if (selected->type == AssetType::Grp)
         {
-            ImGui::BulletText("Binary static and dynamic model extraction to glTF 2.0 GLB / Wavefront OBJ.");
-            ImGui::BulletText("GeomNodeTree skeleton metadata parsing for GRP inspection and skinned mesh exports.");
+            DrawWrappedBulletText(
+                "Binary static and dynamic model extraction to glTF 2.0 GLB / "
+                "Wavefront OBJ.");
+            DrawWrappedBulletText(
+                "GeomNodeTree skeleton metadata parsing for GRP inspection and "
+                "skinned mesh exports.");
         }
     }
 
@@ -1743,16 +2027,14 @@ namespace DagorAssetsExtractor::UI
     {
         DrawPanelTitle(UiIconId::Log, "Jobs and Logs");
         ImGui::Separator();
-        ImGui::Text("Scan: %s", App::GetScanStatus(app.scan).c_str());
-        ImGui::SameLine();
-        ImGui::Text("Visited: %llu", static_cast<unsigned long long>(app.scan.filesVisited.load()));
-        ImGui::SameLine();
-        ImGui::Text("Found: %llu", static_cast<unsigned long long>(app.scan.recordsFound.load()));
-        ImGui::Text("Cache: %s", App::GetCacheStatus(app.scan).c_str());
-        ImGui::SameLine();
-        ImGui::Text("BLK Links: %s", App::GetBlkResourceLinkStatus(app).c_str());
-        ImGui::SameLine();
-        ImGui::Text("Desc Links: %s", App::GetDescriptorResourceLinkStatus(app).c_str());
+        DrawWrappedText(
+            "Scan: " + App::GetScanStatus(app.scan) +
+            " | Visited: " + std::to_string(app.scan.filesVisited.load()) +
+            " | Found: " + std::to_string(app.scan.recordsFound.load()));
+        DrawWrappedText(
+            "Cache: " + App::GetCacheStatus(app.scan) +
+            " | BLK Links: " + App::GetBlkResourceLinkStatus(app) +
+            " | Desc Links: " + App::GetDescriptorResourceLinkStatus(app));
 
         ImGui::Separator();
 
@@ -1782,7 +2064,7 @@ namespace DagorAssetsExtractor::UI
         ImGui::TextWrapped("%s", snapshot.status.empty() ? "Working..." : snapshot.status.c_str());
         if (!snapshot.currentItem.empty())
         {
-            ImGui::TextDisabled("%s", snapshot.currentItem.c_str());
+            DrawWrappedDisabledText(snapshot.currentItem);
         }
 
         const float fraction = snapshot.total > 0
@@ -1840,7 +2122,7 @@ namespace DagorAssetsExtractor::UI
         if (ImGui::BeginPopupModal("Rebuild Resources Progress", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse))
         {
             std::string status = App::GetScanStatus(app.scan);
-            ImGui::TextUnformatted(status.c_str());
+            DrawWrappedText(status);
 
             ImGui::Spacing();
             ImGui::Text("Files visited: %llu", app.scan.filesVisited.load());
@@ -1938,7 +2220,9 @@ namespace DagorAssetsExtractor::UI
         ImGui::SetNextWindowSize(ImVec2(520.0f, 350.0f), ImGuiCond_Appearing);
         if (ImGui::BeginPopupModal("Export Progress", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse))
         {
-            ImGui::TextColored(ImVec4(0.72f, 0.84f, 1.0f, 1.0f), "%s", title.empty() ? "Exporting Assets" : title.c_str());
+            DrawWrappedColoredText(
+                ImVec4(0.72f, 0.84f, 1.0f, 1.0f),
+                title.empty() ? "Exporting Assets" : title);
             ImGui::Spacing();
 
             if (isRunning)
@@ -1946,7 +2230,7 @@ namespace DagorAssetsExtractor::UI
                 ImGui::TextWrapped("%s", status.empty() ? "Exporting..." : status.c_str());
                 if (!currentItem.empty())
                 {
-                    ImGui::TextDisabled("Current: %s", currentItem.c_str());
+                    DrawWrappedDisabledText("Current: " + currentItem);
                 }
                 else
                 {
@@ -2048,113 +2332,300 @@ namespace DagorAssetsExtractor::UI
             return;
         }
 
-        if (!ImGui::Begin("Settings", &app.settingsWindowOpen))
+        std::string title = "Settings###SettingsWindow";
+        if (!ImGui::IsPopupOpen(title.c_str()))
         {
-            ImGui::End();
-            return;
+            ImGui::OpenPopup(title.c_str());
         }
 
-        ImGui::TextUnformatted("Game");
-        ImGui::InputText("Game Root", app.gameRootBuffer.data(), app.gameRootBuffer.size());
-        ImGui::SameLine();
-        if (ImGui::Button("Browse##GameRoot"))
+        ImGui::SetNextWindowSize(ImVec2(800.0f, 500.0f), ImGuiCond_FirstUseEver);
+        bool open = app.settingsWindowOpen;
+        if (ImGui::BeginPopupModal(title.c_str(), &open, ImGuiWindowFlags_NoCollapse))
         {
-            if (const auto selected = Platform::BrowseForFolder(static_cast<HWND>(app.hwnd), L"Choose War Thunder Folder", app.settings.gameRoot))
+            const ImGuiTableFlags layoutFlags =
+                ImGuiTableFlags_Resizable |
+                ImGuiTableFlags_BordersInnerV |
+                ImGuiTableFlags_SizingStretchProp;
+            if (ImGui::BeginTable("SettingsLayout", 2, layoutFlags))
             {
-                App::SetGameRoot(app, *selected);
+                ImGui::TableSetupColumn("Categories", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+                ImGui::TableSetupColumn("Content", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::BeginChild("SettingsCategories", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - 10.0f), false);
+                
+                static int selectedCategory = 0;
+                if (DrawInlineIconSelectable(UiIconId::GameInstall, "Game Installation", selectedCategory == 0))
+                {
+                    selectedCategory = 0;
+                }
+                ImGui::Spacing();
+                if (DrawInlineIconSelectable(UiIconId::Texture, "Asset Export", selectedCategory == 1))
+                {
+                    selectedCategory = 1;
+                }
+                ImGui::Spacing();
+                if (DrawInlineIconSelectable(UiIconId::Rebuild, "Performance", selectedCategory == 2))
+                {
+                    selectedCategory = 2;
+                }
+                ImGui::Spacing();
+                if (DrawInlineIconSelectable(UiIconId::Log, "Storage & Paths", selectedCategory == 3))
+                {
+                    selectedCategory = 3;
+                }
+                
+                ImGui::EndChild();
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::BeginChild("SettingsContent", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - 10.0f), false);
+                
+                if (selectedCategory == 0)
+                {
+                    DrawPanelTitle(UiIconId::GameInstall, "Game Installation");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    ImGui::TextUnformatted("War Thunder Folder:");
+                    ImGui::SetNextItemWidth(-120.0f);
+                    ImGui::InputText("##GameRoot", app.gameRootBuffer.data(), app.gameRootBuffer.size());
+                    ImGui::SameLine();
+                    if (ImGui::Button("Browse##GameRoot", ImVec2(100.0f, 0.0f)))
+                    {
+                        if (const auto selected = Platform::BrowseForFolder(static_cast<HWND>(app.hwnd), L"Choose War Thunder Folder", app.settings.gameRoot))
+                        {
+                            App::SetGameRoot(app, *selected);
+                        }
+                    }
+                    
+                    ImGui::Spacing();
+                    if (ImGui::Button("Validate Game Folder", ImVec2(180.0f, 0.0f)))
+                    {
+                        App::ApplyGameRootBuffer(app);
+                    }
+                    
+                    ImGui::Spacing();
+                    DrawValidationSummary(app.validation);
+                    
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    if (ImGui::Checkbox("Enable index cache", &app.settings.indexCacheEnabled))
+                    {
+                        if (app.settings.indexCacheEnabled)
+                        {
+                            App::LoadIndexCacheIntoApp(app);
+                        }
+                        else
+                        {
+                            App::SetCacheStatus(app.scan, "Disabled", false);
+                        }
+                    }
+                    if (ImGui::IsItemHovered())
+                    {
+                        DrawWrappedTooltip(
+                            "Saves a scanned directory file list cache in the storage directory "
+                            "to speed up future application launches.");
+                    }
+                }
+                else if (selectedCategory == 1)
+                {
+                    DrawPanelTitle(UiIconId::Texture, "Asset Export");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    ImGui::TextUnformatted("Export Output Folder:");
+                    ImGui::SetNextItemWidth(-120.0f);
+                    ImGui::InputText("##ExportRoot", app.exportRootBuffer.data(), app.exportRootBuffer.size());
+                    ImGui::SameLine();
+                    if (ImGui::Button("Browse##ExportRoot", ImVec2(100.0f, 0.0f)))
+                    {
+                        if (const auto selected = Platform::BrowseForFolder(static_cast<HWND>(app.hwnd), L"Choose Export Folder", app.settings.exportRoot))
+                        {
+                            app.settings.exportRoot = *selected;
+                            App::SyncSettingsBuffers(app);
+                        }
+                    }
+                    
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    // Force texture format to PNG, since GLB is the only supported format and requires PNG textures.
+                    app.settings.textureExportFormat = "PNG";
+                    static const char* textureFormats[] = { "DDS", "PNG", "TGA" };
+                    int textureFormatIndex = 1; // "PNG"
+
+                    ImGui::BeginDisabled(true);
+                    ImGui::SetNextItemWidth(150.0f);
+                    if (ImGui::Combo("Texture Format", &textureFormatIndex, textureFormats, IM_ARRAYSIZE(textureFormats)))
+                    {
+                        app.settings.textureExportFormat = textureFormats[textureFormatIndex];
+                    }
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered())
+                    {
+                        DrawWrappedTooltip("GLB export format requires textures to be in PNG/JPEG format.");
+                    }
+                    
+                    int maxLods = app.settings.staticModelMaxLods;
+                    ImGui::SetNextItemWidth(150.0f);
+                    if (ImGui::InputInt("Max RendInst LODs", &maxLods))
+                    {
+                        maxLods = std::clamp(maxLods, 1, 16);
+                        app.settings.staticModelMaxLods = maxLods;
+                    }
+                    if (ImGui::IsItemHovered())
+                    {
+                        DrawWrappedTooltip(
+                            "Sets the maximum number of Levels of Detail (LODs) to export "
+                            "for static models (RendInst).");
+                    }
+                    
+                    ImGui::Spacing();
+                    ImGui::Checkbox("Export textures with models", &app.settings.exportTexturesWithModels);
+                    
+                    ImGui::Checkbox("Embed textures inside GLB", &app.settings.embedTexturesInGlb);
+                    if (ImGui::IsItemHovered())
+                    {
+                        DrawWrappedTooltip(
+                            "Stores PNG/JPEG material textures as GLB bufferViews instead "
+                            "of external image URIs.");
+                    }
+                    
+                    ImGui::Checkbox(
+                        "Convert War Thunder packed _n to Normal + ORM",
+                        &app.settings.convertWarThunderPackedMaps);
+                    if (ImGui::IsItemHovered())
+                    {
+                        DrawWrappedTooltip(
+                            "Enabled: reconstructs a standard tangent-space normal texture and "
+                            "generates glTF ORM from War Thunder's packed _n channels. Disabled: "
+                            "preserves the native packed image in an optional custom GLB extension; "
+                            "standard viewers will not shade from those packed channels automatically.");
+                    }
+                    
+                    ImGui::Checkbox("Export JSON manifest metadata alongside assets", &app.settings.exportJsonManifest);
+                    ImGui::Checkbox("Fallback to DDS when PNG/TGA conversion is unavailable", &app.settings.preserveOriginalDDS);
+                }
+                else if (selectedCategory == 2)
+                {
+                    DrawPanelTitle(UiIconId::Rebuild, "Performance");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    int maxLoadedPackContents = static_cast<int>(app.settings.maxLoadedPackContents);
+                    ImGui::SetNextItemWidth(150.0f);
+                    if (ImGui::InputInt("Max Loaded Containers", &maxLoadedPackContents))
+                    {
+                        maxLoadedPackContents = std::clamp(maxLoadedPackContents, 1, 256);
+                        app.settings.maxLoadedPackContents = static_cast<size_t>(maxLoadedPackContents);
+                    }
+                    if (ImGui::IsItemHovered())
+                    {
+                        DrawWrappedTooltip(
+                            "When loaded pack contents exceed this number, the cache unloads "
+                            "old parsed containers and keeps the current inspector target.");
+                    }
+                    
+                    ImGui::Spacing();
+                    if (ImGui::Checkbox("Enable index cache##Performance", &app.settings.indexCacheEnabled))
+                    {
+                        if (app.settings.indexCacheEnabled)
+                        {
+                            App::LoadIndexCacheIntoApp(app);
+                        }
+                        else
+                        {
+                            App::SetCacheStatus(app.scan, "Disabled", false);
+                        }
+                    }
+                    
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    DrawWrappedDisabledText(
+                        "Oodle-compressed DDSx textures use the bundled oo2core_6_win64.dll "
+                        "shipped with the app build.");
+                    ImGui::Spacing();
+                    DrawWrappedDisabledText(
+                        "PNG/TGA exports the top mip directly for BC1-BC5 plus common "
+                        "uncompressed/float DDSx textures, then retries unsupported DXGI "
+                        "formats through DirectXTex.");
+                }
+                else if (selectedCategory == 3)
+                {
+                    DrawPanelTitle(UiIconId::Log, "Storage & Paths");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    if (ImGui::BeginTable("StoragePathsTable", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp))
+                    {
+                        ImGui::TableSetupColumn("File Type", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+                        ImGui::TableSetupColumn("Path", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+                        
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted("Settings file");
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextWrapped("%s", Platform::PathToUtf8(app.settingsPath).c_str());
+                        ImGui::TableSetColumnIndex(2);
+                        if (ImGui::SmallButton("Show in Explorer##Settings"))
+                        {
+                            Platform::ShowPathInExplorer(app.settingsPath);
+                        }
+                        
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted("Index cache");
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextWrapped("%s", Platform::PathToUtf8(app.indexCachePath).c_str());
+                        ImGui::TableSetColumnIndex(2);
+                        if (ImGui::SmallButton("Show in Explorer##Index"))
+                        {
+                            Platform::ShowPathInExplorer(app.indexCachePath);
+                        }
+                        
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted("Descriptor-link cache");
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextWrapped("%s", Platform::PathToUtf8(app.descriptorLinksCachePath).c_str());
+                        ImGui::TableSetColumnIndex(2);
+                        if (ImGui::SmallButton("Show in Explorer##Desc"))
+                        {
+                            Platform::ShowPathInExplorer(app.descriptorLinksCachePath);
+                        }
+                        
+                        ImGui::EndTable();
+                    }
+                }
+                
+                ImGui::EndChild();
+                ImGui::EndTable();
             }
-        }
 
-        if (ImGui::Button("Validate Game Folder"))
-        {
-            App::ApplyGameRootBuffer(app);
-        }
-
-        ImGui::Spacing();
-        DrawValidationSummary(app.validation);
-
-        ImGui::Separator();
-        ImGui::TextUnformatted("Export Defaults");
-        ImGui::InputText("Export Root", app.exportRootBuffer.data(), app.exportRootBuffer.size());
-        ImGui::SameLine();
-        if (ImGui::Button("Browse##ExportRoot"))
-        {
-            if (const auto selected = Platform::BrowseForFolder(static_cast<HWND>(app.hwnd), L"Choose Export Folder", app.settings.exportRoot))
+            ImGui::Separator();
+            ImGui::Spacing();
+            if (ImGui::Button("Save Settings", ImVec2(120.0f, 0.0f)))
             {
-                app.settings.exportRoot = *selected;
-                App::SyncSettingsBuffers(app);
+                app.settings.exportRoot = Platform::Utf8ToPath(app.exportRootBuffer.data());
+                App::SetGameRoot(app, Platform::Utf8ToPath(app.gameRootBuffer.data()));
+                SaveSettingsWithImGui(app);
             }
-        }
-
-        // Force texture format to PNG, since GLB is the only supported format and requires PNG textures.
-        app.settings.textureExportFormat = "PNG";
-
-        static const char* textureFormats[] = { "DDS", "PNG", "TGA" };
-        int textureFormatIndex = 1; // "PNG"
-
-        ImGui::BeginDisabled(true);
-        if (ImGui::Combo("Texture Format", &textureFormatIndex, textureFormats, IM_ARRAYSIZE(textureFormats)))
-        {
-            app.settings.textureExportFormat = textureFormats[textureFormatIndex];
-        }
-        ImGui::EndDisabled();
-
-        int maxLods = app.settings.staticModelMaxLods;
-        if (ImGui::InputInt("Max RendInst LODs", &maxLods))
-        {
-            maxLods = std::clamp(maxLods, 1, 16);
-            app.settings.staticModelMaxLods = maxLods;
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Sets the maximum number of Levels of Detail (LODs) to export for static models (RendInst).");
-        }
-
-        ImGui::Checkbox("Export textures with models", &app.settings.exportTexturesWithModels);
-        ImGui::Checkbox("Embed textures inside GLB", &app.settings.embedTexturesInGlb);
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Stores PNG/JPEG material textures as GLB bufferViews instead of external image URIs.");
-        }
-        ImGui::Checkbox("Export JSON manifest metadata alongside assets", &app.settings.exportJsonManifest);
-        ImGui::Checkbox("Fallback to DDS when PNG/TGA conversion is unavailable", &app.settings.preserveOriginalDDS);
-        ImGui::TextDisabled("Oodle-compressed DDSx textures use the bundled oo2core_6_win64.dll shipped with the app build.");
-        ImGui::TextDisabled("PNG/TGA exports the top mip directly for BC1-BC5 plus common uncompressed/float DDSx textures, then retries unsupported DXGI formats through DirectXTex.");
-        if (ImGui::Checkbox("Enable index cache", &app.settings.indexCacheEnabled))
-        {
-            if (app.settings.indexCacheEnabled)
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(100.0f, 0.0f)))
             {
-                App::LoadIndexCacheIntoApp(app);
+                open = false;
+                ImGui::CloseCurrentPopup();
             }
-            else
-            {
-                App::SetCacheStatus(app.scan, "Disabled", false);
-            }
-        }
-        int maxLoadedPackContents = static_cast<int>(app.settings.maxLoadedPackContents);
-        if (ImGui::InputInt("Max loaded containers", &maxLoadedPackContents))
-        {
-            maxLoadedPackContents = std::clamp(maxLoadedPackContents, 1, 256);
-            app.settings.maxLoadedPackContents = static_cast<size_t>(maxLoadedPackContents);
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("When loaded pack contents exceed this number, the cache unloads old parsed containers and keeps the current inspector target.");
+
+            ImGui::EndPopup();
         }
 
-        ImGui::Separator();
-        if (ImGui::Button("Save Settings"))
-        {
-            app.settings.exportRoot = Platform::Utf8ToPath(app.exportRootBuffer.data());
-            App::SetGameRoot(app, Platform::Utf8ToPath(app.gameRootBuffer.data()));
-            SaveSettingsWithImGui(app);
-        }
-        ImGui::SameLine();
-        ImGui::Text("Settings file: %s", Platform::PathToUtf8(app.settingsPath).c_str());
-        ImGui::Text("Index cache: %s", Platform::PathToUtf8(app.indexCachePath).c_str());
-        ImGui::Text("Descriptor-link cache: %s", Platform::PathToUtf8(app.descriptorLinksCachePath).c_str());
-
-        ImGui::End();
+        app.settingsWindowOpen = open;
     }
 
     void DrawAboutWindow(AppState& app)
@@ -2172,9 +2643,13 @@ namespace DagorAssetsExtractor::UI
 
         ImGui::TextWrapped("Dagor Assets Extractor is a read-only desktop browser and exporter for War Thunder Dagor resource packs.");
         ImGui::Separator();
-        ImGui::BulletText("Scans the local game install and builds a searchable content browser.");
-        ImGui::BulletText("Inspects GRP, DXP, VROMFS, descriptor, and BLK data without modifying game files.");
-        ImGui::BulletText("Exports readable textures and models for modding workflows.");
+        DrawWrappedBulletText(
+            "Scans the local game install and builds a searchable content browser.");
+        DrawWrappedBulletText(
+            "Inspects GRP, DXP, VROMFS, descriptor, and BLK data without modifying "
+            "game files.");
+        DrawWrappedBulletText(
+            "Exports readable textures and models for modding workflows.");
         ImGui::Spacing();
         if (DrawIconTextButton("##about_github", UiIconId::Github, "Open Source on GitHub"))
         {
@@ -2204,7 +2679,7 @@ namespace DagorAssetsExtractor::UI
             return;
         }
 
-        ImGui::Text("Model: %s", pending.entry.name.c_str());
+        DrawWrappedText("Model: " + pending.entry.name);
         ImGui::Spacing();
 
         ImGui::Checkbox("Include textures", &pending.includeTextures);
@@ -2212,7 +2687,9 @@ namespace DagorAssetsExtractor::UI
         ImGui::Checkbox("Include skeleton / rig", &pending.includeSkeletonRig);
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Exports GeomNodeTree bones and binds skinned meshes when a matching skeleton is found.");
+            DrawWrappedTooltip(
+                "Exports GeomNodeTree bones and binds skinned meshes when a "
+                "matching skeleton is found.");
         }
 
         if (!pending.includeSkeletonRig)
@@ -2226,7 +2703,9 @@ namespace DagorAssetsExtractor::UI
         ImGui::EndDisabled();
         if (animationHovered)
         {
-            ImGui::SetTooltip("Exports matched Anim2Data ACL tracks as glTF animation channels. Requires skeleton / rig export so curves can target bones.");
+            DrawWrappedTooltip(
+                "Exports matched Anim2Data ACL tracks as glTF animation channels. "
+                "Requires skeleton / rig export so curves can target bones.");
         }
 
         ImGui::Separator();
@@ -2560,7 +3039,8 @@ namespace DagorAssetsExtractor::UI
         {
             DrawPanelTitle(UiIconId::Texture, "Texture Viewer");
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", Platform::PathToUtf8(preview.packPath.filename()).c_str());
+            DrawWrappedDisabledText(
+                Platform::PathToUtf8(preview.packPath.filename()));
             ImGui::Separator();
 
             const ImGuiTableFlags layoutFlags =
@@ -2628,7 +3108,7 @@ namespace DagorAssetsExtractor::UI
                 }
                 else
                 {
-                    ImGui::TextDisabled(
+                    DrawWrappedDisabledText(
                         "Mouse wheel zooms. Left-drag pans images larger than the viewport.");
                 }
 
@@ -2682,22 +3162,37 @@ namespace DagorAssetsExtractor::UI
                         "Detected Maps",
                         ImGuiTreeNodeFlags_DefaultOpen))
                 {
+                    if (mapAnalysis.layout ==
+                        Export::TextureContentLayout::WarThunderPackedNormalPbr)
+                    {
+                        const ImVec4 modeColor = app.settings.convertWarThunderPackedMaps
+                            ? ImVec4(0.38f, 0.72f, 1.0f, 1.0f)
+                            : ImVec4(0.95f, 0.76f, 0.32f, 1.0f);
+                        DrawWrappedColoredText(
+                            modeColor,
+                            app.settings.convertWarThunderPackedMaps
+                                ? "GLB mode: generate standard Normal + ORM textures."
+                                : "GLB mode: preserve native packed _n channels in the optional DAGOR_material_war_thunder_packed_n extension.");
+                        DrawWrappedDisabledText(
+                            app.settings.convertWarThunderPackedMaps
+                                ? "Instant map previews and individual-map export use the same channel conversion as model export."
+                                : "Instant map previews and individual-map export remain available. Generic glTF viewers ignore the native packed extension unless they implement its channel contract.");
+                        ImGui::Spacing();
+                    }
+
                     const ImVec4 detectionColor =
                         mapAnalysis.confidence == Export::TextureDetectionConfidence::StrongNameBased
                             ? ImVec4(0.48f, 0.86f, 0.58f, 1.0f)
                             : mapAnalysis.confidence == Export::TextureDetectionConfidence::NameBased
                                 ? ImVec4(0.95f, 0.76f, 0.32f, 1.0f)
                                 : ImVec4(0.72f, 0.74f, 0.80f, 1.0f);
-                    ImGui::TextColored(
-                        detectionColor,
-                        "%s",
-                        mapAnalysis.summary.c_str());
+                    DrawWrappedColoredText(detectionColor, mapAnalysis.summary);
                     ImGui::TextWrapped("%s", mapAnalysis.caution.c_str());
 
                     if (preview.loading)
                     {
                         ImGui::Spacing();
-                        ImGui::TextDisabled(
+                        DrawWrappedDisabledText(
                             "Map previews will be generated after the source texture is decoded.");
                     }
                     else if (!preview.error.empty())
@@ -2717,14 +3212,14 @@ namespace DagorAssetsExtractor::UI
                         ImGui::TextWrapped(
                             "The source texture is invalid or could not be decoded. "
                             "No maps can be previewed or exported.");
-                        ImGui::TextDisabled("%s", preview.error.c_str());
+                        DrawWrappedDisabledText(preview.error);
                         ImGui::EndChild();
                         ImGui::PopStyleColor();
                     }
                     else if (mapAnalysis.maps.empty())
                     {
                         ImGui::Spacing();
-                        ImGui::TextDisabled(
+                        DrawWrappedDisabledText(
                             "No individual-map export is offered because the channel layout "
                             "could not be identified safely.");
                     }
@@ -2882,10 +3377,10 @@ namespace DagorAssetsExtractor::UI
                             {
                                 ImGui::BeginTooltip();
                                 ImGui::TextUnformatted(map.label.c_str());
-                                ImGui::TextDisabled("%s", map.channels.c_str());
+                                DrawWrappedDisabledText(map.channels);
                                 if (!mapPreviewAvailable)
                                 {
-                                    ImGui::TextColored(
+                                    DrawWrappedColoredText(
                                         ImVec4(1.0f, 0.62f, 0.42f, 1.0f),
                                         "Thumbnail generation failed.");
                                 }
@@ -2897,7 +3392,7 @@ namespace DagorAssetsExtractor::UI
                                 ImGui::TextUnformatted(map.label.c_str());
                                 ImGui::Separator();
                                 ImGui::Text("Type: %s", map.label.c_str());
-                                ImGui::TextWrapped(
+                                ImGui::Text(
                                     "Channels: %s",
                                     map.channels.c_str());
                                 ImGui::Text(
@@ -2936,7 +3431,7 @@ namespace DagorAssetsExtractor::UI
                                 ImGui::Text(
                                     "Mip levels: %u",
                                     static_cast<unsigned>(preview.mipCount));
-                                ImGui::TextWrapped(
+                                ImGui::Text(
                                     "Data space: %s",
                                     map.kind == Export::TextureMapKind::BaseColor
                                         ? "sRGB color"
@@ -3071,12 +3566,12 @@ namespace DagorAssetsExtractor::UI
                 ImGui::Spacing();
                 ImGui::Separator();
                 ImGui::BeginDisabled(!currentEntry.has_value());
-                if (ImGui::Button("Export Texture", ImVec2(-1.0f, 0.0f)) &&
+                if (DrawIconTextButton("##ExportTexture", UiIconId::Export, "Export Texture", ImVec2(-1.0f, 0.0f)) &&
                     currentEntry)
                 {
                     App::RequestTextureExport(app, preview.packPath, *currentEntry);
                 }
-                if (ImGui::Button("Reload Preview", ImVec2(-1.0f, 0.0f)) &&
+                if (DrawIconTextButton("##ReloadPreview", UiIconId::Rebuild, "Reload Preview", ImVec2(-1.0f, 0.0f)) &&
                     currentEntry)
                 {
                     ClearTexturePreview();
@@ -3085,7 +3580,7 @@ namespace DagorAssetsExtractor::UI
                     App::RequestTexturePreview(app, preview.packPath, *currentEntry);
                 }
                 ImGui::EndDisabled();
-                if (ImGui::Button("Show DXP in Explorer", ImVec2(-1.0f, 0.0f)))
+                if (DrawIconTextButton("##ShowDxpInExplorer", UiIconId::ContentBrowser, "Show DXP in Explorer", ImVec2(-1.0f, 0.0f)))
                 {
                     Platform::ShowPathInExplorer(preview.packPath);
                 }
@@ -3170,7 +3665,9 @@ namespace DagorAssetsExtractor::UI
             }
             else if (!app.modelPreview.error.empty())
             {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", app.modelPreview.error.c_str());
+                DrawWrappedColoredText(
+                    ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                    "Error: " + app.modelPreview.error);
             }
             else if (app.modelPreview.vertexCount == 0)
             {
@@ -3546,6 +4043,12 @@ namespace DagorAssetsExtractor::UI
                             {
                                 ImGuiIO& io = ImGui::GetIO();
                                 
+                                const UiIcon* debugIcon = GetUiIcon(UiIconId::Debug);
+                                if (debugIcon && debugIcon->view != nullptr)
+                                {
+                                    ImGui::Image(reinterpret_cast<ImTextureID>(debugIcon->view), ImVec2(14.0f, 14.0f));
+                                    ImGui::SameLine(0.0f, 6.0f);
+                                }
                                 ImGui::TextDisabled("PERFORMANCE OVERLAY");
                                 
                                 ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "FPS: %.1f", io.Framerate);
@@ -3894,7 +4397,8 @@ namespace DagorAssetsExtractor::UI
 
                     // Input navigation map/legend
                     ImGui::SameLine();
-                    ImGui::TextDisabled(" |  Middle Drag: Orbit  |  Shift + Middle Drag: Pan  |  Scroll: Zoom");
+                    DrawWrappedDisabledText(
+                        "Middle Drag: Orbit | Shift + Middle Drag: Pan | Scroll: Zoom");
                 }
                 ImGui::EndChild();
 
@@ -3921,8 +4425,11 @@ namespace DagorAssetsExtractor::UI
                     if (ImGui::CollapsingHeader("MODEL DETAILS", ImGuiTreeNodeFlags_DefaultOpen))
                     {
                         ImGui::Spacing();
-                        ImGui::Text("Name: %s", app.modelPreview.entryName.c_str());
-                        ImGui::Text("Class: %s", AssetIndex::DescribeGrpClassId(app.modelPreview.grpClassId).c_str());
+                        DrawWrappedText("Name: " + app.modelPreview.entryName);
+                        DrawWrappedText(
+                            "Class: " +
+                            AssetIndex::DescribeGrpClassId(
+                                app.modelPreview.grpClassId));
                         ImGui::Text("File Size: %s", FormatBytes(app.modelPreview.fileSize).c_str());
                         ImGui::Text("Submeshes: %u", app.modelPreview.subMeshCount);
                         ImGui::Spacing();
@@ -4034,7 +4541,6 @@ namespace DagorAssetsExtractor::UI
 
         ImGui::Begin("DagorAssetsExtractorMain", nullptr, flags);
         DrawMenuBar(app, running);
-        DrawHeader(app);
 
         const std::shared_ptr<const std::vector<ResourceRecord>> recordsPtr = App::SnapshotRecords(app.scan);
         const std::vector<ResourceRecord>& records = *recordsPtr;

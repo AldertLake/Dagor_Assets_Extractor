@@ -1,5 +1,7 @@
+#include "App/AppState.h"
 #include "AssetIndex/PackContents.h"
 #include "AssetIndex/DependencyGraph.h"
+#include "AssetIndex/TextureQuality.h"
 #include "DirectXTex.h"
 #include "Export/MaterialTextureResolver.h"
 #include "Export/ModelExporter.h"
@@ -972,6 +974,37 @@ namespace
             packedVehicleResolved.packedNormalPbrTextureName == "tank_body_n$hq",
             "Resolver did not mark the War Thunder packed normal/PBR source.");
 
+        DagorFormats::InternalMaterial cockpitGaugeMaterial;
+        cockpitGaugeMaterial.shaderClass = "dynamic";
+        cockpitGaugeMaterial.textureSlots[0] =
+            "us_gauge_oxygen_pressure_400psi_c*?na16";
+        cockpitGaugeMaterial.textureSlots[2] =
+            "us_gauge_oxygen_pressure_400psi_n*?na16u03";
+        const ResolvedMaterialTextures cockpitGaugeResolved =
+            DagorAssetsExtractor::Export::ResolveMaterialTextures(cockpitGaugeMaterial);
+        Expect(
+            cockpitGaugeResolved.baseColorTextureName ==
+                "us_gauge_oxygen_pressure_400psi_c*?na16",
+            "Resolver did not recognize a sampler-modified cockpit color texture.");
+        Expect(
+            cockpitGaugeResolved.normalTextureName ==
+                "us_gauge_oxygen_pressure_400psi_n*?na16u03",
+            "Resolver did not recognize a sampler-modified cockpit packed normal.");
+        Expect(
+            cockpitGaugeResolved.packedNormalPbrTextureName ==
+                cockpitGaugeResolved.normalTextureName,
+            "Resolver did not mark the sampler-modified cockpit _n texture as packed PBR.");
+
+        DagorFormats::InternalMaterial invalidNormalSlotMaterial;
+        invalidNormalSlotMaterial.shaderClass = "dynamic";
+        invalidNormalSlotMaterial.textureSlots[2] =
+            "us_gauge_oxygen_pressure_400psi_c*?na16";
+        const ResolvedMaterialTextures invalidNormalSlotResolved =
+            DagorAssetsExtractor::Export::ResolveMaterialTextures(invalidNormalSlotMaterial);
+        Expect(
+            invalidNormalSlotResolved.normalTextureName.empty(),
+            "A color texture in a nominal normal slot must not be resolved as a normal map.");
+
         DagorFormats::InternalMaterial ormMaterial;
         ormMaterial.shaderClass = "dynamic_vehicle";
         ormMaterial.textureSlots[1] = "tank_orm";
@@ -999,6 +1032,22 @@ namespace
                 [](const auto& map) { return map.kind == TextureMapKind::Metallic; }),
             "Packed War Thunder texture analysis omitted metallic.");
         Expect(
+            std::any_of(
+                packedNormalAnalysis.maps.begin(),
+                packedNormalAnalysis.maps.end(),
+                [](const auto& map) {
+                    return map.kind == TextureMapKind::InvertedRoughness;
+                }),
+            "Packed War Thunder texture analysis omitted native inverted roughness.");
+        Expect(
+            std::any_of(
+                packedNormalAnalysis.maps.begin(),
+                packedNormalAnalysis.maps.end(),
+                [](const auto& map) {
+                    return map.kind == TextureMapKind::OcclusionRoughnessMetallic;
+                }),
+            "Packed War Thunder texture analysis omitted standard ORM output.");
+        Expect(
             std::none_of(
                 packedNormalAnalysis.maps.begin(),
                 packedNormalAnalysis.maps.end(),
@@ -1011,6 +1060,41 @@ namespace
             aoAnalysis.layout ==
                 DagorAssetsExtractor::Export::TextureContentLayout::AmbientOcclusion,
             "AO texture layout was not detected.");
+        Expect(
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps("plane_c$hq").layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::BaseColor,
+            "War Thunder _c color texture layout was not detected.");
+        Expect(
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps("plane_d").layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::BaseColor,
+            "Shader-dependent _d color texture layout was not detected.");
+        Expect(
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps("plane_normal").layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::ConventionalNormal,
+            "Conventional normal texture layout was not detected.");
+        Expect(
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps(
+                "us_gauge_oxygen_pressure_400psi_c*?na16").layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::BaseColor,
+            "Sampler-modified cockpit _c texture layout was not detected.");
+        Expect(
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps(
+                "us_gauge_oxygen_pressure_400psi_n*?na16u03").layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::WarThunderPackedNormalPbr,
+            "Sampler-modified cockpit _n texture layout was not detected.");
+        Expect(
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps(
+                "prop_nm_spec*?abbwq0-0-1").layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::ConventionalNormal,
+            "Sampler-modified _nm_spec conventional normal layout was not detected.");
+        Expect(
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps("tank_arm").layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::PackedOrm,
+            "ARM alias was not normalized to the standard ORM layout.");
+        Expect(
+            DagorAssetsExtractor::Export::AnalyzeTextureMaps("tank_mrao").layout ==
+                DagorAssetsExtractor::Export::TextureContentLayout::PackedMra,
+            "MRAO texture layout was not detected.");
 
         const auto unknownAnalysis =
             DagorAssetsExtractor::Export::AnalyzeTextureMaps("tank_body_mask");
@@ -1032,6 +1116,49 @@ namespace
             DagorAssetsExtractor::Export::ClassifyDescriptorBinding("dynamic_vehicle", "t1", "tank_orm") ==
                 MaterialTextureSemantic::MetallicRoughness,
             "Descriptor binding classifier missed the packed ORM texture.");
+        Expect(
+            DagorAssetsExtractor::Export::ClassifyDescriptorBinding(
+                "dynamic",
+                "t2",
+                "us_gauge_oxygen_pressure_400psi_c*?na16") ==
+                MaterialTextureSemantic::BaseColor,
+            "Known cockpit color semantics must override a generic normal-slot guess.");
+        Expect(
+            DagorAssetsExtractor::Export::ClassifyDescriptorBinding(
+                "dynamic",
+                "t0",
+                "us_gauge_oxygen_pressure_400psi_n*?na16u03") ==
+                MaterialTextureSemantic::Normal,
+            "Known cockpit packed-normal semantics must override a generic color-slot guess.");
+    }
+
+    void RunSettingsPersistenceValidation(const std::filesystem::path& tempRoot)
+    {
+        const std::filesystem::path settingsPath =
+            tempRoot / "settings" / "settings.ini";
+        DagorAssetsExtractor::App::AppSettings settings;
+        settings.gameRoot = tempRoot / "game";
+        settings.exportRoot = tempRoot / "exports";
+        settings.convertWarThunderPackedMaps = false;
+
+        std::string error;
+        Expect(
+            DagorAssetsExtractor::App::SaveSharedSettings(
+                settings,
+                settingsPath,
+                "[Window][Validation]\nPos=10,10\n",
+                error),
+            "Could not save material conversion setting: " + error);
+
+        DagorAssetsExtractor::App::AppSettings loaded;
+        DagorAssetsExtractor::App::LoadSettings(loaded, settingsPath);
+        Expect(
+            !loaded.convertWarThunderPackedMaps,
+            "War Thunder packed-map conversion setting was not persisted.");
+        Expect(
+            DagorAssetsExtractor::App::LoadImGuiSettings(settingsPath).find(
+                "[Window][Validation]") != std::string::npos,
+            "Saving the packed-map conversion setting discarded ImGui settings.");
     }
 
     void RunStep3GlbValidation(const std::filesystem::path& tempRoot)
@@ -1051,7 +1178,7 @@ namespace
         material.diffuseTexturePath = "diffuse.png";
         material.normalTexturePath = "normal.png";
         material.metallicRoughnessTexturePath = "orm.png";
-        material.occlusionTexturePath = "ao.png";
+        material.occlusionTexturePath = "orm.png";
 
         ExportManifest manifest;
         manifest.skipWrite = true;
@@ -1072,9 +1199,49 @@ namespace
         Expect(json.find("\"occlusionTexture\"") != std::string::npos, "GLB JSON is missing occlusionTexture.");
         Expect(json.find("diffuse.png") != std::string::npos, "GLB JSON is missing the diffuse image URI.");
         Expect(json.find("normal.png") != std::string::npos, "GLB JSON is missing the normal image URI.");
-        Expect(json.find("orm.png") != std::string::npos, "GLB JSON is missing the metallic-roughness image URI.");
-        Expect(json.find("ao.png") != std::string::npos, "GLB JSON is missing the occlusion image URI.");
+        Expect(
+            json.find("orm.png") != std::string::npos,
+            "GLB JSON is missing the shared ORM image URI.");
         VerifyGlbBufferViewsAndAccessors(glbPath);
+
+        MaterialInfo nativePackedMaterial;
+        nativePackedMaterial.name = "native_packed_material";
+        nativePackedMaterial.nativePackedNormalPbrTexturePath = "native_n.png";
+        const std::filesystem::path nativeGlbPath =
+            tempRoot / "validation_native_packed_material.glb";
+        Expect(
+            ModelExporter::ExportToGlb(
+                nativeGlbPath,
+                { mesh },
+                manifest,
+                { nativePackedMaterial },
+                options),
+            "GLB export failed for native packed material validation.");
+
+        const std::string nativeJson = ExtractGlbJson(nativeGlbPath);
+        Expect(
+            nativeJson.find("\"extensionsUsed\": [\"DAGOR_material_war_thunder_packed_n\"]") !=
+                std::string::npos,
+            "Native packed GLB did not declare its optional material extension.");
+        Expect(
+            nativeJson.find("\"DAGOR_material_war_thunder_packed_n\"") !=
+                std::string::npos,
+            "Native packed GLB material extension is missing.");
+        Expect(
+            nativeJson.find("\"invertedRoughness\": \"R\"") != std::string::npos &&
+                nativeJson.find("\"normalX\": \"G\"") != std::string::npos &&
+                nativeJson.find("\"metallic\": \"B\"") != std::string::npos &&
+                nativeJson.find("\"normalY\": \"A\"") != std::string::npos,
+            "Native packed GLB material extension has the wrong channel contract.");
+        Expect(
+            nativeJson.find("\"normalTexture\"") == std::string::npos &&
+                nativeJson.find("\"metallicRoughnessTexture\"") == std::string::npos &&
+                nativeJson.find("\"occlusionTexture\"") == std::string::npos,
+            "Native packed texture was incorrectly assigned to core glTF material slots.");
+        Expect(
+            nativeJson.find("native_n.png") != std::string::npos,
+            "Native packed image URI is missing from GLB JSON.");
+        VerifyGlbBufferViewsAndAccessors(nativeGlbPath);
     }
 
 
@@ -1084,17 +1251,17 @@ namespace
         for (size_t i = 0; i < 16; ++i)
         {
             size_t idx = i * 4;
-            payload[idx + 0] = 128; // R
-            payload[idx + 1] = 64;  // G
-            payload[idx + 2] = 192; // B
-            payload[idx + 3] = 100; // A
+            payload[idx + 0] = 185; // R: modern non-linear inverted roughness
+            payload[idx + 1] = 64;  // G: normal X
+            payload[idx + 2] = 192; // B: metallic
+            payload[idx + 3] = 100; // A: normal Y
         }
 
         const std::filesystem::path packPath = tempRoot / "packed_normal_validation.pack";
         WriteFileBytes(packPath, payload);
 
         SubAssetRecord entry;
-        entry.name = "test_normal_n";
+        entry.name = "test_normal_n*?na16u03";
         entry.offset = 0;
         entry.size = static_cast<uint32_t>(payload.size());
         entry.ddsxHeader = BuildDdsxHeader(
@@ -1117,6 +1284,14 @@ namespace
 
         const TextureExportResult result = TextureExporter::ExportTexture(packPath, entry, options);
         Expect(result.success, "Packed normal map split export failed: " + result.error);
+        TextureExportOptions noOverwriteOptions = options;
+        noOverwriteOptions.overwrite = false;
+        const TextureExportResult duplicateResult =
+            TextureExporter::ExportTexture(packPath, entry, noOverwriteOptions);
+        Expect(
+            !duplicateResult.success &&
+                duplicateResult.error.find("already exists") != std::string::npos,
+            "Converted material-map export did not enforce overwrite=false on its renamed output.");
 
         TexturePreviewOptions previewOptions;
         const TexturePreviewResult preview =
@@ -1144,23 +1319,53 @@ namespace
                 metallicPreviewIt->bgraPixels[1] == 192 &&
                 metallicPreviewIt->bgraPixels[2] == 192,
             "Metallic map thumbnail did not preserve the source blue channel.");
+        const auto roughnessPreviewIt = std::find_if(
+            mapPreviews.begin(),
+            mapPreviews.end(),
+            [](const auto& mapPreview) {
+                return mapPreview.kind == TextureMapKind::Roughness;
+            });
+        Expect(
+            roughnessPreviewIt != mapPreviews.end() &&
+                roughnessPreviewIt->bgraPixels[0] == 127 &&
+                roughnessPreviewIt->bgraPixels[1] == 127 &&
+                roughnessPreviewIt->bgraPixels[2] == 127,
+            "Roughness map thumbnail did not decode the modern War Thunder red channel.");
+        const auto invertedRoughnessPreviewIt = std::find_if(
+            mapPreviews.begin(),
+            mapPreviews.end(),
+            [](const auto& mapPreview) {
+                return mapPreview.kind == TextureMapKind::InvertedRoughness;
+            });
+        Expect(
+            invertedRoughnessPreviewIt != mapPreviews.end() &&
+                invertedRoughnessPreviewIt->bgraPixels[0] == 185 &&
+                invertedRoughnessPreviewIt->bgraPixels[1] == 185 &&
+                invertedRoughnessPreviewIt->bgraPixels[2] == 185,
+            "Native inverted-roughness thumbnail did not preserve source red.");
 
         const std::filesystem::path normalPath = result.outputPath;
-        const std::filesystem::path mrPath =
-            FindMapOutput(result, TextureMapKind::MetallicRoughness);
+        const std::filesystem::path generatedOrmPath =
+            FindMapOutput(result, TextureMapKind::OcclusionRoughnessMetallic);
 
         Expect(std::filesystem::exists(normalPath), "Reconstructed normal map PNG does not exist.");
-        Expect(std::filesystem::exists(mrPath), "Extracted metallic-roughness PNG does not exist.");
+        Expect(std::filesystem::exists(generatedOrmPath), "Generated ORM PNG does not exist.");
         Expect(
             FindMapOutput(result, TextureMapKind::Normal) == normalPath,
             "Normal output was not tracked explicitly.");
         Expect(
-            WarningContains(result, "Metallic uses source blue directly"),
+            normalPath.stem().string().ends_with("_normal"),
+            "Converted normal output filename does not identify the generated map.");
+        Expect(
+            generatedOrmPath.stem().string().ends_with("_orm"),
+            "Converted ORM output filename does not identify the generated map.");
+        Expect(
+            WarningContains(result, "roughness decodes the non-linear red channel"),
             "Expected packed-channel conversion warning in result.");
 
         const std::array<uint8_t, 4> normalPixel = ReadFirstPngPixelRgba(normalPath);
         Expect(
-            normalPixel[0] == 100 && normalPixel[1] == 64 &&
+            normalPixel[0] == 64 && normalPixel[1] == 100 &&
                 normalPixel[2] >= 233 && normalPixel[2] <= 236 &&
                 normalPixel[3] == 255,
             "Reconstructed normal channels are incorrect: R=" +
@@ -1169,11 +1374,37 @@ namespace
                 std::to_string(normalPixel[2]) + ", A=" +
                 std::to_string(normalPixel[3]));
 
-        const std::array<uint8_t, 4> mrPixel = ReadFirstPngPixelRgba(mrPath);
+        const std::array<uint8_t, 4> generatedOrmPixel =
+            ReadFirstPngPixelRgba(generatedOrmPath);
         Expect(
-            mrPixel[0] == 255 && mrPixel[1] == 127 &&
-                mrPixel[2] == 192 && mrPixel[3] == 255,
-            "Metallic-roughness conversion is incorrect; metallic must use source blue directly.");
+            generatedOrmPixel[0] == 255 && generatedOrmPixel[1] == 127 &&
+                generatedOrmPixel[2] == 192 && generatedOrmPixel[3] == 255,
+            "Generated ORM is incorrect; AO must default white and metallic must use source blue.");
+
+        TextureExportOptions nativeOptions = options;
+        nativeOptions.outputDir = tempRoot / "native_exports";
+        nativeOptions.convertWarThunderPackedMaps = false;
+        const TextureExportResult nativeResult =
+            TextureExporter::ExportTexture(packPath, entry, nativeOptions);
+        Expect(
+            nativeResult.success,
+            "Native packed map export failed: " + nativeResult.error);
+        Expect(
+            nativeResult.nativeWarThunderPackedMap,
+            "Native packed map export was not identified in the result.");
+        Expect(
+            nativeResult.mapOutputs.empty(),
+            "Native packed mode generated standard material maps unexpectedly.");
+        Expect(
+            !nativeResult.outputPath.stem().string().ends_with("_normal") &&
+                !nativeResult.outputPath.stem().string().ends_with("_orm"),
+            "Native packed output was renamed as a generated standard map.");
+        const std::array<uint8_t, 4> nativePixel =
+            ReadFirstPngPixelRgba(nativeResult.outputPath);
+        Expect(
+            nativePixel[0] == 185 && nativePixel[1] == 64 &&
+                nativePixel[2] == 192 && nativePixel[3] == 100,
+            "Native packed output did not preserve the source RGBA channel values.");
 
         std::vector<uint8_t> aoPayload(16 * 4);
         for (size_t i = 0; i < 16; ++i)
@@ -1213,7 +1444,7 @@ namespace
             bulkRoughnessPixel[0] == 127 &&
                 bulkRoughnessPixel[1] == 127 &&
                 bulkRoughnessPixel[2] == 127,
-            "Bulk roughness export did not invert the packed smoothness channel.");
+            "Bulk roughness export did not decode the modern non-linear inverted-roughness channel.");
         Expect(
             bulkMetallicPixel[0] == 192 &&
                 bulkMetallicPixel[1] == 192 &&
@@ -1231,7 +1462,7 @@ namespace
         std::string composeError;
         Expect(
             TextureExporter::ComposeOrmTexture(
-                mrPath,
+                generatedOrmPath,
                 aoResult.outputPath,
                 ormPath,
                 composeError),
@@ -1271,6 +1502,72 @@ namespace
                 normalizedRmaPixel[1] == 10 &&
                 normalizedRmaPixel[2] == 20,
             "RMA texture was not reordered to standard ORM.");
+
+        SubAssetRecord armEntry = rmaEntry;
+        armEntry.name = "test_arm";
+        const TextureExportResult armResult =
+            TextureExporter::ExportTexture(rmaPackPath, armEntry, options);
+        Expect(armResult.success, "ARM normalization failed: " + armResult.error);
+        const std::array<uint8_t, 4> normalizedArmPixel =
+            ReadFirstPngPixelRgba(armResult.outputPath);
+        Expect(
+            normalizedArmPixel[0] == 10 &&
+                normalizedArmPixel[1] == 20 &&
+                normalizedArmPixel[2] == 30,
+            "ARM texture did not preserve standard AO/roughness/metallic channel order.");
+
+        SubAssetRecord mraoEntry = rmaEntry;
+        mraoEntry.name = "test_mrao";
+        const TextureExportResult mraoResult =
+            TextureExporter::ExportTexture(rmaPackPath, mraoEntry, options);
+        Expect(mraoResult.success, "MRAO normalization failed: " + mraoResult.error);
+        const std::array<uint8_t, 4> normalizedMraoPixel =
+            ReadFirstPngPixelRgba(mraoResult.outputPath);
+        Expect(
+            normalizedMraoPixel[0] == 30 &&
+                normalizedMraoPixel[1] == 20 &&
+                normalizedMraoPixel[2] == 10,
+            "MRAO texture was not reordered to standard ORM.");
+    }
+
+    void RunTextureQualityValidation()
+    {
+        using DagorAssetsExtractor::AssetIndex::ClassifyTextureQuality;
+        using DagorAssetsExtractor::AssetIndex::TextureQualityPriority;
+        using DagorAssetsExtractor::AssetIndex::TextureQualityTier;
+
+        const std::filesystem::path standardPack = "content/base/res/aircraft.dxp.bin";
+        const std::filesystem::path hqPack = "content.hq/base/res/aircraft_hq.dxp.bin";
+        const std::filesystem::path uhqPack = "content/uhq_vehicles/aircraft_uhq.dxp.bin";
+
+        Expect(
+            TextureQualityPriority(standardPack, "aircraft_c$uhq") >
+                TextureQualityPriority(standardPack, "aircraft_c$hq") &&
+            TextureQualityPriority(standardPack, "aircraft_c$hq") >
+                TextureQualityPriority(standardPack, "aircraft_c") &&
+            TextureQualityPriority(standardPack, "aircraft_c") >
+                TextureQualityPriority(standardPack, "aircraft_c$tq") &&
+            TextureQualityPriority(standardPack, "aircraft_c$tq") >
+                TextureQualityPriority(standardPack, "aircraft_c$lq"),
+            "Texture quality order must be $uhq > $hq > untagged > $tq > $lq.");
+        Expect(
+            ClassifyTextureQuality(hqPack, "aircraft_c") == TextureQualityTier::High,
+            "Untagged content.hq texture was not classified as high quality.");
+        Expect(
+            TextureQualityPriority(hqPack, "aircraft_c$hq*") >
+                TextureQualityPriority(hqPack, "aircraft_c*?na16"),
+            "An explicit $hq texture must outrank an untagged qualified texture in content.hq.");
+        Expect(
+            ClassifyTextureQuality(uhqPack, "aircraft_c") ==
+                TextureQualityTier::UltraHigh,
+            "Untagged UHQ-pack texture was not classified as ultra-high quality.");
+        Expect(
+            ClassifyTextureQuality(hqPack, "aircraft_c$lq") == TextureQualityTier::Low,
+            "Explicit low-quality tags must override high-quality pack paths.");
+        Expect(
+            ClassifyTextureQuality(standardPack, "aircraft_c$UHQ") ==
+                TextureQualityTier::UltraHigh,
+            "Texture quality tags must be case-insensitive.");
     }
 
     void RunVromfsValidation()
@@ -1750,6 +2047,8 @@ int main()
         RunStep2Validation(tempRoot);
         RunTexturePreviewValidation(tempRoot);
         RunStep3ResolverValidation();
+        RunSettingsPersistenceValidation(tempRoot);
+        RunTextureQualityValidation();
         RunStep3GlbValidation(tempRoot);
         RunStep3PackedNormalMapValidation(tempRoot);
         RunVromfsValidation();

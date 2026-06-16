@@ -37,6 +37,7 @@ namespace DagorAssetsExtractor::App
         int staticModelMaxLods = 1;
         bool exportTexturesWithModels = true;
         bool embedTexturesInGlb = true;
+        bool convertWarThunderPackedMaps = true;
         bool exportJsonManifest = false;
         bool preserveOriginalDDS = true;
         bool indexCacheEnabled = true;

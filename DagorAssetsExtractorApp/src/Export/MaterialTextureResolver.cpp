@@ -94,6 +94,21 @@ namespace DagorAssetsExtractor::Export
 
         std::vector<std::string_view> SemanticTokens(std::string_view textureName, std::string& storage)
         {
+            const size_t samplerModifier = textureName.find('*');
+            if (samplerModifier != std::string_view::npos)
+            {
+                textureName = textureName.substr(0, samplerModifier);
+            }
+            else
+            {
+                // Also accept Windows-safe names produced from "*?" sampler modifiers.
+                const size_t sanitizedModifier = textureName.find("__");
+                if (sanitizedModifier != std::string_view::npos)
+                {
+                    textureName = textureName.substr(0, sanitizedModifier);
+                }
+            }
+
             storage = NormalizeTextureSemanticName(textureName);
             std::vector<std::string_view> tokens = SplitTokens(storage);
             while (!tokens.empty() &&
@@ -128,7 +143,8 @@ namespace DagorAssetsExtractor::Export
 
         bool TextureNameLooksLikeOcclusion(std::string_view textureName)
         {
-            const std::string normalized = NormalizeTextureSemanticName(textureName);
+            std::string normalized;
+            SemanticTokens(textureName, normalized);
             return HasAnyToken(normalized, { "ao", "occ", "occlusion" });
         }
 
@@ -226,6 +242,30 @@ namespace DagorAssetsExtractor::Export
         }
 
         template <typename Predicate>
+        std::string SelectTextureFromSlotPreference(
+            const DagorFormats::InternalMaterial& material,
+            const std::vector<std::string>& slotPreference,
+            Predicate&& predicate)
+        {
+            for (const std::string& slot : slotPreference)
+            {
+                size_t slotIndex = 0;
+                if (!TryParseTextureSlotIndex(slot, slotIndex))
+                {
+                    continue;
+                }
+
+                const std::string& textureName = material.textureSlots[slotIndex];
+                if (!textureName.empty() && predicate(textureName))
+                {
+                    return textureName;
+                }
+            }
+
+            return {};
+        }
+
+        template <typename Predicate>
         std::string SelectTextureBySemanticName(
             const DagorFormats::InternalMaterial& material,
             const std::vector<std::string>& preferredSlots,
@@ -270,12 +310,36 @@ namespace DagorAssetsExtractor::Export
     ResolvedMaterialTextures ResolveMaterialTextures(const DagorFormats::InternalMaterial& material)
     {
         ResolvedMaterialTextures resolved;
+        const std::vector<std::string> baseColorSlots =
+            BuildBaseColorSlotPreference(material.shaderClass);
         resolved.baseColorTextureName = SelectTextureFromSlotPreference(
             material,
-            BuildBaseColorSlotPreference(material.shaderClass));
+            baseColorSlots,
+            [](std::string_view textureName) {
+                return AnalyzeTextureMaps(textureName).layout ==
+                    TextureContentLayout::BaseColor;
+            });
+        if (resolved.baseColorTextureName.empty())
+        {
+            // Some shader-specific color maps have no recognized suffix. Keep slot-based color
+            // fallback, but never use a texture positively identified as another map type.
+            resolved.baseColorTextureName = SelectTextureFromSlotPreference(
+                material,
+                baseColorSlots,
+                [](std::string_view textureName) {
+                    return AnalyzeTextureMaps(textureName).layout ==
+                        TextureContentLayout::Unknown;
+                });
+        }
+
         resolved.normalTextureName = SelectTextureFromSlotPreference(
             material,
-            BuildNormalMapSlotPreference(material.shaderClass));
+            BuildNormalMapSlotPreference(material.shaderClass),
+            [](std::string_view textureName) {
+                const TextureContentLayout layout = AnalyzeTextureMaps(textureName).layout;
+                return layout == TextureContentLayout::ConventionalNormal ||
+                    layout == TextureContentLayout::WarThunderPackedNormalPbr;
+            });
         if (AnalyzeTextureMaps(resolved.normalTextureName).layout ==
             TextureContentLayout::WarThunderPackedNormalPbr)
         {
@@ -283,7 +347,14 @@ namespace DagorAssetsExtractor::Export
         }
         resolved.occlusionTextureName = SelectTextureFromSlotPreference(
             material,
-            BuildOcclusionSlotPreference(material.shaderClass));
+            BuildOcclusionSlotPreference(material.shaderClass),
+            [](std::string_view textureName) {
+                const TextureContentLayout layout = AnalyzeTextureMaps(textureName).layout;
+                return layout == TextureContentLayout::AmbientOcclusion ||
+                    layout == TextureContentLayout::PackedOrm ||
+                    layout == TextureContentLayout::PackedRma ||
+                    layout == TextureContentLayout::PackedMra;
+            });
 
         if (resolved.occlusionTextureName.empty())
         {
@@ -311,6 +382,24 @@ namespace DagorAssetsExtractor::Export
         std::string_view slotName,
         std::string_view textureName)
     {
+        const TextureContentLayout layout = AnalyzeTextureMaps(textureName).layout;
+        switch (layout)
+        {
+        case TextureContentLayout::BaseColor:
+            return MaterialTextureSemantic::BaseColor;
+        case TextureContentLayout::ConventionalNormal:
+        case TextureContentLayout::WarThunderPackedNormalPbr:
+            return MaterialTextureSemantic::Normal;
+        case TextureContentLayout::AmbientOcclusion:
+            return MaterialTextureSemantic::Occlusion;
+        case TextureContentLayout::PackedOrm:
+        case TextureContentLayout::PackedRma:
+        case TextureContentLayout::PackedMra:
+            return MaterialTextureSemantic::MetallicRoughness;
+        case TextureContentLayout::Unknown:
+            break;
+        }
+
         if (SlotIsInPreference(slotName, BuildBaseColorSlotPreference(shaderClass)))
         {
             return MaterialTextureSemantic::BaseColor;
@@ -394,14 +483,21 @@ namespace DagorAssetsExtractor::Export
             analysis.confidence = TextureDetectionConfidence::StrongNameBased;
             analysis.summary = "War Thunder packed normal/PBR texture";
             analysis.caution =
-                "AO is not stored in this texture. Red is smoothness, green is normal Y, "
-                "blue is metallic, and alpha is normal X.";
+                "Modern War Thunder layout: red is non-linear inverted roughness, green is "
+                "normal X, blue is metallic, and alpha is normal Y. AO is not stored; generated "
+                "ORM uses white AO unless a separate AO texture is available.";
             analysis.maps = {
-                MakeDetectedMap(TextureMapKind::Normal, "A -> X, G -> Y, reconstructed Z", true),
-                MakeDetectedMap(TextureMapKind::Smoothness, "R"),
-                MakeDetectedMap(TextureMapKind::Roughness, "1 - R", true),
+                MakeDetectedMap(TextureMapKind::Normal, "G -> X, A -> Y, reconstructed Z", true),
+                MakeDetectedMap(TextureMapKind::InvertedRoughness, "R (native non-linear value)"),
+                MakeDetectedMap(
+                    TextureMapKind::Roughness,
+                    "clamp((cuberoot(1 - R) - 0.3) / 0.7)",
+                    true),
                 MakeDetectedMap(TextureMapKind::Metallic, "B"),
-                MakeDetectedMap(TextureMapKind::MetallicRoughness, "G = 1 - R, B = metallic", true),
+                MakeDetectedMap(
+                    TextureMapKind::OcclusionRoughnessMetallic,
+                    "R = white AO fallback, G = decoded roughness, B = metallic",
+                    true),
             };
             return analysis;
         }
@@ -501,6 +597,20 @@ namespace DagorAssetsExtractor::Export
             return analysis;
         }
 
+        if (HasToken(normalized, "nm"))
+        {
+            analysis.layout = TextureContentLayout::ConventionalNormal;
+            analysis.confidence = TextureDetectionConfidence::NameBased;
+            analysis.summary = "Probable conventional RGB normal texture";
+            analysis.caution =
+                "Detected from an _nm name token. RGB is treated as a conventional tangent-space "
+                "normal; any alpha/specular payload remains shader-dependent and is not exported.";
+            analysis.maps = {
+                MakeDetectedMap(TextureMapKind::Normal, "RGB"),
+            };
+            return analysis;
+        }
+
         analysis.summary = "Map layout not detected safely";
         analysis.caution =
             "The filename does not identify a supported channel layout. The source can still be "
@@ -515,7 +625,7 @@ namespace DagorAssetsExtractor::Export
         case TextureMapKind::BaseColor: return "Base Color";
         case TextureMapKind::Normal: return "Normal";
         case TextureMapKind::AmbientOcclusion: return "Ambient Occlusion";
-        case TextureMapKind::Smoothness: return "Smoothness";
+        case TextureMapKind::InvertedRoughness: return "Inverted Roughness";
         case TextureMapKind::Roughness: return "Roughness";
         case TextureMapKind::Metallic: return "Metallic";
         case TextureMapKind::MetallicRoughness: return "Metallic-Roughness";
@@ -531,7 +641,7 @@ namespace DagorAssetsExtractor::Export
         case TextureMapKind::BaseColor: return "_basecolor";
         case TextureMapKind::Normal: return "_normal";
         case TextureMapKind::AmbientOcclusion: return "_ao";
-        case TextureMapKind::Smoothness: return "_smoothness";
+        case TextureMapKind::InvertedRoughness: return "_inverted_roughness";
         case TextureMapKind::Roughness: return "_roughness";
         case TextureMapKind::Metallic: return "_metallic";
         case TextureMapKind::MetallicRoughness: return "_metalrough";

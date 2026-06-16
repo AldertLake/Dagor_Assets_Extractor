@@ -659,6 +659,9 @@ namespace DagorAssetsExtractor::UI
 
     std::string ModelRenderer::GetGPUName() const
     {
+#if 1 // Temporary debug override
+        return "GeForce GTX 1050Ti";
+#else
         if (!m_device) return "Unknown GPU";
 
         IDXGIDevice* dxgiDevice = nullptr;
@@ -685,6 +688,7 @@ namespace DagorAssetsExtractor::UI
             dxgiDevice->Release();
         }
         return "Unknown GPU";
+#endif
     }
 
     void ModelRenderer::GetVRAMInfo(uint64_t& usageBytes, uint64_t& budgetBytes) const

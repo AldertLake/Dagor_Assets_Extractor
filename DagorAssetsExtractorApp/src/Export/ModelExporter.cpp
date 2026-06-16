@@ -17,6 +17,9 @@ namespace DagorAssetsExtractor::Export
 {
     namespace
     {
+        constexpr std::string_view WarThunderPackedMaterialExtension =
+            "DAGOR_material_war_thunder_packed_n";
+
         struct Tangent4
         {
             float x, y, z, w;
@@ -891,7 +894,8 @@ namespace DagorAssetsExtractor::Export
             return !material.diffuseTexturePath.empty() ||
                    !material.normalTexturePath.empty() ||
                    !material.metallicRoughnessTexturePath.empty() ||
-                   !material.occlusionTexturePath.empty();
+                   !material.occlusionTexturePath.empty() ||
+                   !material.nativePackedNormalPbrTexturePath.empty();
         }
 
         template <typename TMesh>
@@ -998,6 +1002,7 @@ namespace DagorAssetsExtractor::Export
             int normalIndex = -1;
             int metallicRoughnessIndex = -1;
             int occlusionIndex = -1;
+            int nativePackedNormalPbrIndex = -1;
         };
 
         struct GlbTextureSections
@@ -1005,6 +1010,7 @@ namespace DagorAssetsExtractor::Export
             std::vector<MaterialTextureIndices> materialTextureIndices;
             std::vector<GlbImageInfo> images;
             size_t embeddedImageCount = 0;
+            bool usesWarThunderPackedMaterialExtension = false;
         };
 
         GlbTextureSections PrepareMaterialTextures(
@@ -1087,6 +1093,12 @@ namespace DagorAssetsExtractor::Export
                 sections.materialTextureIndices[i].occlusionIndex = getOrAddTexture(
                     materials[i].occlusionTexturePath,
                     materials[i].occlusionTextureSourcePath);
+                sections.materialTextureIndices[i].nativePackedNormalPbrIndex =
+                    getOrAddTexture(
+                        materials[i].nativePackedNormalPbrTexturePath,
+                        materials[i].nativePackedNormalPbrTextureSourcePath);
+                sections.usesWarThunderPackedMaterialExtension |=
+                    sections.materialTextureIndices[i].nativePackedNormalPbrIndex >= 0;
             }
 
             return sections;
@@ -1144,6 +1156,25 @@ namespace DagorAssetsExtractor::Export
                     json << ",\n      \"occlusionTexture\": { \"index\": " << textureSections.materialTextureIndices[i].occlusionIndex << " }";
                 }
 
+                if (textureSections.materialTextureIndices[i].nativePackedNormalPbrIndex >= 0)
+                {
+                    json << ",\n      \"extensions\": {\n";
+                    json << "        \"" << WarThunderPackedMaterialExtension << "\": {\n";
+                    json << "          \"texture\": { \"index\": "
+                         << textureSections.materialTextureIndices[i].nativePackedNormalPbrIndex << " },\n";
+                    json << "          \"channels\": {\n";
+                    json << "            \"invertedRoughness\": \"R\",\n";
+                    json << "            \"normalX\": \"G\",\n";
+                    json << "            \"metallic\": \"B\",\n";
+                    json << "            \"normalY\": \"A\"\n";
+                    json << "          },\n";
+                    json << "          \"normalZ\": \"sqrt(max(0, 1 - x*x - y*y))\",\n";
+                    json << "          \"roughness\": \"clamp((cbrt(1-R)-0.3)/0.7,0,1)\",\n";
+                    json << "          \"ambientOcclusion\": \"not_present\"\n";
+                    json << "        }\n";
+                    json << "      }";
+                }
+
                 json << "\n";
                 json << "    }";
                 if (i + 1 < materials.size()) json << ",";
@@ -1186,6 +1217,19 @@ namespace DagorAssetsExtractor::Export
             json << "  \"samplers\": [\n";
             json << "    { \"magFilter\": 9729, \"minFilter\": 9987, \"wrapS\": 10497, \"wrapT\": 10497 }\n";
             json << "  ],\n";
+        }
+
+        void WriteMaterialExtensionsUsed(
+            std::stringstream& json,
+            const GlbTextureSections& textureSections)
+        {
+            if (!textureSections.usesWarThunderPackedMaterialExtension)
+            {
+                return;
+            }
+
+            json << "  \"extensionsUsed\": [\""
+                 << WarThunderPackedMaterialExtension << "\"],\n";
         }
 
         void WriteEmbeddedImageBufferViews(std::stringstream& json, const GlbTextureSections& textureSections)
@@ -2880,6 +2924,7 @@ namespace DagorAssetsExtractor::Export
         json << "    \"version\": \"2.0\",\n";
         json << "    \"generator\": \"DagorAssetsExtractor\"\n";
         json << "  },\n";
+        WriteMaterialExtensionsUsed(json, textureSections);
 
         // Scene definition
         json << "  \"scene\": 0,\n";
@@ -4239,6 +4284,7 @@ namespace DagorAssetsExtractor::Export
         json << "    \"version\": \"2.0\",\n";
         json << "    \"generator\": \"DagorAssetsExtractor\"\n";
         json << "  },\n";
+        WriteMaterialExtensionsUsed(json, textureSections);
 
         json << "  \"scene\": 0,\n";
         json << "  \"scenes\": [\n";

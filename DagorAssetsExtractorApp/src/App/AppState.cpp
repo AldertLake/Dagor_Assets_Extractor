@@ -1,4 +1,5 @@
 #include "App/AppState.h"
+#include "AssetIndex/TextureQuality.h"
 #include "Platform/Platform.h"
 #include "DagorIO/Decompression.h"
 #include "Export/MaterialTextureResolver.h"
@@ -740,6 +741,7 @@ namespace DagorAssetsExtractor::App
             || key == "staticModelMaxLods"
             || key == "exportTexturesWithModels"
             || key == "embedTexturesInGlb"
+            || key == "convertWarThunderPackedMaps"
             || key == "exportJsonManifest"
             || key == "preserveOriginalDDS"
             || key == "indexCacheEnabled"
@@ -778,6 +780,11 @@ namespace DagorAssetsExtractor::App
         else if (key == "embedTexturesInGlb")
         {
             settings.embedTexturesInGlb = ParseBool(value, settings.embedTexturesInGlb);
+        }
+        else if (key == "convertWarThunderPackedMaps")
+        {
+            settings.convertWarThunderPackedMaps =
+                ParseBool(value, settings.convertWarThunderPackedMaps);
         }
         else if (key == "exportJsonManifest")
         {
@@ -880,6 +887,7 @@ namespace DagorAssetsExtractor::App
         stream << "staticModelMaxLods=" << settings.staticModelMaxLods << '\n';
         stream << "exportTexturesWithModels=" << (settings.exportTexturesWithModels ? "true" : "false") << '\n';
         stream << "embedTexturesInGlb=" << (settings.embedTexturesInGlb ? "true" : "false") << '\n';
+        stream << "convertWarThunderPackedMaps=" << (settings.convertWarThunderPackedMaps ? "true" : "false") << '\n';
         stream << "exportJsonManifest=" << (settings.exportJsonManifest ? "true" : "false") << '\n';
         stream << "preserveOriginalDDS=" << (settings.preserveOriginalDDS ? "true" : "false") << '\n';
         stream << "indexCacheEnabled=" << (settings.indexCacheEnabled ? "true" : "false") << '\n';
@@ -1527,6 +1535,7 @@ namespace DagorAssetsExtractor::App
         options.overwrite = true;
         options.useOodleFromGameFolder = false;
         options.exportJsonManifest = app.settings.exportJsonManifest;
+        options.convertWarThunderPackedMaps = app.settings.convertWarThunderPackedMaps;
         return options;
     }
 
@@ -3214,10 +3223,18 @@ namespace DagorAssetsExtractor::App
                     textureExportOptions.format = "PNG";
                     textureExportOptions.preserveOriginalDDS = false;
                     textureExportOptions.generateMaterialMaps = true;
+                    textureExportOptions.convertWarThunderPackedMaps =
+                        app.settings.convertWarThunderPackedMaps;
                     AddLog(app,
                         LogLevel::Info,
                         "GLB material texture export for " + entry.name +
                         " will use PNG only; DDS/TGA are not core glTF image formats and will not be linked into GLB materials.");
+                    AddLog(
+                        app,
+                        LogLevel::Info,
+                        app.settings.convertWarThunderPackedMaps
+                            ? "War Thunder packed _n textures will be converted to standard normal and ORM textures."
+                            : "War Thunder packed _n textures will be preserved through the optional DAGOR_material_war_thunder_packed_n GLB extension.");
                 }
 
                 // Find matching descriptor link for dependencies
@@ -3302,6 +3319,8 @@ namespace DagorAssetsExtractor::App
                     std::string,
                     std::unordered_map<Export::TextureMapKind, ExportedTextureMapPath>>
                     exportedTextureMapPaths;
+                std::unordered_map<std::string, ExportedTextureMapPath>
+                    exportedNativePackedTexturePaths;
 
                 if (!internalMaterials.empty() && exportTextures)
                 {
@@ -3371,36 +3390,7 @@ namespace DagorAssetsExtractor::App
                 };
 
                 auto getTextureQualityRank = [](const fs::path& dxpPath, std::string_view entryName) -> int {
-                    const std::string pathKey = ToLowerLocal(Platform::PathToUtf8(dxpPath));
-                    const std::string entryKey = ToLowerLocal(entryName);
-                    int rank = 100; // Standard/base quality.
-
-                    if (ContainsAscii(pathKey, "/content.hq/"))
-                    {
-                        rank += 400;
-                    }
-                    if (ContainsAscii(pathKey, "/uhq_vehicles/"))
-                    {
-                        rank += 320;
-                    }
-                    if (ContainsAscii(pathKey, "/hq_tex/"))
-                    {
-                        rank += 280;
-                    }
-                    if (ContainsAscii(pathKey, "-hq.dxp.bin") || ContainsAscii(pathKey, "_hq.dxp.bin"))
-                    {
-                        rank += 220;
-                    }
-                    if (ContainsAscii(entryKey, "$hq"))
-                    {
-                        rank += 120;
-                    }
-                    if (ContainsAscii(entryKey, "$tq") || ContainsAscii(entryKey, "$lq"))
-                    {
-                        rank -= 260;
-                    }
-
-                    return rank;
+                    return AssetIndex::TextureQualityPriority(dxpPath, entryName);
                 };
 
                 std::unordered_map<std::string, std::vector<std::pair<fs::path, std::string>>> globalTextureDxpLookup;
@@ -3427,7 +3417,7 @@ namespace DagorAssetsExtractor::App
                     }
                 }
 
-                // Sort descriptor lookup candidates so HQ variants are checked first, and low-quality last
+                // War Thunder quality order: $uhq, $hq, untagged, $tq, then $lq.
                 for (auto& [_, list] : globalTextureDxpLookup)
                 {
                     std::sort(list.begin(), list.end(), [&](const auto& a, const auto& b) {
@@ -3441,79 +3431,140 @@ namespace DagorAssetsExtractor::App
                 }
 
                 std::unordered_map<std::string, std::vector<std::pair<fs::path, std::string>>> fastDxpTextureIndex;
-                bool fastDxpTextureIndexBuilt = false;
+                std::once_flag fastDxpTextureIndexOnce;
 
                 auto buildFastDxpTextureIndex = [&]() {
-                    if (fastDxpTextureIndexBuilt) return;
-                    fastDxpTextureIndexBuilt = true;
+                    std::call_once(fastDxpTextureIndexOnce, [&]() {
+                        if (!allRecords) return;
 
-                    if (!allRecords) return;
+                        const auto indexStarted = std::chrono::steady_clock::now();
+                        size_t scannedDxpPackCount = 0;
+                        AddExportProgressLog(
+                            app,
+                            "Preferred texture candidates were unavailable; scanning DXP name tables for quality fallbacks...");
 
-                    for (const auto& record : *allRecords)
-                    {
-                        if (record.type == AssetIndex::AssetType::Dxp)
+                        for (const auto& record : *allRecords)
                         {
-                            std::ifstream file(record.path, std::ios::binary);
-                            if (!file) continue;
-
-                            char magic[4];
-                            if (!file.read(magic, 4) || std::string_view(magic, 4) != "DxP2")
+                            if (record.type == AssetIndex::AssetType::Dxp)
                             {
-                                continue;
-                            }
+                                ++scannedDxpPackCount;
+                                std::ifstream file(record.path, std::ios::binary);
+                                if (!file) continue;
 
-                            file.seekg(0x8, std::ios::beg);
-                            uint16_t totalFiles = 0;
-                            if (!file.read(reinterpret_cast<char*>(&totalFiles), 2))
-                            {
-                                continue;
-                            }
-
-                            file.seekg(0x48, std::ios::beg);
-                            std::string currentName;
-                            for (uint16_t i = 0; i < totalFiles; ++i)
-                            {
-                                currentName.clear();
-                                char c;
-                                while (file.get(c))
+                                char magic[4];
+                                if (!file.read(magic, 4) || std::string_view(magic, 4) != "DxP2")
                                 {
-                                    if (c == '\0')
+                                    continue;
+                                }
+
+                                file.seekg(0x8, std::ios::beg);
+                                uint16_t totalFiles = 0;
+                                if (!file.read(reinterpret_cast<char*>(&totalFiles), 2))
+                                {
+                                    continue;
+                                }
+
+                                file.seekg(0x48, std::ios::beg);
+                                std::string currentName;
+                                for (uint16_t i = 0; i < totalFiles; ++i)
+                                {
+                                    currentName.clear();
+                                    char c;
+                                    while (file.get(c))
+                                    {
+                                        if (c == '\0')
+                                        {
+                                            break;
+                                        }
+                                        currentName.push_back(c);
+                                    }
+                                    if (file.eof() && currentName.empty())
                                     {
                                         break;
                                     }
-                                    currentName.push_back(c);
-                                }
-                                if (file.eof() && currentName.empty())
-                                {
-                                    break;
-                                }
 
-                                std::string normName = normalizeTextureName(currentName);
-                                if (!normName.empty())
-                                {
-                                    auto& list = fastDxpTextureIndex[normName];
-                                    std::pair<fs::path, std::string> candidate = { record.path, currentName };
-                                    if (std::find(list.begin(), list.end(), candidate) == list.end())
+                                    std::string normName = normalizeTextureName(currentName);
+                                    if (!normName.empty())
                                     {
-                                        list.push_back(candidate);
+                                        auto& list = fastDxpTextureIndex[normName];
+                                        std::pair<fs::path, std::string> candidate = { record.path, currentName };
+                                        if (std::find(list.begin(), list.end(), candidate) == list.end())
+                                        {
+                                            list.push_back(candidate);
+                                        }
                                     }
                                 }
                             }
                         }
+
+                        for (auto& [_, list] : fastDxpTextureIndex)
+                        {
+                            std::sort(list.begin(), list.end(), [&](const auto& a, const auto& b) {
+                                const int aRank = getTextureQualityRank(a.first, a.second);
+                                const int bRank = getTextureQualityRank(b.first, b.second);
+                                if (aRank != bRank)
+                                {
+                                    return aRank > bRank;
+                                }
+                                return a.second < b.second;
+                            });
+                        }
+
+                        const auto indexElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - indexStarted).count();
+                        AddExportProgressLog(
+                            app,
+                            "Built fallback DXP texture index from " +
+                                std::to_string(scannedDxpPackCount) + " packs in " +
+                                std::to_string(indexElapsedMs) + " ms.");
+                    });
+                };
+
+                auto appendFastDxpCandidates =
+                    [&](const std::string& normTexName,
+                        std::vector<ResolvedTextureCandidate>& results) {
+                    buildFastDxpTextureIndex();
+                    const auto indexIt = fastDxpTextureIndex.find(normTexName);
+                    if (indexIt == fastDxpTextureIndex.end())
+                    {
+                        return;
                     }
 
-                    // Sort candidates so HQ variants are checked first, and low-quality last
-                    for (auto& [_, list] : fastDxpTextureIndex)
+                    for (const auto& candidate : indexIt->second)
                     {
-                        std::sort(list.begin(), list.end(), [&](const auto& a, const auto& b) {
-                            int aRank = getTextureQualityRank(a.first, a.second);
-                            int bRank = getTextureQualityRank(b.first, b.second);
-                            if (aRank != bRank) {
-                                return aRank > bRank;
-                            }
-                            return a.second < b.second;
-                        });
+                        const bool duplicate = std::any_of(
+                            results.begin(),
+                            results.end(),
+                            [&](const ResolvedTextureCandidate& existing) {
+                                return existing.dxpPath == candidate.first &&
+                                       existing.dxpEntryName == candidate.second;
+                            });
+                        if (!duplicate)
+                        {
+                            results.push_back({
+                                candidate.first,
+                                candidate.second,
+                                "fast-dxp-index",
+                            });
+                        }
                     }
+                };
+
+                auto sortTextureCandidates =
+                    [&](std::vector<ResolvedTextureCandidate>& results) {
+                    std::sort(results.begin(), results.end(), [&](const auto& a, const auto& b) {
+                        const int aRank = getTextureQualityRank(a.dxpPath, a.dxpEntryName);
+                        const int bRank = getTextureQualityRank(b.dxpPath, b.dxpEntryName);
+                        if (aRank != bRank)
+                        {
+                            return aRank > bRank;
+                        }
+                        if (a.resolutionSource != b.resolutionSource)
+                        {
+                            return a.resolutionSource == "descriptor-link-cache";
+                        }
+                        return a.dxpEntryName < b.dxpEntryName;
+                    });
                 };
 
                 auto findTextureInDxpPacks =
@@ -3526,55 +3577,22 @@ namespace DagorAssetsExtractor::App
                     {
                         for (const auto& candidate : it->second)
                         {
-                            results.push_back({ candidate.first, candidate.second, "descriptor-link-cache" });
+                            results.push_back({
+                                candidate.first,
+                                candidate.second,
+                                "descriptor-link-cache",
+                            });
                         }
                     }
 
-                    buildFastDxpTextureIndex();
-                    auto indexIt = fastDxpTextureIndex.find(normTexName);
-                    if (indexIt != fastDxpTextureIndex.end())
+                    // Keep descriptor-backed exports fast. The exhaustive index is only
+                    // needed when no preferred candidate was resolved.
+                    if (results.empty())
                     {
-                        // Cache fast-dxp-index findings into globalTextureDxpLookup
-                        auto& list = globalTextureDxpLookup[normTexName];
-                        for (const auto& candidate : indexIt->second)
-                        {
-                            if (std::find(list.begin(), list.end(), candidate) == list.end())
-                            {
-                                list.push_back(candidate);
-                            }
-                        }
-
-                        for (const auto& candidate : indexIt->second)
-                        {
-                            bool duplicate = false;
-                            for (const auto& existing : results)
-                            {
-                                if (existing.dxpPath == candidate.first && existing.dxpEntryName == candidate.second)
-                                {
-                                    duplicate = true;
-                                    break;
-                                }
-                            }
-                            if (!duplicate)
-                            {
-                                results.push_back({ candidate.first, candidate.second, "fast-dxp-index" });
-                            }
-                        }
+                        appendFastDxpCandidates(normTexName, results);
                     }
 
-                    // Sort results: quality rank descending first, then by resolutionSource preference (descriptor-link-cache over fast-dxp-index)
-                    std::sort(results.begin(), results.end(), [&](const auto& a, const auto& b) {
-                        int aRank = getTextureQualityRank(a.dxpPath, a.dxpEntryName);
-                        int bRank = getTextureQualityRank(b.dxpPath, b.dxpEntryName);
-                        if (aRank != bRank) {
-                            return aRank > bRank;
-                        }
-                        if (a.resolutionSource != b.resolutionSource) {
-                            return a.resolutionSource == "descriptor-link-cache";
-                        }
-                        return a.dxpEntryName < b.dxpEntryName;
-                    });
-
+                    sortTextureCandidates(results);
                     return results;
                 };
 
@@ -3660,11 +3678,43 @@ namespace DagorAssetsExtractor::App
                         return false;
                     }
 
-                    const auto& candidates = resolvedIt->second;
+                    std::vector<ResolvedTextureCandidate> candidates = resolvedIt->second;
                     std::vector<std::string> candidateErrors;
+                    bool fallbackCandidatesAdded = std::any_of(
+                        candidates.begin(),
+                        candidates.end(),
+                        [](const ResolvedTextureCandidate& candidate) {
+                            return candidate.resolutionSource == "fast-dxp-index";
+                        });
 
-                    for (const auto& candidate : candidates)
+                    for (size_t candidateIndex = 0; ; ++candidateIndex)
                     {
+                        if (candidateIndex >= candidates.size())
+                        {
+                            if (fallbackCandidatesAdded)
+                            {
+                                break;
+                            }
+
+                            const size_t previousCandidateCount = candidates.size();
+                            appendFastDxpCandidates(
+                                normalizeTextureName(texName),
+                                candidates);
+                            fallbackCandidatesAdded = true;
+                            if (candidateIndex >= candidates.size())
+                            {
+                                break;
+                            }
+
+                            AddExportProgressLog(
+                                app,
+                                "Preferred texture candidates failed for " + texName +
+                                    "; trying " +
+                                    std::to_string(candidates.size() - previousCandidateCount) +
+                                    " quality fallback candidate(s).");
+                        }
+
+                        const ResolvedTextureCandidate& candidate = candidates[candidateIndex];
                         const fs::path& dxpPath = candidate.dxpPath;
                         const std::string& dxpEntryName = candidate.dxpEntryName;
                         auto dxpContents = app.packContentsCache.Get(dxpPath);
@@ -3696,7 +3746,7 @@ namespace DagorAssetsExtractor::App
                             continue;
                         }
 
-                        // Verify candidate has payload data. If size is 0, skip to the next candidate (e.g. fallback from HQ to standard).
+                        // Missing payloads fall through to the next quality candidate.
                         if (it->size == 0)
                         {
                             candidateErrors.push_back("Candidate entry " + dxpEntryName + " in " +
@@ -3709,7 +3759,11 @@ namespace DagorAssetsExtractor::App
                             "Preparing texture export: " + texName +
                                 " from " + Platform::PathToUtf8(dxpPath.filename()) +
                                 " :: " + dxpEntryName +
-                                " [" + DescribeResolvedTexturePack(dxpPath) + ", source=" + candidate.resolutionSource + "]");
+                                " [quality=" +
+                                std::string(AssetIndex::TextureQualityTierName(
+                                    AssetIndex::ClassifyTextureQuality(dxpPath, dxpEntryName))) +
+                                ", " + DescribeResolvedTexturePack(dxpPath) +
+                                ", source=" + candidate.resolutionSource + "]");
 
                         if (it->ddsxHeader.size() >= 32)
                         {
@@ -3761,6 +3815,13 @@ namespace DagorAssetsExtractor::App
                             mapPaths[mapOutput.kind] = {
                                 MakeExportRelativeUri(exportRoot, mapOutput.outputPath),
                                 mapOutput.outputPath,
+                            };
+                        }
+                        if (texResult.nativeWarThunderPackedMap)
+                        {
+                            exportedNativePackedTexturePaths[texName] = {
+                                textureFile,
+                                texResult.outputPath,
                             };
                         }
                         manifest.textureDependencies.push_back(textureFile);
@@ -3912,6 +3973,28 @@ namespace DagorAssetsExtractor::App
                             outputTextureSourcePath);
                 };
 
+                auto assignNativePackedTexture =
+                    [&](const std::string& textureName,
+                        std::string& outputTexturePath,
+                        fs::path& outputTextureSourcePath) -> bool {
+                    if (textureExportOptions.convertWarThunderPackedMaps ||
+                        textureName.empty())
+                    {
+                        return false;
+                    }
+
+                    const auto textureIt =
+                        exportedNativePackedTexturePaths.find(textureName);
+                    if (textureIt == exportedNativePackedTexturePaths.end())
+                    {
+                        return false;
+                    }
+
+                    outputTexturePath = textureIt->second.uri;
+                    outputTextureSourcePath = textureIt->second.sourcePath;
+                    return true;
+                };
+
                 auto composeMaterialOrm =
                     [&](Export::MaterialInfo& material, std::string_view materialName) {
                     if (material.metallicRoughnessTextureSourcePath.empty() ||
@@ -3925,13 +4008,22 @@ namespace DagorAssetsExtractor::App
                     fs::path ormPath = material.metallicRoughnessTextureSourcePath;
                     std::string stem = ormPath.stem().string();
                     constexpr std::string_view metalRoughSuffix = "_metalrough";
-                    if (stem.size() >= metalRoughSuffix.size() &&
-                        stem.compare(
-                            stem.size() - metalRoughSuffix.size(),
-                            metalRoughSuffix.size(),
-                            metalRoughSuffix) == 0)
+                    constexpr std::string_view ormSuffix = "_orm";
+                    const auto removeSuffix = [&](std::string_view suffix) {
+                        if (stem.size() >= suffix.size() &&
+                            stem.compare(
+                                stem.size() - suffix.size(),
+                                suffix.size(),
+                                suffix) == 0)
+                        {
+                            stem.resize(stem.size() - suffix.size());
+                            return true;
+                        }
+                        return false;
+                    };
+                    if (!removeSuffix(metalRoughSuffix))
                     {
-                        stem.resize(stem.size() - metalRoughSuffix.size());
+                        removeSuffix(ormSuffix);
                     }
                     ormPath.replace_filename(stem + "_orm" + ormPath.extension().string());
 
@@ -3995,7 +4087,7 @@ namespace DagorAssetsExtractor::App
                         if (assignExportedTextureMap(
                                 resolvedTextures.normalTextureName,
                                 { Export::TextureMapKind::Normal },
-                                true,
+                                false,
                                 materials[matIdx].normalTexturePath,
                                 materials[matIdx].normalTextureSourcePath))
                         {
@@ -4008,7 +4100,7 @@ namespace DagorAssetsExtractor::App
                                     Export::TextureMapKind::OcclusionRoughnessMetallic,
                                     Export::TextureMapKind::MetallicRoughness,
                                 },
-                                true,
+                                false,
                                 materials[matIdx].metallicRoughnessTexturePath,
                                 materials[matIdx].metallicRoughnessTextureSourcePath))
                         {
@@ -4021,7 +4113,7 @@ namespace DagorAssetsExtractor::App
                                     Export::TextureMapKind::AmbientOcclusion,
                                     Export::TextureMapKind::OcclusionRoughnessMetallic,
                                 },
-                                true,
+                                false,
                                 materials[matIdx].occlusionTexturePath,
                                 materials[matIdx].occlusionTextureSourcePath))
                         {
@@ -4032,10 +4124,33 @@ namespace DagorAssetsExtractor::App
                             !resolvedTextures.packedNormalPbrTextureName.empty() &&
                             assignExportedTextureMap(
                                 resolvedTextures.packedNormalPbrTextureName,
-                                { Export::TextureMapKind::MetallicRoughness },
+                                {
+                                    Export::TextureMapKind::OcclusionRoughnessMetallic,
+                                    Export::TextureMapKind::MetallicRoughness,
+                                },
                                 false,
                                 materials[matIdx].metallicRoughnessTexturePath,
                                 materials[matIdx].metallicRoughnessTextureSourcePath))
+                        {
+                            assignedTextureCount++;
+                        }
+
+                        if (materials[matIdx].occlusionTexturePath.empty() &&
+                            !resolvedTextures.packedNormalPbrTextureName.empty() &&
+                            assignExportedTextureMap(
+                                resolvedTextures.packedNormalPbrTextureName,
+                                { Export::TextureMapKind::OcclusionRoughnessMetallic },
+                                false,
+                                materials[matIdx].occlusionTexturePath,
+                                materials[matIdx].occlusionTextureSourcePath))
+                        {
+                            assignedTextureCount++;
+                        }
+
+                        if (assignNativePackedTexture(
+                                resolvedTextures.packedNormalPbrTextureName,
+                                materials[matIdx].nativePackedNormalPbrTexturePath,
+                                materials[matIdx].nativePackedNormalPbrTextureSourcePath))
                         {
                             assignedTextureCount++;
                         }
@@ -4115,7 +4230,7 @@ namespace DagorAssetsExtractor::App
                                         assignExportedTextureMap(
                                             texName,
                                             { Export::TextureMapKind::Normal },
-                                            true,
+                                            false,
                                             materials[binding.materialIndex].normalTexturePath,
                                             materials[binding.materialIndex].normalTextureSourcePath))
                                     {
@@ -4127,10 +4242,34 @@ namespace DagorAssetsExtractor::App
                                             Export::TextureContentLayout::WarThunderPackedNormalPbr &&
                                         assignExportedTextureMap(
                                             texName,
-                                            { Export::TextureMapKind::MetallicRoughness },
+                                            {
+                                                Export::TextureMapKind::OcclusionRoughnessMetallic,
+                                                Export::TextureMapKind::MetallicRoughness,
+                                            },
                                             false,
                                             materials[binding.materialIndex].metallicRoughnessTexturePath,
                                             materials[binding.materialIndex].metallicRoughnessTextureSourcePath))
+                                    {
+                                        assignedTextureCount++;
+                                    }
+
+                                    if (materials[binding.materialIndex].occlusionTexturePath.empty() &&
+                                        Export::AnalyzeTextureMaps(texName).layout ==
+                                            Export::TextureContentLayout::WarThunderPackedNormalPbr &&
+                                        assignExportedTextureMap(
+                                            texName,
+                                            { Export::TextureMapKind::OcclusionRoughnessMetallic },
+                                            false,
+                                            materials[binding.materialIndex].occlusionTexturePath,
+                                            materials[binding.materialIndex].occlusionTextureSourcePath))
+                                    {
+                                        assignedTextureCount++;
+                                    }
+
+                                    if (assignNativePackedTexture(
+                                            texName,
+                                            materials[binding.materialIndex].nativePackedNormalPbrTexturePath,
+                                            materials[binding.materialIndex].nativePackedNormalPbrTextureSourcePath))
                                     {
                                         assignedTextureCount++;
                                     }
@@ -4144,7 +4283,7 @@ namespace DagorAssetsExtractor::App
                                                 Export::TextureMapKind::OcclusionRoughnessMetallic,
                                                 Export::TextureMapKind::MetallicRoughness,
                                             },
-                                            true,
+                                            false,
                                             materials[binding.materialIndex].metallicRoughnessTexturePath,
                                             materials[binding.materialIndex].metallicRoughnessTextureSourcePath))
                                     {
@@ -4157,7 +4296,7 @@ namespace DagorAssetsExtractor::App
                                         if (assignExportedTextureMap(
                                                 texName,
                                                 { Export::TextureMapKind::OcclusionRoughnessMetallic },
-                                                true,
+                                                false,
                                                 materials[binding.materialIndex].occlusionTexturePath,
                                                 materials[binding.materialIndex].occlusionTextureSourcePath))
                                         {
@@ -4174,7 +4313,7 @@ namespace DagorAssetsExtractor::App
                                                 Export::TextureMapKind::AmbientOcclusion,
                                                 Export::TextureMapKind::OcclusionRoughnessMetallic,
                                             },
-                                            true,
+                                            false,
                                             materials[binding.materialIndex].occlusionTexturePath,
                                             materials[binding.materialIndex].occlusionTextureSourcePath))
                                     {

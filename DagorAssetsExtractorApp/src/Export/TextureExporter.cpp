@@ -820,6 +820,61 @@ namespace DagorAssetsExtractor::Export
             return outputPath;
         }
 
+        std::filesystem::path BuildMaterialMapOutputPath(
+            const std::filesystem::path& baseOutputPath,
+            std::string_view assetName,
+            TextureMapKind mapKind)
+        {
+            std::string normalizedName = NormalizeTextureSemanticName(assetName);
+            if (normalizedName.empty())
+            {
+                normalizedName = "texture";
+            }
+
+            const std::string suffix(TextureMapKindFileSuffix(mapKind));
+            const std::string_view suffixToken =
+                suffix.starts_with('_') ? std::string_view(suffix).substr(1) : std::string_view(suffix);
+            const bool alreadyHasSuffix =
+                normalizedName == suffixToken ||
+                (normalizedName.size() > suffixToken.size() &&
+                 normalizedName.ends_with(suffixToken) &&
+                 normalizedName[normalizedName.size() - suffixToken.size() - 1] == '_');
+
+            std::filesystem::path outputPath = baseOutputPath;
+            outputPath.replace_filename(
+                normalizedName +
+                (alreadyHasSuffix ? std::string() : suffix) +
+                baseOutputPath.extension().string());
+            return outputPath;
+        }
+
+        bool TryGetPrimaryMaterialMapKind(
+            TextureContentLayout layout,
+            TextureMapKind& mapKind)
+        {
+            switch (layout)
+            {
+            case TextureContentLayout::BaseColor:
+                mapKind = TextureMapKind::BaseColor;
+                return true;
+            case TextureContentLayout::ConventionalNormal:
+            case TextureContentLayout::WarThunderPackedNormalPbr:
+                mapKind = TextureMapKind::Normal;
+                return true;
+            case TextureContentLayout::AmbientOcclusion:
+                mapKind = TextureMapKind::AmbientOcclusion;
+                return true;
+            case TextureContentLayout::PackedOrm:
+            case TextureContentLayout::PackedRma:
+            case TextureContentLayout::PackedMra:
+                mapKind = TextureMapKind::OcclusionRoughnessMetallic;
+                return true;
+            case TextureContentLayout::Unknown:
+                return false;
+            }
+            return false;
+        }
+
         bool GetBlockCompressionBytes(uint32_t d3dFormat, uint32_t& blockBytes)
         {
             switch (d3dFormat)
@@ -1781,6 +1836,18 @@ namespace DagorAssetsExtractor::Export
 
         bool NormalizeRasterToTightBgra(RasterImage& image, std::string& error);
 
+        uint8_t DecodeModernWarThunderRoughness(uint8_t invertedRoughness)
+        {
+            const double encoded = static_cast<double>(invertedRoughness) / 255.0;
+            // War Thunder stores 1 - (1 - 0.7 * smoothness)^3; recover 1 - smoothness.
+            const double roughness =
+                (std::cbrt(std::max(0.0, 1.0 - encoded)) - 0.3) / 0.7;
+            return static_cast<uint8_t>(std::clamp(
+                std::round(std::clamp(roughness, 0.0, 1.0) * 255.0),
+                0.0,
+                255.0));
+        }
+
         bool BuildTextureMapImage(
             const RasterImage& source,
             TextureContentLayout layout,
@@ -1805,10 +1872,11 @@ namespace DagorAssetsExtractor::Export
                     return mapKind == TextureMapKind::Normal;
                 case TextureContentLayout::WarThunderPackedNormalPbr:
                     return mapKind == TextureMapKind::Normal ||
-                        mapKind == TextureMapKind::Smoothness ||
+                        mapKind == TextureMapKind::InvertedRoughness ||
                         mapKind == TextureMapKind::Roughness ||
                         mapKind == TextureMapKind::Metallic ||
-                        mapKind == TextureMapKind::MetallicRoughness;
+                        mapKind == TextureMapKind::MetallicRoughness ||
+                        mapKind == TextureMapKind::OcclusionRoughnessMetallic;
                 case TextureContentLayout::AmbientOcclusion:
                     return mapKind == TextureMapKind::AmbientOcclusion;
                 case TextureContentLayout::PackedOrm:
@@ -1833,7 +1901,7 @@ namespace DagorAssetsExtractor::Export
 
             const bool grayscale =
                 mapKind == TextureMapKind::AmbientOcclusion ||
-                mapKind == TextureMapKind::Smoothness ||
+                mapKind == TextureMapKind::InvertedRoughness ||
                 mapKind == TextureMapKind::Roughness ||
                 mapKind == TextureMapKind::Metallic;
 
@@ -1868,7 +1936,7 @@ namespace DagorAssetsExtractor::Export
                     switch (layout)
                     {
                     case TextureContentLayout::WarThunderPackedNormalPbr:
-                        roughness = static_cast<uint8_t>(255u - sourceR);
+                        roughness = DecodeModernWarThunderRoughness(sourceR);
                         metallic = sourceB;
                         hasRoughness = true;
                         hasMetallic = true;
@@ -1907,7 +1975,7 @@ namespace DagorAssetsExtractor::Export
                         case TextureMapKind::AmbientOcclusion:
                             value = hasAo ? ao : 255;
                             break;
-                        case TextureMapKind::Smoothness:
+                        case TextureMapKind::InvertedRoughness:
                             value = sourceR;
                             break;
                         case TextureMapKind::Roughness:
@@ -1936,15 +2004,15 @@ namespace DagorAssetsExtractor::Export
                         if (layout == TextureContentLayout::WarThunderPackedNormalPbr)
                         {
                             const float normalX =
-                                (static_cast<float>(sourceA) / 255.0f) * 2.0f - 1.0f;
-                            const float normalY =
                                 (static_cast<float>(sourceG) / 255.0f) * 2.0f - 1.0f;
+                            const float normalY =
+                                (static_cast<float>(sourceA) / 255.0f) * 2.0f - 1.0f;
                             const float normalZ = std::sqrt(std::max(
                                 0.0f,
                                 1.0f - normalX * normalX - normalY * normalY));
                             dstRow[dstOffset + 0] = FloatToUnormByte(normalZ * 0.5f + 0.5f);
-                            dstRow[dstOffset + 1] = sourceG;
-                            dstRow[dstOffset + 2] = sourceA;
+                            dstRow[dstOffset + 1] = sourceA;
+                            dstRow[dstOffset + 2] = sourceG;
                             dstRow[dstOffset + 3] = 255;
                         }
                         else
@@ -1974,7 +2042,7 @@ namespace DagorAssetsExtractor::Export
         bool GenerateMaterialMapsIfNeeded(
             RasterImage& image,
             std::string_view entryName,
-            const std::filesystem::path& outputPath,
+            std::filesystem::path& outputPath,
             std::string_view normalizedFormat,
             const TextureExportOptions& options,
             TextureExportResult& result,
@@ -1991,30 +2059,24 @@ namespace DagorAssetsExtractor::Export
                 return true;
             }
 
+            if (analysis.layout == TextureContentLayout::WarThunderPackedNormalPbr &&
+                !options.convertWarThunderPackedMaps)
+            {
+                result.nativeWarThunderPackedMap = true;
+                result.warnings.push_back(
+                    "Preserved the native War Thunder _n channels without generating normal or ORM. "
+                    "Core glTF material slots cannot interpret this packed layout directly.");
+                return true;
+            }
+
             if (!NormalizeRasterToTightBgra(image, error))
             {
                 return false;
             }
 
             TextureMapKind mainKind = TextureMapKind::BaseColor;
-            switch (analysis.layout)
+            if (!TryGetPrimaryMaterialMapKind(analysis.layout, mainKind))
             {
-            case TextureContentLayout::BaseColor:
-                mainKind = TextureMapKind::BaseColor;
-                break;
-            case TextureContentLayout::ConventionalNormal:
-            case TextureContentLayout::WarThunderPackedNormalPbr:
-                mainKind = TextureMapKind::Normal;
-                break;
-            case TextureContentLayout::AmbientOcclusion:
-                mainKind = TextureMapKind::AmbientOcclusion;
-                break;
-            case TextureContentLayout::PackedOrm:
-            case TextureContentLayout::PackedRma:
-            case TextureContentLayout::PackedMra:
-                mainKind = TextureMapKind::OcclusionRoughnessMetallic;
-                break;
-            case TextureContentLayout::Unknown:
                 return true;
             }
 
@@ -2023,46 +2085,57 @@ namespace DagorAssetsExtractor::Export
             {
                 return false;
             }
+            outputPath = BuildMaterialMapOutputPath(outputPath, entryName, mainKind);
+            if (!options.overwrite && std::filesystem::exists(outputPath))
+            {
+                error = "Output file already exists: " + Platform::PathToUtf8(outputPath);
+                return false;
+            }
             result.mapOutputs.push_back({ mainKind, outputPath });
 
             if (analysis.layout == TextureContentLayout::WarThunderPackedNormalPbr)
             {
-                RasterImage metallicRoughnessImage;
+                RasterImage ormImage;
                 if (!BuildTextureMapImage(
                         source,
                         analysis.layout,
-                        TextureMapKind::MetallicRoughness,
-                        metallicRoughnessImage,
+                        TextureMapKind::OcclusionRoughnessMetallic,
+                        ormImage,
                         error))
                 {
                     return false;
                 }
 
-                std::filesystem::path mrOutputPath = outputPath;
-                mrOutputPath.replace_filename(
-                    mrOutputPath.stem().string() +
-                    std::string(TextureMapKindFileSuffix(TextureMapKind::MetallicRoughness)) +
-                    mrOutputPath.extension().string());
+                const std::filesystem::path ormOutputPath = BuildMaterialMapOutputPath(
+                    outputPath,
+                    entryName,
+                    TextureMapKind::OcclusionRoughnessMetallic);
+                if (!options.overwrite && std::filesystem::exists(ormOutputPath))
+                {
+                    error = "Output file already exists: " + Platform::PathToUtf8(ormOutputPath);
+                    return false;
+                }
 
                 if (!WriteReadableImage(
-                        mrOutputPath,
-                        metallicRoughnessImage,
+                        ormOutputPath,
+                        ormImage,
                         normalizedFormat,
                         error))
                 {
                     std::error_code cleanupError;
-                    std::filesystem::remove(mrOutputPath, cleanupError);
-                    error = "Failed to write generated metallic-roughness image: " + error;
+                    std::filesystem::remove(ormOutputPath, cleanupError);
+                    error = "Failed to write generated ORM image: " + error;
                     return false;
                 }
 
                 result.mapOutputs.push_back({
-                    TextureMapKind::MetallicRoughness,
-                    mrOutputPath,
+                    TextureMapKind::OcclusionRoughnessMetallic,
+                    ormOutputPath,
                 });
                 result.warnings.push_back(
-                    "Generated a standard normal map and glTF metallic-roughness map from "
-                    "War Thunder channels. Metallic uses source blue directly; roughness is 1 - source red.");
+                    "Generated a standard normal map and ORM from modern War Thunder _n channels. "
+                    "Normal X/Y use green/alpha, roughness decodes the non-linear red channel, "
+                    "metallic uses blue, and ORM AO defaults to white.");
             }
 
             return true;
@@ -2465,6 +2538,24 @@ namespace DagorAssetsExtractor::Export
             auto prepareOutputPath = [&](std::string_view extension, std::filesystem::path& outputPath) -> bool
             {
                 outputPath = BuildSafeOutputPath(options.outputDir, entry.name, extension);
+                if (options.generateMaterialMaps)
+                {
+                    const TextureContentLayout layout =
+                        AnalyzeTextureMaps(entry.name).layout;
+                    TextureMapKind primaryMapKind = TextureMapKind::BaseColor;
+                    if (TryGetPrimaryMaterialMapKind(
+                            layout,
+                            primaryMapKind) &&
+                        (layout != TextureContentLayout::WarThunderPackedNormalPbr ||
+                            options.convertWarThunderPackedMaps))
+                    {
+                        outputPath = BuildMaterialMapOutputPath(
+                            outputPath,
+                            entry.name,
+                            primaryMapKind);
+                    }
+                }
+
                 std::error_code ec;
                 std::filesystem::create_directories(outputPath.parent_path(), ec);
                 if (ec)
@@ -2912,10 +3003,10 @@ namespace DagorAssetsExtractor::Export
                 options.outputDir,
                 entry.name,
                 TextureFormatExtension(normalizedFormat));
-            outputPath.replace_filename(
-                outputPath.stem().string() +
-                std::string(TextureMapKindFileSuffix(mapKinds[index])) +
-                outputPath.extension().string());
+            outputPath = BuildMaterialMapOutputPath(
+                outputPath,
+                entry.name,
+                mapKinds[index]);
 
             std::filesystem::create_directories(outputPath.parent_path(), ec);
             if (ec)
