@@ -53,4 +53,10 @@ settings.ini
 # Local-only repo content
 Exemples/
 RS/
+# if you use ai to help me, keep your agents file localy & don't push it !
 AGENTS.md
+
+# Text and Python files
+*.txt
+!CMakeLists.txt
+*.py

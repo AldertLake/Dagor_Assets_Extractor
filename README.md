@@ -1,11 +1,11 @@
-<p align="center"><img src="DagorAssetsExtractorApp/assets/ui/DAE.ico" alt="DAE icon" width="64" height="64"></p>
+<p align="center"><img src="DagorAssetsExtractor/assets/ui/DAE.ico" alt="DAE icon" width="64" height="64"></p>
 
 <h1 align="center">Dagor Assets Extractor</h1>
 
-Dagor Assets Extractor is a small utility for extracting game assets from titles built on the Dagor engine, intended for learning and modding purposes. The tool currently supports:
+Dagor Assets Extractor is a software for extracting assets from titles built on the Dagor engine, intended for learning purposes :) The tool currently supports:
 
-- Exporting static models with textures and materials to GLB (glTF binary).
-- Exporting animated models (skeletons + animations) to GLB.
+- Exporting static models with textures and materials.
+- Exporting animated models (skeletons + animations).
 - Exporting textures to PNG, DDS, or TGA formats.
 
 ## Prerequisites
@@ -26,3 +26,7 @@ Dagor Assets Extractor is a small utility for extracting game assets from titles
 3. Choose a build configuration: `Debug` or `Release`.
 4. Choose platform: `x64`.
 5. Build the solution (Build → Build Solution).
+
+## Disclaimer
+
+This software is provided for learning purposes only. We take no responsibility for how it is used.

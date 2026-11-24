@@ -16,7 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 set(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
-set(APP_DIR "${PROJECT_ROOT}/DagorAssetsExtractorApp")
+set(APP_DIR "${PROJECT_ROOT}/DagorAssetsExtractor")
 set(APP_SRC_DIR "${APP_DIR}/src")
 set(THIRD_PARTY_DIR "${PROJECT_ROOT}/third_party")
 
@@ -149,12 +149,12 @@ target_link_libraries(dagor_core
 dagor_apply_common_settings(dagor_core)
 set_target_properties(dagor_core PROPERTIES FOLDER "Dagor")
 
-add_executable(DagorAssetsExtractorApp WIN32
+add_executable(DagorAssetsExtractor WIN32
     "${APP_SRC_DIR}/main.cpp"
     ${DAGOR_UI_SOURCES}
 )
-target_include_directories(DagorAssetsExtractorApp PRIVATE "${APP_SRC_DIR}")
-target_link_libraries(DagorAssetsExtractorApp
+target_include_directories(DagorAssetsExtractor PRIVATE "${APP_SRC_DIR}")
+target_link_libraries(DagorAssetsExtractor
     PRIVATE
         dagor_core
         dagor_imgui
@@ -169,10 +169,10 @@ target_link_libraries(DagorAssetsExtractorApp
         user32
         windowscodecs
 )
-dagor_apply_common_settings(DagorAssetsExtractorApp)
-set_target_properties(DagorAssetsExtractorApp PROPERTIES
+dagor_apply_common_settings(DagorAssetsExtractor)
+set_target_properties(DagorAssetsExtractor PROPERTIES
     FOLDER "Dagor"
-    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:DagorAssetsExtractorApp>"
+    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:DagorAssetsExtractor>"
 )
 
 add_executable(DagorAssetsExtractorValidationTests
@@ -185,14 +185,14 @@ set_target_properties(DagorAssetsExtractorValidationTests PROPERTIES
     FOLDER "Dagor"
 )
 
-add_custom_command(TARGET DagorAssetsExtractorApp POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:DagorAssetsExtractorApp>/assets"
+add_custom_command(TARGET DagorAssetsExtractor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:DagorAssetsExtractor>/assets"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
         "${APP_DIR}/assets/ui"
-        "$<TARGET_FILE_DIR:DagorAssetsExtractorApp>/assets/ui"
+        "$<TARGET_FILE_DIR:DagorAssetsExtractor>/assets/ui"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${THIRD_PARTY_DIR}/oo2core_6_win64.dll"
-        "$<TARGET_FILE_DIR:DagorAssetsExtractorApp>/oo2core_6_win64.dll"
+        "$<TARGET_FILE_DIR:DagorAssetsExtractor>/oo2core_6_win64.dll"
 )
 
-set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT DagorAssetsExtractorApp)
+set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT DagorAssetsExtractor)
