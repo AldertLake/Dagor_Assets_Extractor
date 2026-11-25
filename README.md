@@ -10,22 +10,14 @@ Dagor Assets Extractor is a software for extracting assets from titles built on 
 
 ## Prerequisites
 
-- Windows machine
+**Running:**
+- Microsoft Visual C++ Redistributable (x64)
+
+**Building:**
 - Visual Studio with the Desktop development with C++ workload (or another environment that can open CMake-generated solutions)
 - CMake (usually included with Visual Studio)
 
-## Build (Visual Studio)
-
 > The software use DirectXTex, Win32 API & D3D11 & for decompression use o2core_6_win64.dll meaning you can't compile on non windows systems.
-
-1. From the project root run:
-
-	GenerateProjects.bat
-
-2. Open the generated solution in the `build/vs2026` folder (DagorAssetsExtractor.slnx) with Visual Studio.
-3. Choose a build configuration: `Debug` or `Release`.
-4. Choose platform: `x64`.
-5. Build the solution (Build → Build Solution).
 
 ## Disclaimer
 
